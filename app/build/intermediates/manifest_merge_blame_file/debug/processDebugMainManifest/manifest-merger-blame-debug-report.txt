@@ -1,0 +1,192 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.lilac.anime"
+4    android:versionCode="11"
+5    android:versionName="0.2.1" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="23"
+9        android:targetSdkVersion="37" />
+10    <!-- 기존 인터넷 권한 -->
+11    <uses-permission android:name="android.permission.INTERNET" />
+11-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:3:5-67
+11-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:3:22-64
+12
+13    <!-- 다운로드를 위한 포그라운드 서비스 및 알림 권한 추가 -->
+14    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+14-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:6:5-77
+14-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:6:22-74
+15    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+15-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:7:5-87
+15-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:7:22-84
+16    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+16-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:8:5-77
+16-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:8:22-74
+17    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+17-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:10:5-83
+17-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:10:22-80
+18    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+18-->[androidx.media3:media3-exoplayer:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/52b9a834e29213fb4ed0724db96909f8/transformed/media3-exoplayer-1.8.0/AndroidManifest.xml:22:5-79
+18-->[androidx.media3:media3-exoplayer:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/52b9a834e29213fb4ed0724db96909f8/transformed/media3-exoplayer-1.8.0/AndroidManifest.xml:22:22-76
+19
+20    <permission
+20-->[androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:22:5-24:47
+21        android:name="com.lilac.anime.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+21-->[androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:23:9-81
+22        android:protectionLevel="signature" />
+22-->[androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:24:9-44
+23
+24    <uses-permission android:name="com.lilac.anime.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+24-->[androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:26:5-97
+24-->[androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:26:22-94
+25
+26    <application
+26-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:12:5-49:19
+27        android:name="com.lilac.anime.LilacApplication"
+27-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:13:5-37
+28        android:allowBackup="true"
+28-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:14:9-35
+29        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+29-->[androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:28:18-86
+30        android:debuggable="true"
+31        android:extractNativeLibs="false"
+32        android:icon="@mipmap/ic_launcher"
+32-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:15:9-43
+33        android:label="LilacAnime"
+33-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:16:9-35
+34        android:supportsRtl="true"
+34-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:17:9-35
+35        android:theme="@style/Theme.LilacAnime" >
+35-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:18:9-48
+36        <activity
+36-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:19:9-29:20
+37            android:name="com.lilac.anime.MainActivity"
+37-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:20:13-41
+38            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
+38-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:24:13-91
+39            android:exported="true"
+39-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:21:13-36
+40            android:resizeableActivity="true"
+40-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:23:13-46
+41            android:supportsPictureInPicture="true" >
+41-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:22:13-52
+42            <intent-filter>
+42-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:25:13-28:29
+43                <action android:name="android.intent.action.MAIN" />
+43-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:26:17-69
+43-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:26:25-66
+44
+45                <category android:name="android.intent.category.LAUNCHER" />
+45-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:27:17-77
+45-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:27:27-74
+46            </intent-filter>
+47        </activity>
+48
+49        <provider
+50            android:name="androidx.core.content.FileProvider"
+50-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:32:13-62
+51            android:authorities="com.lilac.anime.fileprovider"
+51-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:33:13-64
+52            android:exported="false"
+52-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:34:13-37
+53            android:grantUriPermissions="true" >
+53-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:35:13-47
+54            <meta-data
+54-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:36:13-38:54
+55                android:name="android.support.FILE_PROVIDER_PATHS"
+55-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:37:17-67
+56                android:resource="@xml/file_paths" />
+56-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:38:17-51
+57        </provider>
+58        <!-- 다운로드 백그라운드 서비스 등록 -->
+59        <service
+59-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:41:9-48:19
+60            android:name="com.lilac.anime.LilacDownloadService"
+60-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:42:13-49
+61            android:exported="false"
+61-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:43:13-37
+62            android:foregroundServiceType="dataSync" >
+62-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:44:13-53
+63            <intent-filter>
+63-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:45:13-47:29
+64                <action android:name="androidx.media3.exoplayer.downloadService.action.RESTART" />
+64-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:46:17-99
+64-->/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:46:25-96
+65            </intent-filter>
+66        </service>
+67
+68        <activity
+68-->[androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:23:9-25:39
+69            android:name="androidx.compose.ui.tooling.PreviewActivity"
+69-->[androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:24:13-71
+70            android:exported="true" />
+70-->[androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:25:13-36
+71
+72        <provider
+72-->[androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:24:9-32:20
+73            android:name="androidx.startup.InitializationProvider"
+73-->[androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:25:13-67
+74            android:authorities="com.lilac.anime.androidx-startup"
+74-->[androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:26:13-68
+75            android:exported="false" >
+75-->[androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:27:13-37
+76            <meta-data
+76-->[androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:29:13-31:52
+77                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+77-->[androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:30:17-75
+78                android:value="androidx.startup" />
+78-->[androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:31:17-49
+79            <meta-data
+79-->[androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:29:13-31:52
+80                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+80-->[androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:30:17-78
+81                android:value="androidx.startup" />
+81-->[androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:31:17-49
+82            <meta-data
+82-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:29:13-31:52
+83                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+83-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:30:17-85
+84                android:value="androidx.startup" />
+84-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:31:17-49
+85        </provider>
+86
+87        <receiver
+87-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:34:9-52:20
+88            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+88-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:35:13-76
+89            android:directBootAware="false"
+89-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:36:13-44
+90            android:enabled="true"
+90-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:37:13-35
+91            android:exported="true"
+91-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:38:13-36
+92            android:permission="android.permission.DUMP" >
+92-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:39:13-57
+93            <intent-filter>
+93-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:40:13-42:29
+94                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+94-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:41:17-91
+94-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:41:25-88
+95            </intent-filter>
+96            <intent-filter>
+96-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:43:13-45:29
+97                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+97-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:44:17-85
+97-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:44:25-82
+98            </intent-filter>
+99            <intent-filter>
+99-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:46:13-48:29
+100                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+100-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:47:17-88
+100-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:47:25-85
+101            </intent-filter>
+102            <intent-filter>
+102-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:49:13-51:29
+103                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+103-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:50:17-95
+103-->[androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:50:25-92
+104            </intent-filter>
+105        </receiver>
+106    </application>
+107
+108</manifest>

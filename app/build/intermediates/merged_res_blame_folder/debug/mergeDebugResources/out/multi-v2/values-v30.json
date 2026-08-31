@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.lilac.anime.app-mergeDebugResources-44:/values-v30/values-v30.xml",
+            "map": [
+                {
+                    "source": "/data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5c4fd6e47fcae4e199546fccbf027d16/transformed/material3-release/res/values-v30/values-v30.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "72",
+                        "endOffsets": "123"
+                    }
+                }
+            ]
+        }
+    ]
+}

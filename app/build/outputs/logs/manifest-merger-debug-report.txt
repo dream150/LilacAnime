@@ -1,0 +1,476 @@
+-- Merging decision tree log ---
+provider#androidx.core.content.FileProvider
+INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:31:9-39:20
+	android:grantUriPermissions
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:35:13-47
+	android:authorities
+		INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:33:13-64
+	android:exported
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:34:13-37
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:32:13-62
+manifest
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:1:1-50:12
+INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:1:1-50:12
+INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:1:1-50:12
+INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:1:1-50:12
+MERGED from [androidx.navigation:navigation-runtime-android:2.9.4] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/065469e3d71d88936b46f1c5ea1a9cad/transformed/navigation-runtime-release/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.navigation:navigation-common-android:2.9.4] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e2985357042c39cb7fdfed36473b1e3b/transformed/navigation-common-release/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.navigation:navigation-compose-android:2.9.4] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0843202efbacc66da2d920cba6519db7/transformed/navigation-compose-release/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.material3:material3-android:1.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5c4fd6e47fcae4e199546fccbf027d16/transformed/material3-release/AndroidManifest.xml:17:1-22:12
+MERGED from [io.coil-kt.coil3:coil-compose-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/255c6e8e44dbc7232d98d81e763e1d30/transformed/coil-compose-release/AndroidManifest.xml:2:1-7:12
+MERGED from [io.coil-kt.coil3:coil-compose-core-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f64d74e06bc4cb95b70920be6795963c/transformed/coil-compose-core-release/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-tooling-data-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/186d282e4d7eb222519a0d04bea41d31/transformed/ui-tooling-data/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-tooling-preview-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f86e4c7acc669a2a8859117e0fd00ef6/transformed/ui-tooling-preview/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:17:1-28:12
+MERGED from [androidx.compose.material:material-android:1.6.8] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/50a11add35c608cd7f13c26ba68e8606/transformed/material-release/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.material:material-icons-core-android:1.6.8] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/33c543385ee3e143597fa2cb05f61006/transformed/material-icons-core-release/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.material:material-icons-extended-android:1.6.8] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/15f2d2998042f667e937d51055101c32/transformed/material-icons-extended-release/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.material:material-ripple-android:1.7.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/911420b2c5e0a964d797c7a4d46ab9e4/transformed/material-ripple-release/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.foundation:foundation-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/fd02a7724544e3847ddc2504a68f02c6/transformed/foundation-release/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.foundation:foundation-layout-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/8abac63b7eba83c951056ebf4853145a/transformed/foundation-layout/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.animation:animation-core-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d9a91d8da0f665eb1837eb7739439bf0/transformed/animation-core/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.animation:animation-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/bf47927d2a3993685c2255f6955f4c66/transformed/animation/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-util-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d3ddfc3a48fc6675eaef8475cc0c8b8d/transformed/ui-util/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-unit-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/609b2592ec08c14c0a573044b983f95b/transformed/ui-unit/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-graphics-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/26fc4def78d3c6fb05110bd919e187b7/transformed/ui-graphics-release/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-geometry-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/254a63e61f0a2a264e83454154d9b422/transformed/ui-geometry/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.ui:ui-text-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/09f1a6198f0a14b5a15b81c1c7177c6f/transformed/ui-text/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:17:1-35:12
+MERGED from [androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:17:1-35:12
+MERGED from [androidx.lifecycle:lifecycle-runtime-ktx-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/2ca1ca02663db3e99031b56a355f6c69/transformed/lifecycle-runtime-ktx/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/64a3bb09527a4072c0cc3019d105e706/transformed/lifecycle-viewmodel-ktx-2.10.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.lifecycle:lifecycle-livedata-core:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f186f3ed6181bb878c3d833688754333/transformed/lifecycle-livedata-core-2.10.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.navigationevent:navigationevent-android:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3c80765cf570d8b5549ad8fae6c9ce3f/transformed/navigationevent/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.navigationevent:navigationevent-compose-android:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/a07c5288903da1473ea6db2343161dd4/transformed/navigationevent-compose/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.savedstate:savedstate-ktx:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e58c0f4f42b877e8ca0b4bb5820d66d6/transformed/savedstate-ktx-1.4.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.savedstate:savedstate-android:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/409e4970d7018ba06793e8645fbfebf3/transformed/savedstate/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.savedstate:savedstate-compose-android:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/81dea4747afe9fafffe5f333a67342b6/transformed/savedstate-compose/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.runtime:runtime-annotation-android:1.9.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/b734b7b2db1b102078ca646bf1d94ae6/transformed/runtime-annotation/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.runtime:runtime-android:1.9.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3686b4dbcbd316917f74c1f4ba15cf68/transformed/runtime/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.compose.runtime:runtime-saveable-android:1.9.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d12787a9f59fdb309bcdbefd0828f885/transformed/runtime-saveable/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.lifecycle:lifecycle-runtime-compose-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0052c033357b3d9ea8959f96d86de61d/transformed/lifecycle-runtime-compose/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c3ee26e466c9e4b3bb126e56e1aa1e77/transformed/lifecycle-viewmodel/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-savedstate-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/94382612b763e829159785e335664b90/transformed/lifecycle-viewmodel-savedstate/AndroidManifest.xml:17:1-22:12
+MERGED from [io.coil-kt.coil3:coil-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/b0557d56496caa7db4d5e906d5b4395e/transformed/coil-release/AndroidManifest.xml:2:1-7:12
+MERGED from [io.coil-kt.coil3:coil-network-core-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ca6508aaa28faaef819fdf444958bac7/transformed/coil-network-core-release/AndroidManifest.xml:2:1-7:12
+MERGED from [io.coil-kt.coil3:coil-core-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0858c3b888a8b1d217418e66f33f6e29/transformed/coil-core-release/AndroidManifest.xml:2:1-7:12
+MERGED from [io.github.peerless2012:ass-media:0.5.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/bc1f3b4d57f977af1339fac7d492248f/transformed/ass-media-0.5.1/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.media3:media3-exoplayer-hls:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3b1fd12dc2c7d243d1ab48c2b76b2f37/transformed/media3-exoplayer-hls-1.8.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-exoplayer:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/52b9a834e29213fb4ed0724db96909f8/transformed/media3-exoplayer-1.8.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media3:media3-effect:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5fde52e531a44dc71789641a4168b74c/transformed/media3-effect-1.8.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-extractor:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/8a71fd4c92e4d22e4c5bad9fbe695a4f/transformed/media3-extractor-1.8.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-container:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/6308ee48a9325af3863750e172525dc5/transformed/media3-container-1.8.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-datasource:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/609298c40ecaace03fd339f182c3b7a7/transformed/media3-datasource-1.8.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-decoder:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3ba466e70155631d114105d971276186/transformed/media3-decoder-1.8.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-database:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/a7ea8db8a070ba32afc007957ff55fc7/transformed/media3-database-1.8.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-common:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/9c4fad361b5261253b4b0e3a3758285a/transformed/media3-common-1.8.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media3:media3-ui:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/70309a71dacb5d4f52bcf15265b96e75/transformed/media3-ui-1.8.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.recyclerview:recyclerview:1.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ff8d3e356b501e27e74c493d247cc359/transformed/recyclerview-1.3.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.customview:customview-poolingcontainer:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/8c72fbea509cd8c4649cfb663824e439/transformed/customview-poolingcontainer-1.0.0/AndroidManifest.xml:17:1-23:12
+MERGED from [androidx.core:core-ktx:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/153f4bc57894bd96d0c856a9e6ddc9aa/transformed/core-ktx-1.18.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.customview:customview:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/9750b60ac0ebfc24c42bf9bdf7d50057/transformed/customview-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.appcompat:appcompat-resources:1.7.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/fe14e9ad376a8633a9242840f4342876/transformed/appcompat-resources-1.7.1/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.autofill:autofill:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/1aa9974491363088a407f2226e1a2997/transformed/autofill-1.0.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.vectordrawable:vectordrawable-animated:1.1.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f3730e20704febaad91e14fd46944b77/transformed/vectordrawable-animated-1.1.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.vectordrawable:vectordrawable:1.1.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/1cc13dddf82943383501e6a1788df337/transformed/vectordrawable-1.1.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.graphics:graphics-path:1.0.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/b2db7f55de490b3e3aa0e33bb7dd773d/transformed/graphics-path-1.0.1/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:17:1-30:12
+MERGED from [androidx.lifecycle:lifecycle-runtime-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/03da2160109537132072abe27ea921f5/transformed/lifecycle-runtime/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-compose-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5d1757a9ecde5f4bed2fb4635d071934/transformed/lifecycle-viewmodel-compose/AndroidManifest.xml:2:1-7:12
+MERGED from [com.google.accompanist:accompanist-drawablepainter:0.37.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/331d5c960f68e06c999307a5519c7c69/transformed/accompanist-drawablepainter-0.37.3/AndroidManifest.xml:17:1-23:12
+MERGED from [androidx.compose.ui:ui-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4fa38763472dc50eebe0be43bf846e7a/transformed/ui-release/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.activity:activity-ktx:1.13.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/dd43d23cfa9fd1f3bb0d047f33052b23/transformed/activity-ktx-1.13.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.activity:activity:1.13.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5f84dce1d4346e02f78145143116fc1c/transformed/activity-1.13.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.activity:activity-compose:1.13.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/1c2530b3d276cabfbee68dfb1b59a9dc/transformed/activity-compose-1.13.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.datastore:datastore-core-android:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/612069e9722a407eea4ac42068ba2d84/transformed/datastore-core-release/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.datastore:datastore-android:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/efe5b6b990c61172ad2514a8b59eed8e/transformed/datastore-release/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.datastore:datastore-preferences-android:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/92abbed4a25b0e0070f5f7b856bc7ac4/transformed/datastore-preferences-release/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.annotation:annotation-experimental:1.5.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/571d15cf79cbac5fa4ddef67adc043f6/transformed/annotation-experimental-1.5.1/AndroidManifest.xml:2:1-7:12
+MERGED from [io.github.peerless2012:ass-kt:0.5.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c71cf7bf22c9a4e2964c297a9b8cc239/transformed/ass-kt-0.5.1/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.core:core-viewtree:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3d3e5d18fdc3c9685fc96e448e2afd7a/transformed/core-viewtree-1.0.0/AndroidManifest.xml:2:1-7:12
+MERGED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:17:1-55:12
+MERGED from [androidx.startup:startup-runtime:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e610d97adc719f66d3cea431b02e36b2/transformed/startup-runtime-1.1.1/AndroidManifest.xml:17:1-33:12
+MERGED from [androidx.tracing:tracing:1.2.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ac42bec34806d381eb9d4b374e77919d/transformed/tracing-1.2.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.interpolator:interpolator:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/516633f729c0d02262492230f4d920b0/transformed/interpolator-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ac988362d01c4fd1b4919dac7678a33b/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:17:1-27:12
+MERGED from [androidx.arch.core:core-runtime:2.2.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d597ca4b1c4d3b90a4885a71e2ecce61/transformed/core-runtime-2.2.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.exifinterface:exifinterface:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/be16844863fb38a8e6880c225cc77109/transformed/exifinterface-1.4.1/AndroidManifest.xml:2:1-7:12
+	package
+		INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml
+	android:versionName
+		INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml
+	android:versionCode
+		INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml
+	xmlns:android
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:1:11-69
+uses-permission#android.permission.INTERNET
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:3:5-67
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:3:22-64
+uses-permission#android.permission.FOREGROUND_SERVICE
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:6:5-77
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:6:22-74
+uses-permission#android.permission.FOREGROUND_SERVICE_DATA_SYNC
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:7:5-87
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:7:22-84
+uses-permission#android.permission.POST_NOTIFICATIONS
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:8:5-77
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:8:22-74
+uses-permission#android.permission.REQUEST_INSTALL_PACKAGES
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:10:5-83
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:10:22-80
+application
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:12:5-49:19
+INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:12:5-49:19
+MERGED from [androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:22:5-26:19
+MERGED from [androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:22:5-26:19
+MERGED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:23:5-33:19
+MERGED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:28:5-89
+MERGED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:28:5-89
+MERGED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:23:5-53:19
+MERGED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:23:5-53:19
+MERGED from [androidx.startup:startup-runtime:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e610d97adc719f66d3cea431b02e36b2/transformed/startup-runtime-1.1.1/AndroidManifest.xml:25:5-31:19
+MERGED from [androidx.startup:startup-runtime:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e610d97adc719f66d3cea431b02e36b2/transformed/startup-runtime-1.1.1/AndroidManifest.xml:25:5-31:19
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ac988362d01c4fd1b4919dac7678a33b/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:24:5-25:19
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ac988362d01c4fd1b4919dac7678a33b/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:24:5-25:19
+	android:extractNativeLibs
+		INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml
+	android:appComponentFactory
+		ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:28:18-86
+	android:supportsRtl
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:17:9-35
+	android:label
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:16:9-35
+	android:icon
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:15:9-43
+	android:allowBackup
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:14:9-35
+	android:theme
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:18:9-48
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:13:5-37
+activity#com.lilac.anime.MainActivity
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:19:9-29:20
+	android:exported
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:21:13-36
+	android:supportsPictureInPicture
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:22:13-52
+	android:resizeableActivity
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:23:13-46
+	android:configChanges
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:24:13-91
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:20:13-41
+intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:25:13-28:29
+action#android.intent.action.MAIN
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:26:17-69
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:26:25-66
+category#android.intent.category.LAUNCHER
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:27:17-77
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:27:27-74
+service#com.lilac.anime.LilacDownloadService
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:41:9-48:19
+	android:exported
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:43:13-37
+	android:foregroundServiceType
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:44:13-53
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:42:13-49
+intent-filter#action:name:androidx.media3.exoplayer.downloadService.action.RESTART
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:45:13-47:29
+action#androidx.media3.exoplayer.downloadService.action.RESTART
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:46:17-99
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:46:25-96
+meta-data#android.support.FILE_PROVIDER_PATHS
+ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:36:13-38:54
+	android:resource
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:38:17-51
+	android:name
+		ADDED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml:37:17-67
+uses-sdk
+INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml
+INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml
+MERGED from [androidx.navigation:navigation-runtime-android:2.9.4] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/065469e3d71d88936b46f1c5ea1a9cad/transformed/navigation-runtime-release/AndroidManifest.xml:20:5-44
+MERGED from [androidx.navigation:navigation-runtime-android:2.9.4] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/065469e3d71d88936b46f1c5ea1a9cad/transformed/navigation-runtime-release/AndroidManifest.xml:20:5-44
+MERGED from [androidx.navigation:navigation-common-android:2.9.4] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e2985357042c39cb7fdfed36473b1e3b/transformed/navigation-common-release/AndroidManifest.xml:20:5-44
+MERGED from [androidx.navigation:navigation-common-android:2.9.4] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e2985357042c39cb7fdfed36473b1e3b/transformed/navigation-common-release/AndroidManifest.xml:20:5-44
+MERGED from [androidx.navigation:navigation-compose-android:2.9.4] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0843202efbacc66da2d920cba6519db7/transformed/navigation-compose-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.navigation:navigation-compose-android:2.9.4] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0843202efbacc66da2d920cba6519db7/transformed/navigation-compose-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material3:material3-android:1.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5c4fd6e47fcae4e199546fccbf027d16/transformed/material3-release/AndroidManifest.xml:20:5-44
+MERGED from [androidx.compose.material3:material3-android:1.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5c4fd6e47fcae4e199546fccbf027d16/transformed/material3-release/AndroidManifest.xml:20:5-44
+MERGED from [io.coil-kt.coil3:coil-compose-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/255c6e8e44dbc7232d98d81e763e1d30/transformed/coil-compose-release/AndroidManifest.xml:5:5-44
+MERGED from [io.coil-kt.coil3:coil-compose-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/255c6e8e44dbc7232d98d81e763e1d30/transformed/coil-compose-release/AndroidManifest.xml:5:5-44
+MERGED from [io.coil-kt.coil3:coil-compose-core-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f64d74e06bc4cb95b70920be6795963c/transformed/coil-compose-core-release/AndroidManifest.xml:5:5-44
+MERGED from [io.coil-kt.coil3:coil-compose-core-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f64d74e06bc4cb95b70920be6795963c/transformed/coil-compose-core-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-tooling-data-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/186d282e4d7eb222519a0d04bea41d31/transformed/ui-tooling-data/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-tooling-data-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/186d282e4d7eb222519a0d04bea41d31/transformed/ui-tooling-data/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-tooling-preview-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f86e4c7acc669a2a8859117e0fd00ef6/transformed/ui-tooling-preview/AndroidManifest.xml:20:5-44
+MERGED from [androidx.compose.ui:ui-tooling-preview-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f86e4c7acc669a2a8859117e0fd00ef6/transformed/ui-tooling-preview/AndroidManifest.xml:20:5-44
+MERGED from [androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:20:5-44
+MERGED from [androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:20:5-44
+MERGED from [androidx.compose.material:material-android:1.6.8] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/50a11add35c608cd7f13c26ba68e8606/transformed/material-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-android:1.6.8] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/50a11add35c608cd7f13c26ba68e8606/transformed/material-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-icons-core-android:1.6.8] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/33c543385ee3e143597fa2cb05f61006/transformed/material-icons-core-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-icons-core-android:1.6.8] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/33c543385ee3e143597fa2cb05f61006/transformed/material-icons-core-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-icons-extended-android:1.6.8] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/15f2d2998042f667e937d51055101c32/transformed/material-icons-extended-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-icons-extended-android:1.6.8] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/15f2d2998042f667e937d51055101c32/transformed/material-icons-extended-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-ripple-android:1.7.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/911420b2c5e0a964d797c7a4d46ab9e4/transformed/material-ripple-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.material:material-ripple-android:1.7.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/911420b2c5e0a964d797c7a4d46ab9e4/transformed/material-ripple-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.foundation:foundation-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/fd02a7724544e3847ddc2504a68f02c6/transformed/foundation-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.foundation:foundation-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/fd02a7724544e3847ddc2504a68f02c6/transformed/foundation-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.foundation:foundation-layout-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/8abac63b7eba83c951056ebf4853145a/transformed/foundation-layout/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.foundation:foundation-layout-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/8abac63b7eba83c951056ebf4853145a/transformed/foundation-layout/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.animation:animation-core-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d9a91d8da0f665eb1837eb7739439bf0/transformed/animation-core/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.animation:animation-core-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d9a91d8da0f665eb1837eb7739439bf0/transformed/animation-core/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.animation:animation-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/bf47927d2a3993685c2255f6955f4c66/transformed/animation/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.animation:animation-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/bf47927d2a3993685c2255f6955f4c66/transformed/animation/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-util-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d3ddfc3a48fc6675eaef8475cc0c8b8d/transformed/ui-util/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-util-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d3ddfc3a48fc6675eaef8475cc0c8b8d/transformed/ui-util/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-unit-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/609b2592ec08c14c0a573044b983f95b/transformed/ui-unit/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-unit-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/609b2592ec08c14c0a573044b983f95b/transformed/ui-unit/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-graphics-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/26fc4def78d3c6fb05110bd919e187b7/transformed/ui-graphics-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-graphics-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/26fc4def78d3c6fb05110bd919e187b7/transformed/ui-graphics-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-geometry-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/254a63e61f0a2a264e83454154d9b422/transformed/ui-geometry/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-geometry-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/254a63e61f0a2a264e83454154d9b422/transformed/ui-geometry/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-text-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/09f1a6198f0a14b5a15b81c1c7177c6f/transformed/ui-text/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-text-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/09f1a6198f0a14b5a15b81c1c7177c6f/transformed/ui-text/AndroidManifest.xml:5:5-44
+MERGED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:21:5-44
+MERGED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:21:5-44
+MERGED from [androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:21:5-44
+MERGED from [androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:21:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-ktx-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/2ca1ca02663db3e99031b56a355f6c69/transformed/lifecycle-runtime-ktx/AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-ktx-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/2ca1ca02663db3e99031b56a355f6c69/transformed/lifecycle-runtime-ktx/AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/64a3bb09527a4072c0cc3019d105e706/transformed/lifecycle-viewmodel-ktx-2.10.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/64a3bb09527a4072c0cc3019d105e706/transformed/lifecycle-viewmodel-ktx-2.10.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-livedata-core:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f186f3ed6181bb878c3d833688754333/transformed/lifecycle-livedata-core-2.10.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-livedata-core:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f186f3ed6181bb878c3d833688754333/transformed/lifecycle-livedata-core-2.10.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.navigationevent:navigationevent-android:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3c80765cf570d8b5549ad8fae6c9ce3f/transformed/navigationevent/AndroidManifest.xml:5:5-44
+MERGED from [androidx.navigationevent:navigationevent-android:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3c80765cf570d8b5549ad8fae6c9ce3f/transformed/navigationevent/AndroidManifest.xml:5:5-44
+MERGED from [androidx.navigationevent:navigationevent-compose-android:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/a07c5288903da1473ea6db2343161dd4/transformed/navigationevent-compose/AndroidManifest.xml:5:5-44
+MERGED from [androidx.navigationevent:navigationevent-compose-android:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/a07c5288903da1473ea6db2343161dd4/transformed/navigationevent-compose/AndroidManifest.xml:5:5-44
+MERGED from [androidx.savedstate:savedstate-ktx:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e58c0f4f42b877e8ca0b4bb5820d66d6/transformed/savedstate-ktx-1.4.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.savedstate:savedstate-ktx:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e58c0f4f42b877e8ca0b4bb5820d66d6/transformed/savedstate-ktx-1.4.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.savedstate:savedstate-android:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/409e4970d7018ba06793e8645fbfebf3/transformed/savedstate/AndroidManifest.xml:20:5-44
+MERGED from [androidx.savedstate:savedstate-android:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/409e4970d7018ba06793e8645fbfebf3/transformed/savedstate/AndroidManifest.xml:20:5-44
+MERGED from [androidx.savedstate:savedstate-compose-android:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/81dea4747afe9fafffe5f333a67342b6/transformed/savedstate-compose/AndroidManifest.xml:5:5-44
+MERGED from [androidx.savedstate:savedstate-compose-android:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/81dea4747afe9fafffe5f333a67342b6/transformed/savedstate-compose/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.runtime:runtime-annotation-android:1.9.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/b734b7b2db1b102078ca646bf1d94ae6/transformed/runtime-annotation/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.runtime:runtime-annotation-android:1.9.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/b734b7b2db1b102078ca646bf1d94ae6/transformed/runtime-annotation/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.runtime:runtime-android:1.9.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3686b4dbcbd316917f74c1f4ba15cf68/transformed/runtime/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.runtime:runtime-android:1.9.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3686b4dbcbd316917f74c1f4ba15cf68/transformed/runtime/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.runtime:runtime-saveable-android:1.9.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d12787a9f59fdb309bcdbefd0828f885/transformed/runtime-saveable/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.runtime:runtime-saveable-android:1.9.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d12787a9f59fdb309bcdbefd0828f885/transformed/runtime-saveable/AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-compose-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0052c033357b3d9ea8959f96d86de61d/transformed/lifecycle-runtime-compose/AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-compose-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0052c033357b3d9ea8959f96d86de61d/transformed/lifecycle-runtime-compose/AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c3ee26e466c9e4b3bb126e56e1aa1e77/transformed/lifecycle-viewmodel/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c3ee26e466c9e4b3bb126e56e1aa1e77/transformed/lifecycle-viewmodel/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-savedstate-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/94382612b763e829159785e335664b90/transformed/lifecycle-viewmodel-savedstate/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-savedstate-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/94382612b763e829159785e335664b90/transformed/lifecycle-viewmodel-savedstate/AndroidManifest.xml:20:5-44
+MERGED from [io.coil-kt.coil3:coil-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/b0557d56496caa7db4d5e906d5b4395e/transformed/coil-release/AndroidManifest.xml:5:5-44
+MERGED from [io.coil-kt.coil3:coil-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/b0557d56496caa7db4d5e906d5b4395e/transformed/coil-release/AndroidManifest.xml:5:5-44
+MERGED from [io.coil-kt.coil3:coil-network-core-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ca6508aaa28faaef819fdf444958bac7/transformed/coil-network-core-release/AndroidManifest.xml:5:5-44
+MERGED from [io.coil-kt.coil3:coil-network-core-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ca6508aaa28faaef819fdf444958bac7/transformed/coil-network-core-release/AndroidManifest.xml:5:5-44
+MERGED from [io.coil-kt.coil3:coil-core-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0858c3b888a8b1d217418e66f33f6e29/transformed/coil-core-release/AndroidManifest.xml:5:5-44
+MERGED from [io.coil-kt.coil3:coil-core-android:3.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0858c3b888a8b1d217418e66f33f6e29/transformed/coil-core-release/AndroidManifest.xml:5:5-44
+MERGED from [io.github.peerless2012:ass-media:0.5.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/bc1f3b4d57f977af1339fac7d492248f/transformed/ass-media-0.5.1/AndroidManifest.xml:5:5-44
+MERGED from [io.github.peerless2012:ass-media:0.5.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/bc1f3b4d57f977af1339fac7d492248f/transformed/ass-media-0.5.1/AndroidManifest.xml:5:5-44
+MERGED from [androidx.media3:media3-exoplayer-hls:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3b1fd12dc2c7d243d1ab48c2b76b2f37/transformed/media3-exoplayer-hls-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-exoplayer-hls:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3b1fd12dc2c7d243d1ab48c2b76b2f37/transformed/media3-exoplayer-hls-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-exoplayer:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/52b9a834e29213fb4ed0724db96909f8/transformed/media3-exoplayer-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-exoplayer:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/52b9a834e29213fb4ed0724db96909f8/transformed/media3-exoplayer-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-effect:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5fde52e531a44dc71789641a4168b74c/transformed/media3-effect-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-effect:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5fde52e531a44dc71789641a4168b74c/transformed/media3-effect-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-extractor:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/8a71fd4c92e4d22e4c5bad9fbe695a4f/transformed/media3-extractor-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-extractor:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/8a71fd4c92e4d22e4c5bad9fbe695a4f/transformed/media3-extractor-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-container:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/6308ee48a9325af3863750e172525dc5/transformed/media3-container-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-container:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/6308ee48a9325af3863750e172525dc5/transformed/media3-container-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-datasource:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/609298c40ecaace03fd339f182c3b7a7/transformed/media3-datasource-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-datasource:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/609298c40ecaace03fd339f182c3b7a7/transformed/media3-datasource-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-decoder:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3ba466e70155631d114105d971276186/transformed/media3-decoder-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-decoder:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3ba466e70155631d114105d971276186/transformed/media3-decoder-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-database:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/a7ea8db8a070ba32afc007957ff55fc7/transformed/media3-database-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-database:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/a7ea8db8a070ba32afc007957ff55fc7/transformed/media3-database-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-common:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/9c4fad361b5261253b4b0e3a3758285a/transformed/media3-common-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-common:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/9c4fad361b5261253b4b0e3a3758285a/transformed/media3-common-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-ui:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/70309a71dacb5d4f52bcf15265b96e75/transformed/media3-ui-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-ui:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/70309a71dacb5d4f52bcf15265b96e75/transformed/media3-ui-1.8.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.recyclerview:recyclerview:1.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ff8d3e356b501e27e74c493d247cc359/transformed/recyclerview-1.3.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.recyclerview:recyclerview:1.3.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ff8d3e356b501e27e74c493d247cc359/transformed/recyclerview-1.3.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.customview:customview-poolingcontainer:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/8c72fbea509cd8c4649cfb663824e439/transformed/customview-poolingcontainer-1.0.0/AndroidManifest.xml:20:5-21:38
+MERGED from [androidx.customview:customview-poolingcontainer:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/8c72fbea509cd8c4649cfb663824e439/transformed/customview-poolingcontainer-1.0.0/AndroidManifest.xml:20:5-21:38
+MERGED from [androidx.core:core-ktx:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/153f4bc57894bd96d0c856a9e6ddc9aa/transformed/core-ktx-1.18.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.core:core-ktx:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/153f4bc57894bd96d0c856a9e6ddc9aa/transformed/core-ktx-1.18.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.customview:customview:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/9750b60ac0ebfc24c42bf9bdf7d50057/transformed/customview-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.customview:customview:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/9750b60ac0ebfc24c42bf9bdf7d50057/transformed/customview-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.appcompat:appcompat-resources:1.7.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/fe14e9ad376a8633a9242840f4342876/transformed/appcompat-resources-1.7.1/AndroidManifest.xml:5:5-44
+MERGED from [androidx.appcompat:appcompat-resources:1.7.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/fe14e9ad376a8633a9242840f4342876/transformed/appcompat-resources-1.7.1/AndroidManifest.xml:5:5-44
+MERGED from [androidx.autofill:autofill:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/1aa9974491363088a407f2226e1a2997/transformed/autofill-1.0.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.autofill:autofill:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/1aa9974491363088a407f2226e1a2997/transformed/autofill-1.0.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.vectordrawable:vectordrawable-animated:1.1.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f3730e20704febaad91e14fd46944b77/transformed/vectordrawable-animated-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.vectordrawable:vectordrawable-animated:1.1.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/f3730e20704febaad91e14fd46944b77/transformed/vectordrawable-animated-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.vectordrawable:vectordrawable:1.1.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/1cc13dddf82943383501e6a1788df337/transformed/vectordrawable-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.vectordrawable:vectordrawable:1.1.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/1cc13dddf82943383501e6a1788df337/transformed/vectordrawable-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.graphics:graphics-path:1.0.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/b2db7f55de490b3e3aa0e33bb7dd773d/transformed/graphics-path-1.0.1/AndroidManifest.xml:5:5-44
+MERGED from [androidx.graphics:graphics-path:1.0.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/b2db7f55de490b3e3aa0e33bb7dd773d/transformed/graphics-path-1.0.1/AndroidManifest.xml:5:5-44
+MERGED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/03da2160109537132072abe27ea921f5/transformed/lifecycle-runtime/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/03da2160109537132072abe27ea921f5/transformed/lifecycle-runtime/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-compose-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5d1757a9ecde5f4bed2fb4635d071934/transformed/lifecycle-viewmodel-compose/AndroidManifest.xml:5:5-44
+MERGED from [androidx.lifecycle:lifecycle-viewmodel-compose-android:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5d1757a9ecde5f4bed2fb4635d071934/transformed/lifecycle-viewmodel-compose/AndroidManifest.xml:5:5-44
+MERGED from [com.google.accompanist:accompanist-drawablepainter:0.37.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/331d5c960f68e06c999307a5519c7c69/transformed/accompanist-drawablepainter-0.37.3/AndroidManifest.xml:21:5-44
+MERGED from [com.google.accompanist:accompanist-drawablepainter:0.37.3] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/331d5c960f68e06c999307a5519c7c69/transformed/accompanist-drawablepainter-0.37.3/AndroidManifest.xml:21:5-44
+MERGED from [androidx.compose.ui:ui-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4fa38763472dc50eebe0be43bf846e7a/transformed/ui-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.compose.ui:ui-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4fa38763472dc50eebe0be43bf846e7a/transformed/ui-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.activity:activity-ktx:1.13.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/dd43d23cfa9fd1f3bb0d047f33052b23/transformed/activity-ktx-1.13.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.activity:activity-ktx:1.13.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/dd43d23cfa9fd1f3bb0d047f33052b23/transformed/activity-ktx-1.13.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.activity:activity:1.13.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5f84dce1d4346e02f78145143116fc1c/transformed/activity-1.13.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.activity:activity:1.13.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/5f84dce1d4346e02f78145143116fc1c/transformed/activity-1.13.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.activity:activity-compose:1.13.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/1c2530b3d276cabfbee68dfb1b59a9dc/transformed/activity-compose-1.13.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.activity:activity-compose:1.13.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/1c2530b3d276cabfbee68dfb1b59a9dc/transformed/activity-compose-1.13.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.datastore:datastore-core-android:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/612069e9722a407eea4ac42068ba2d84/transformed/datastore-core-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.datastore:datastore-core-android:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/612069e9722a407eea4ac42068ba2d84/transformed/datastore-core-release/AndroidManifest.xml:5:5-44
+MERGED from [androidx.datastore:datastore-android:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/efe5b6b990c61172ad2514a8b59eed8e/transformed/datastore-release/AndroidManifest.xml:20:5-44
+MERGED from [androidx.datastore:datastore-android:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/efe5b6b990c61172ad2514a8b59eed8e/transformed/datastore-release/AndroidManifest.xml:20:5-44
+MERGED from [androidx.datastore:datastore-preferences-android:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/92abbed4a25b0e0070f5f7b856bc7ac4/transformed/datastore-preferences-release/AndroidManifest.xml:20:5-44
+MERGED from [androidx.datastore:datastore-preferences-android:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/92abbed4a25b0e0070f5f7b856bc7ac4/transformed/datastore-preferences-release/AndroidManifest.xml:20:5-44
+MERGED from [androidx.annotation:annotation-experimental:1.5.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/571d15cf79cbac5fa4ddef67adc043f6/transformed/annotation-experimental-1.5.1/AndroidManifest.xml:5:5-44
+MERGED from [androidx.annotation:annotation-experimental:1.5.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/571d15cf79cbac5fa4ddef67adc043f6/transformed/annotation-experimental-1.5.1/AndroidManifest.xml:5:5-44
+MERGED from [io.github.peerless2012:ass-kt:0.5.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c71cf7bf22c9a4e2964c297a9b8cc239/transformed/ass-kt-0.5.1/AndroidManifest.xml:5:5-44
+MERGED from [io.github.peerless2012:ass-kt:0.5.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c71cf7bf22c9a4e2964c297a9b8cc239/transformed/ass-kt-0.5.1/AndroidManifest.xml:5:5-44
+MERGED from [androidx.core:core-viewtree:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3d3e5d18fdc3c9685fc96e448e2afd7a/transformed/core-viewtree-1.0.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.core:core-viewtree:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/3d3e5d18fdc3c9685fc96e448e2afd7a/transformed/core-viewtree-1.0.0/AndroidManifest.xml:5:5-44
+MERGED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:21:5-44
+MERGED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:21:5-44
+MERGED from [androidx.startup:startup-runtime:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e610d97adc719f66d3cea431b02e36b2/transformed/startup-runtime-1.1.1/AndroidManifest.xml:21:5-23:41
+MERGED from [androidx.startup:startup-runtime:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e610d97adc719f66d3cea431b02e36b2/transformed/startup-runtime-1.1.1/AndroidManifest.xml:21:5-23:41
+MERGED from [androidx.tracing:tracing:1.2.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ac42bec34806d381eb9d4b374e77919d/transformed/tracing-1.2.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.tracing:tracing:1.2.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ac42bec34806d381eb9d4b374e77919d/transformed/tracing-1.2.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.interpolator:interpolator:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/516633f729c0d02262492230f4d920b0/transformed/interpolator-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.interpolator:interpolator:1.0.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/516633f729c0d02262492230f4d920b0/transformed/interpolator-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ac988362d01c4fd1b4919dac7678a33b/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/ac988362d01c4fd1b4919dac7678a33b/transformed/versionedparcelable-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.arch.core:core-runtime:2.2.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d597ca4b1c4d3b90a4885a71e2ecce61/transformed/core-runtime-2.2.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.arch.core:core-runtime:2.2.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/d597ca4b1c4d3b90a4885a71e2ecce61/transformed/core-runtime-2.2.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.exifinterface:exifinterface:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/be16844863fb38a8e6880c225cc77109/transformed/exifinterface-1.4.1/AndroidManifest.xml:5:5-44
+MERGED from [androidx.exifinterface:exifinterface:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/be16844863fb38a8e6880c225cc77109/transformed/exifinterface-1.4.1/AndroidManifest.xml:5:5-44
+	android:targetSdkVersion
+		INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from /data/data/com.neonide.studio/files/home/projects/LilacAnime/app/src/main/AndroidManifest.xml
+activity#androidx.compose.ui.tooling.PreviewActivity
+ADDED from [androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:23:9-25:39
+	android:exported
+		ADDED from [androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:25:13-36
+	android:name
+		ADDED from [androidx.compose.ui:ui-tooling-android:1.9.2] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/144e0c60538a37231f10ca4dfad8a389/transformed/ui-tooling/AndroidManifest.xml:24:13-71
+provider#androidx.startup.InitializationProvider
+ADDED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:24:9-32:20
+MERGED from [androidx.startup:startup-runtime:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e610d97adc719f66d3cea431b02e36b2/transformed/startup-runtime-1.1.1/AndroidManifest.xml:26:9-30:34
+MERGED from [androidx.startup:startup-runtime:1.1.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/e610d97adc719f66d3cea431b02e36b2/transformed/startup-runtime-1.1.1/AndroidManifest.xml:26:9-30:34
+	tools:node
+		ADDED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:28:13-31
+	android:authorities
+		ADDED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:26:13-68
+	android:exported
+		ADDED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:27:13-37
+	android:name
+		ADDED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:25:13-67
+meta-data#androidx.emoji2.text.EmojiCompatInitializer
+ADDED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:29:13-31:52
+	android:value
+		ADDED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:31:17-49
+	android:name
+		ADDED from [androidx.emoji2:emoji2:1.4.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/885bb21d670b83b01f5d4706f8daf718/transformed/emoji2-1.4.0/AndroidManifest.xml:30:17-75
+meta-data#androidx.lifecycle.ProcessLifecycleInitializer
+ADDED from [androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:29:13-31:52
+	android:value
+		ADDED from [androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:31:17-49
+	android:name
+		ADDED from [androidx.lifecycle:lifecycle-process:2.10.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/0f09246b85355b84b27fc7e9a652d1de/transformed/lifecycle-process-2.10.0/AndroidManifest.xml:30:17-78
+uses-permission#android.permission.ACCESS_NETWORK_STATE
+ADDED from [androidx.media3:media3-exoplayer:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/52b9a834e29213fb4ed0724db96909f8/transformed/media3-exoplayer-1.8.0/AndroidManifest.xml:22:5-79
+MERGED from [androidx.media3:media3-common:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/9c4fad361b5261253b4b0e3a3758285a/transformed/media3-common-1.8.0/AndroidManifest.xml:22:5-79
+MERGED from [androidx.media3:media3-common:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/9c4fad361b5261253b4b0e3a3758285a/transformed/media3-common-1.8.0/AndroidManifest.xml:22:5-79
+	android:name
+		ADDED from [androidx.media3:media3-exoplayer:1.8.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/52b9a834e29213fb4ed0724db96909f8/transformed/media3-exoplayer-1.8.0/AndroidManifest.xml:22:22-76
+permission#${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:22:5-24:47
+	android:protectionLevel
+		ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:24:9-44
+	android:name
+		ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:23:9-81
+permission#com.lilac.anime.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:22:5-24:47
+	android:protectionLevel
+		ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:24:9-44
+	android:name
+		ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:23:9-81
+uses-permission#${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:26:5-97
+	android:name
+		ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:26:22-94
+uses-permission#com.lilac.anime.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:26:5-97
+	android:name
+		ADDED from [androidx.core:core:1.18.0] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/c0a83c3026d6e7a789d757c0e64d28fe/transformed/core-1.18.0/AndroidManifest.xml:26:22-94
+meta-data#androidx.profileinstaller.ProfileInstallerInitializer
+ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:29:13-31:52
+	android:value
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:31:17-49
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:30:17-85
+receiver#androidx.profileinstaller.ProfileInstallReceiver
+ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:34:9-52:20
+	android:enabled
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:37:13-35
+	android:exported
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:38:13-36
+	android:permission
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:39:13-57
+	android:directBootAware
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:36:13-44
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:35:13-76
+intent-filter#action:name:androidx.profileinstaller.action.INSTALL_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:40:13-42:29
+action#androidx.profileinstaller.action.INSTALL_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:41:17-91
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:41:25-88
+intent-filter#action:name:androidx.profileinstaller.action.SKIP_FILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:43:13-45:29
+action#androidx.profileinstaller.action.SKIP_FILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:44:17-85
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:44:25-82
+intent-filter#action:name:androidx.profileinstaller.action.SAVE_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:46:13-48:29
+action#androidx.profileinstaller.action.SAVE_PROFILE
+ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:47:17-88
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:47:25-85
+intent-filter#action:name:androidx.profileinstaller.action.BENCHMARK_OPERATION
+ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:49:13-51:29
+action#androidx.profileinstaller.action.BENCHMARK_OPERATION
+ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:50:17-95
+	android:name
+		ADDED from [androidx.profileinstaller:profileinstaller:1.4.1] /data/data/com.neonide.studio/files/home/.gradle/caches/9.0.0/transforms/4bd75a4de1c2579bd0bee7c98a214939/transformed/profileinstaller-1.4.1/AndroidManifest.xml:50:25-92

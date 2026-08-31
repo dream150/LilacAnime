@@ -1,0 +1,78 @@
+[
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/xml_backup_rules.xml.flat",
+        "source": "com.lilac.anime.app-main-48:/xml/backup_rules.xml"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-xxhdpi_ic_launcher_adaptive_back.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-xxhdpi/ic_launcher_adaptive_back.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-xhdpi_ic_launcher_adaptive_fore.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-xhdpi/ic_launcher_adaptive_fore.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-xhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-hdpi_ic_launcher_adaptive_back.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-hdpi/ic_launcher_adaptive_back.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-xxxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/xml_data_extraction_rules.xml.flat",
+        "source": "com.lilac.anime.app-main-48:/xml/data_extraction_rules.xml"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/xml_file_paths.xml.flat",
+        "source": "com.lilac.anime.app-main-48:/xml/file_paths.xml"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-hdpi_ic_launcher_adaptive_fore.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-hdpi/ic_launcher_adaptive_fore.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-xxhdpi_ic_launcher_adaptive_fore.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-xxhdpi/ic_launcher_adaptive_fore.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-hdpi_ic_launcher.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-hdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-xxxhdpi_ic_launcher_adaptive_back.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-xxxhdpi/ic_launcher_adaptive_back.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-mdpi_ic_launcher_adaptive_fore.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-mdpi/ic_launcher_adaptive_fore.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-xxhdpi_ic_launcher.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-xxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-xhdpi_ic_launcher_adaptive_back.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-xhdpi/ic_launcher_adaptive_back.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-mdpi_ic_launcher.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-mdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-xxxhdpi_ic_launcher_adaptive_fore.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-xxxhdpi/ic_launcher_adaptive_fore.png"
+    },
+    {
+        "merged": "com.lilac.anime.app-debug-46:/mipmap-mdpi_ic_launcher_adaptive_back.png.flat",
+        "source": "com.lilac.anime.app-main-48:/mipmap-mdpi/ic_launcher_adaptive_back.png"
+    }
+]

@@ -1,0 +1,11 @@
+R_DEF: Internal format may change without notice
+local
+mipmap ic_launcher
+mipmap ic_launcher_adaptive_back
+mipmap ic_launcher_adaptive_fore
+string app_name
+style AppTheme
+style Theme.LilacAnime
+xml backup_rules
+xml data_extraction_rules
+xml file_paths
