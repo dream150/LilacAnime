@@ -1,4 +1,4 @@
-#Tue Sep 01 04:16:52 GMT 2026
+#Tue Sep 01 13:11:16 GMT 2026
 base.0=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/intermediates/dex/debug/mergeExtDexDebug/classes.dex
 base.1=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/intermediates/dex/debug/mergeProjectDexDebug/0/classes.dex
 base.2=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/intermediates/dex/debug/mergeProjectDexDebug/11/classes.dex

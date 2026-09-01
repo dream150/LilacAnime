@@ -90,6 +90,7 @@ import io.github.peerless2012.ass.media.parser.AssSubtitleParserFactory
 import io.github.peerless2012.ass.media.type.AssRenderType
 import io.github.peerless2012.ass.media.widget.AssSubtitleView
 import com.lilac.anime.data.*
+import com.lilac.anime.network.LinkkfChapterService
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.SubtitleAssetUtil
 import kotlinx.coroutines.Dispatchers
@@ -100,6 +101,51 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
+private fun formatChapterAnalysisStatus(raw: String): String {
+    val parts = raw.split(' ')
+    return when {
+        raw == "ANALYSIS_START" || raw.startsWith("ANALYSIS_START") -> "OP/ED 분석 시작"
+        raw.startsWith("CURRENT_FRONT_DOWNLOAD start=") -> "현재 에피소드 앞부분 다운로드 중..."
+        raw.startsWith("CURRENT_FRONT_DOWNLOAD_OK") -> "✓ 현재 에피소드 앞부분 다운로드 완료"
+        raw.startsWith("CURRENT_FRONT_DOWNLOAD_FAILED") -> "✗ 현재 에피소드 앞부분 다운로드 실패"
+        raw.startsWith("CURRENT_BACK_DOWNLOAD start=") -> "현재 에피소드 뒷부분 다운로드 중..."
+        raw.startsWith("CURRENT_BACK_DOWNLOAD_OK") -> "✓ 현재 에피소드 뒷부분 다운로드 완료"
+        raw.startsWith("CURRENT_BACK_DOWNLOAD_FAILED") -> "✗ 현재 에피소드 뒷부분 다운로드 실패"
+        raw == "CURRENT_FRONT_FINGERPRINT_START" -> "앞부분 오디오 Fingerprint 생성 중..."
+        raw.startsWith("CURRENT_FRONT_FINGERPRINT_OK") -> "✓ 앞부분 Fingerprint 생성 완료"
+        raw.startsWith("CURRENT_FRONT_FINGERPRINT_FAILED") -> "✗ 앞부분 Fingerprint 생성 실패"
+        raw == "CURRENT_BACK_FINGERPRINT_START" -> "뒷부분 오디오 Fingerprint 생성 중..."
+        raw.startsWith("CURRENT_BACK_FINGERPRINT_OK") -> "✓ 뒷부분 Fingerprint 생성 완료"
+        raw.startsWith("CURRENT_BACK_FINGERPRINT_FAILED") -> "✗ 뒷부분 Fingerprint 생성 실패"
+        raw.startsWith("COMPARISON_EPISODES_FOUND") -> "✓ 비교 에피소드 ${parts.firstOrNull { it.startsWith("count=") }?.substringAfter('=') ?: "0"}개 발견"
+        raw.startsWith("CANDIDATE_") && raw.contains("_START") -> "비교 에피소드 ${parts.lastOrNull()?.removePrefix("episode=") ?: "?"} 분석 시작"
+        raw.contains("_OP_DOWNLOAD episode=") -> "OP 비교 구간 다운로드 중..."
+        raw.contains("_OP_DOWNLOAD_OK") -> "✓ OP 비교 구간 다운로드 완료"
+        raw.contains("_OP_DOWNLOAD_FAILED") -> "✗ OP 비교 구간 다운로드 실패"
+        raw.contains("_OP_FINGERPRINT_START") -> "OP 오디오 Fingerprint 생성 중..."
+        raw.contains("_OP_FINGERPRINT_OK") -> "✓ OP Fingerprint 생성 완료"
+        raw.contains("_OP_FINGERPRINT_FAILED") -> "✗ OP Fingerprint 생성 실패"
+        raw.contains("_OP_MATCH") -> "✓ OP 공통 구간 후보 발견"
+        raw.contains("_OP_NO_MATCH") -> "OP 공통 구간 없음"
+        raw.contains("_ED_DOWNLOAD episode=") -> "ED 비교 구간 다운로드 중..."
+        raw.contains("_ED_DOWNLOAD_OK") -> "✓ ED 비교 구간 다운로드 완료"
+        raw.contains("_ED_DOWNLOAD_FAILED") -> "✗ ED 비교 구간 다운로드 실패"
+        raw.contains("_ED_FINGERPRINT_START") -> "ED 오디오 Fingerprint 생성 중..."
+        raw.contains("_ED_FINGERPRINT_OK") -> "✓ ED Fingerprint 생성 완료"
+        raw.contains("_ED_FINGERPRINT_FAILED") -> "✗ ED Fingerprint 생성 실패"
+        raw.contains("_ED_MATCH") -> "✓ ED 공통 구간 후보 발견"
+        raw.contains("_ED_NO_MATCH") -> "ED 공통 구간 없음"
+        raw.startsWith("COMPARISON_COMPLETE") -> "에피소드 비교 완료 · 최종 판정 중..."
+        raw.startsWith("OP_DETECTED") -> "✓ OP 감지 완료"
+        raw.startsWith("ED_DETECTED") -> "✓ ED 감지 완료"
+        raw == "OP_NOT_DETECTED" -> "OP를 감지하지 못했습니다"
+        raw == "ED_NOT_DETECTED" -> "ED를 감지하지 못했습니다"
+        raw.startsWith("ANALYSIS_COMPLETE") -> "✓ OP/ED 분석 완료"
+        raw.startsWith("ANALYSIS_FAILED") -> "✗ OP/ED 분석 실패: ${raw.removePrefix("ANALYSIS_FAILED ")}"
+        else -> raw
+    }
+}
+
 @Composable
 private fun SettingToggleRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -372,11 +418,13 @@ fun PlayerScreen(
     var isPlayerLocked by rememberSaveable { mutableStateOf(false) }
     var showLockedButton by remember { mutableStateOf(false) }
     var lockedButtonRequest by remember { mutableIntStateOf(0) }
-    var aniSkipSegments by remember { mutableStateOf<List<AniSkipSegment>>(emptyList()) }
-    var activeAniSkipSegment by remember { mutableStateOf<AniSkipSegment?>(null) }
-    var buttonAniSkipSegment by remember { mutableStateOf<AniSkipSegment?>(null) }
-    var aniSkipEnteredAtMs by remember { mutableLongStateOf(-1L) }
-    var skippedAniSkipKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var chapterSkipSegments by remember { mutableStateOf<List<ChapterSkipSegment>>(emptyList()) }
+    var activeChapterSkipSegment by remember { mutableStateOf<ChapterSkipSegment?>(null) }
+    var chapterAnalysisStatus by remember { mutableStateOf<String?>(null) }
+    var chapterAnalysisVisible by remember { mutableStateOf(false) }
+    var buttonChapterSkipSegment by remember { mutableStateOf<ChapterSkipSegment?>(null) }
+    var chapterSkipEnteredAtMs by remember { mutableLongStateOf(-1L) }
+    var skippedChapterSkipKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     var skipEpisodeKey by remember { mutableStateOf<String?>(null) }
     var suppressProgressSaveForEpisode by remember { mutableStateOf<Int?>(null) }
 
@@ -624,11 +672,13 @@ fun PlayerScreen(
         exoQualities = emptyList()
         selectedQualityOption = null
         pendingSeekPositionMs = -1L
-        aniSkipSegments = emptyList()
-        activeAniSkipSegment = null
-        buttonAniSkipSegment = null
-        aniSkipEnteredAtMs = -1L
-        skippedAniSkipKeys = emptySet()
+        chapterSkipSegments = emptyList()
+        activeChapterSkipSegment = null
+        buttonChapterSkipSegment = null
+        chapterAnalysisStatus = null
+        chapterAnalysisVisible = false
+        chapterSkipEnteredAtMs = -1L
+        skippedChapterSkipKeys = emptySet()
         skipEpisodeKey = null
         suppressProgressSaveForEpisode = null
         
@@ -1248,104 +1298,60 @@ fun PlayerScreen(
     LaunchedEffect(streamUrl, currentEpisode.number) {
         val currentStreamUrl = streamUrl ?: return@LaunchedEffect
 
-        aniSkipSegments = emptyList()
-        activeAniSkipSegment = null
-        buttonAniSkipSegment = null
-        aniSkipEnteredAtMs = -1L
-        skippedAniSkipKeys = emptySet()
+        chapterSkipSegments = emptyList()
+        activeChapterSkipSegment = null
+        buttonChapterSkipSegment = null
+        chapterSkipEnteredAtMs = -1L
+        skippedChapterSkipKeys = emptySet()
+        chapterAnalysisStatus = "분석 준비 중..."
+        chapterAnalysisVisible = true
 
         while (isActive) {
             val duration = exoPlayer.duration
-            if (
-                exoPlayer.playbackState == Player.STATE_READY &&
-                duration > 0L &&
-                duration != C.TIME_UNSET
-            ) {
-                val durationSeconds = kotlin.math.round(duration / 1000.0).toInt().coerceAtLeast(1)
-                Log.d(
-                    "AniSkip",
-                    "PLAYER_READY_FOR_ANISKIP episode=${currentEpisode.number} duration=$durationSeconds"
-                )
-
-                val segments = AniSkipService.getSkipTimes(
-                    anime.title,
-                    currentEpisode.number,
-                    durationSeconds
-                )
-
-                aniSkipSegments = segments.mapNotNull { segment ->
-                    val source = segment.episodeLength
-                    val local = durationSeconds.toDouble()
-
-                    if (source <= 0.0 || local <= 0.0) {
-                        Log.w(
-                            "AniSkip",
-                            "MAPPED_REJECT type=${segment.type} invalidLengths " +
-                                "source=$source local=$local"
-                        )
-                        return@mapNotNull null
+            if (exoPlayer.playbackState == Player.STATE_READY && duration > 0L && duration != C.TIME_UNSET) {
+                val durationSeconds = (duration / 1000L).toInt().coerceAtLeast(1)
+                Log.d("AniChapters", "START episode=${currentEpisode.number} duration=$durationSeconds source=linkkf")
+                val chapterStatus: (String) -> Unit = { raw ->
+                    scope.launch(Dispatchers.Main.immediate) {
+                        chapterAnalysisStatus = formatChapterAnalysisStatus(raw)
+                        chapterAnalysisVisible = true
                     }
-
-                    val diff = local - source
-
-                    // AniSkip의 타임스탬프는 원본 영상의 실제 타임라인이다.
-                    // 길이가 크게 다른 영상에 비율을 곱하면 OP/ED가 전혀 다른 위치로 이동한다.
-                    // 따라서 가까운 길이만 offset 보정하고, 크게 다르면 원본 시간을 그대로 사용한다.
-                    val (start, end, mode) = if (kotlin.math.abs(diff) <= 30.0) {
-                        Triple(
-                            (segment.startTime + diff).coerceIn(0.0, local),
-                            (segment.endTime + diff).coerceIn(0.0, local),
-                            "offset"
-                        )
-                    } else {
-                        Triple(
-                            segment.startTime.coerceIn(0.0, local),
-                            segment.endTime.coerceIn(0.0, local),
-                            "raw_mismatch"
-                        )
-                    }
-
-                    val safeStart = minOf(start, end)
-                    val safeEnd = maxOf(start, end)
-
-                    if (safeEnd <= safeStart) {
-                        Log.w(
-                            "AniSkip",
-                            "MAPPED_REJECT type=${segment.type} invalidMappedRange"
-                        )
-                        return@mapNotNull null
-                    }
-
-                    Log.d(
-                        "AniSkip",
-                        "MAPPED type=${segment.type} " +
-                            "raw=${segment.startTime}-${segment.endTime} " +
-                            "source=$source local=$local diff=$diff " +
-                            "mode=$mode mapped=$safeStart-$safeEnd"
-                    )
-
-                    segment.copy(
-                        startTime = safeStart,
-                        endTime = safeEnd
-                    )
                 }
 
+                // Downloaded episodes are analyzed entirely from the Media3 cache.
+                // This avoids WebView/network collection during the offline test.
+                chapterSkipSegments = if (isDownloaded) {
+                    Log.d("AniChapters", "OFFLINE_MODE episode=${currentEpisode.number}")
+                    LinkkfChapterService.detectSkipSegmentsOffline(
+                        context = context,
+                        animeId = anime.id,
+                        currentEpisode = currentEpisode,
+                        episodes = episodeList,
+                        episodeDurationSeconds = durationSeconds,
+                        onStatus = chapterStatus
+                    )
+                } else {
+                    LinkkfChapterService.detectSkipSegments(
+                        context = context,
+                        currentEpisode = currentEpisode,
+                        streamUrl = currentStreamUrl,
+                        episodeDurationSeconds = durationSeconds,
+                        episodes = episodeList,
+                        onStatus = chapterStatus
+                    )
+                }
                 skipEpisodeKey = "${anime.id}_${currentEpisode.displayNumber}"
-
-                Log.d(
-                    "AniSkip",
-                    "LOADED episode=${currentEpisode.number} count=${aniSkipSegments.size}"
-                )
+                Log.d("AniChapters", "LOADED count=${chapterSkipSegments.size}")
                 break
             }
             delay(250L)
         }
     }
 
-    LaunchedEffect(exoPlayer, currentEpisode.number, aniSkipSegments, isAutoSkipEnabled) {
-        val segments = aniSkipSegments
+    LaunchedEffect(exoPlayer, currentEpisode.number, chapterSkipSegments, isAutoSkipEnabled) {
+        val segments = chapterSkipSegments
         if (segments.isEmpty()) {
-            activeAniSkipSegment = null
+            activeChapterSkipSegment = null
             return@LaunchedEffect
         }
 
@@ -1355,33 +1361,33 @@ fun PlayerScreen(
                 positionSeconds >= it.startTime && positionSeconds < it.endTime
             }
 
-            if (active != activeAniSkipSegment) {
-                activeAniSkipSegment = active
-                buttonAniSkipSegment = active
-                aniSkipEnteredAtMs = if (active != null) System.currentTimeMillis() else -1L
+            if (active != activeChapterSkipSegment) {
+                activeChapterSkipSegment = active
+                buttonChapterSkipSegment = active
+                chapterSkipEnteredAtMs = if (active != null) System.currentTimeMillis() else -1L
 
                 if (active != null) {
                     Log.d(
-                        "AniSkip",
+                        "AniChapters",
                         "ENTER type=${active.type} position=$positionSeconds range=${active.startTime}-${active.endTime}"
                     )
                 }
             }
 
             if (active == null) {
-                buttonAniSkipSegment = null
-                aniSkipEnteredAtMs = -1L
+                buttonChapterSkipSegment = null
+                chapterSkipEnteredAtMs = -1L
             } else if (isAutoSkipEnabled) {
                 val key = "${active.type}:${active.startTime}:${active.endTime}"
-                val elapsedMs = if (aniSkipEnteredAtMs >= 0L) {
-                    System.currentTimeMillis() - aniSkipEnteredAtMs
+                val elapsedMs = if (chapterSkipEnteredAtMs >= 0L) {
+                    System.currentTimeMillis() - chapterSkipEnteredAtMs
                 } else {
                     0L
                 }
 
                 // 버튼이 잠깐 보인 뒤 자동 스킵되도록 한다. 자동 스킵을 끄면
                 // 구간 전체에서 버튼으로 직접 넘길 수 있다.
-                if (key !in skippedAniSkipKeys && elapsedMs >= 1200L) {
+                if (key !in skippedChapterSkipKeys && elapsedMs >= 1200L) {
                     val duration = exoPlayer.duration
                     val targetSeconds = if (duration > 0L && duration != C.TIME_UNSET) {
                         minOf(active.endTime, duration / 1000.0 - 0.5)
@@ -1391,14 +1397,14 @@ fun PlayerScreen(
 
                     if (targetSeconds > positionSeconds + 0.25) {
                         Log.d(
-                            "AniSkip",
+                            "AniChapters",
                             "AUTO_SKIP type=${active.type} position=$positionSeconds target=$targetSeconds elapsedMs=$elapsedMs"
                         )
-                        skippedAniSkipKeys = skippedAniSkipKeys + key
+                        skippedChapterSkipKeys = skippedChapterSkipKeys + key
                         exoPlayer.seekTo((targetSeconds * 1000.0).toLong().coerceAtLeast(0L))
-                        activeAniSkipSegment = null
-                        buttonAniSkipSegment = null
-                        aniSkipEnteredAtMs = -1L
+                        activeChapterSkipSegment = null
+                        buttonChapterSkipSegment = null
+                        chapterSkipEnteredAtMs = -1L
                     }
                 }
             }
@@ -1728,6 +1734,50 @@ fun PlayerScreen(
             }
         }
 
+        LaunchedEffect(chapterAnalysisStatus) {
+            val status = chapterAnalysisStatus ?: return@LaunchedEffect
+            if (status.startsWith("✓ OP/ED 분석 완료") || status.startsWith("✗ OP/ED 분석 실패")) {
+                delay(5000L)
+                chapterAnalysisVisible = false
+            }
+        }
+
+        AnimatedVisibility(
+            visible = chapterAnalysisVisible && !isPlayerLocked,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(top = 68.dp, start = 14.dp),
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color.Black.copy(alpha = 0.78f),
+                tonalElevation = 4.dp,
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (chapterAnalysisStatus?.startsWith("✓") != true && chapterAnalysisStatus?.startsWith("✗") != true) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = Lilac
+                        )
+                        Spacer(Modifier.width(9.dp))
+                    }
+                    Text(
+                        text = chapterAnalysisStatus ?: "OP/ED 분석 중...",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+
         // 우측 하단에 6초간 표시되는 Csora ASS 전환 안내.
         AnimatedVisibility(
             visible = showCsoraAssPrompt && !isPlayerLocked,
@@ -2047,11 +2097,11 @@ fun PlayerScreen(
                                 )
                             }
                             Switch(
-                                checked = vm.playerSettings.showAniSkipButton,
+                                checked = vm.playerSettings.showChapterSkipButton,
                                 onCheckedChange = { enabled ->
                                     vm.updatePlayerSettings(
                                         context,
-                                        vm.playerSettings.copy(showAniSkipButton = enabled)
+                                        vm.playerSettings.copy(showChapterSkipButton = enabled)
                                     )
                                 }
                             )
@@ -2478,7 +2528,7 @@ fun PlayerScreen(
         }
         }
         }
-        if (vm.playerSettings.showAniSkipButton) buttonAniSkipSegment?.let { segment ->
+        if (vm.playerSettings.showChapterSkipButton) buttonChapterSkipSegment?.let { segment ->
             Box(modifier = Modifier.fillMaxSize()) {
             val label = if (segment.type == "op" || segment.type == "mixed-op") {
                 "OP 스킵"
@@ -2497,14 +2547,14 @@ fun PlayerScreen(
                     }
 
                     Log.d(
-                        "AniSkip",
+                        "AniChapters",
                         "BUTTON_SKIP type=${segment.type} position=$positionSeconds target=$targetSeconds"
                     )
 
-                    skippedAniSkipKeys = skippedAniSkipKeys + "${segment.type}:${segment.startTime}:${segment.endTime}"
-                    activeAniSkipSegment = null
-                    buttonAniSkipSegment = null
-                    aniSkipEnteredAtMs = -1L
+                    skippedChapterSkipKeys = skippedChapterSkipKeys + "${segment.type}:${segment.startTime}:${segment.endTime}"
+                    activeChapterSkipSegment = null
+                    buttonChapterSkipSegment = null
+                    chapterSkipEnteredAtMs = -1L
 
                     if (targetSeconds > positionSeconds) {
                         exoPlayer.seekTo((targetSeconds * 1000.0).toLong().coerceAtLeast(0L))

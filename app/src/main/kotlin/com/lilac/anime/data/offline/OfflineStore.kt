@@ -34,7 +34,7 @@ object OfflineStore {
             putString("pref_custom_font_path", settings.customFontPath)
             putString("pref_subtitle_font_path", settings.subtitleFontPath)
             putString("pref_subtitle_font_source", settings.subtitleFontSource)
-            putBoolean("pref_show_ani_skip_button", settings.showAniSkipButton)
+            putBoolean("pref_show_chapter_skip_button", settings.showChapterSkipButton)
             putInt("pref_double_tap_seek_seconds", settings.doubleTapSeekSeconds)
             putFloat("pref_playback_speed", settings.playbackSpeed)
             putBoolean("pref_vtt_bold", settings.vttBold)
@@ -83,7 +83,7 @@ object OfflineStore {
             customFontPath = prefs.getString("pref_custom_font_path", null),
             subtitleFontPath = prefs.getString("pref_subtitle_font_path", null),
             subtitleFontSource = prefs.getString("pref_subtitle_font_source", null),
-            showAniSkipButton = prefs.getBoolean("pref_show_ani_skip_button", true),
+            showChapterSkipButton = prefs.getBoolean("pref_show_chapter_skip_button", true),
             doubleTapSeekSeconds = prefs.getInt("pref_double_tap_seek_seconds", 10).coerceIn(1, 120),
             playbackSpeed = prefs.getFloat("pref_playback_speed", 1.0f).let { saved ->
                 val options = floatArrayOf(0.1f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)

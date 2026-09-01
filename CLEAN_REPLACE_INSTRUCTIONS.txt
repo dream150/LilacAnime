@@ -1,0 +1,1 @@
+IMPORTANT: Do not extract this ZIP over the old project. Delete/replace the existing project folder first, because old AniSkipService.kt and AnimeThemesSkipService.kt files are intentionally absent from this version.
