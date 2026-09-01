@@ -18,7 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
+import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
 
 @Composable
@@ -72,7 +72,7 @@ items(
     Column(
         modifier = Modifier.clickableNoIndication { openDetail(anime) }
     ) {
-        AsyncImage(
+        AnimeImage(
             model = anime.backdrop.ifEmpty { anime.poster }, // backdrop을 사용하고, 없을 경우 poster로 대체
             contentDescription = anime.title,
             modifier = Modifier

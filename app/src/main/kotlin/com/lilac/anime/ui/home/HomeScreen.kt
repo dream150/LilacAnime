@@ -6,11 +6,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
+import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -23,6 +25,9 @@ fun HomeScreen(
     onNavigate: (String) -> Unit
 ) {
     val context = LocalContext.current
+
+
+    Box(modifier = Modifier.fillMaxSize()) {
     AppScaffold(
         selected = "home",
         onSelect = onNavigate
@@ -47,6 +52,39 @@ fun HomeScreen(
                     }
                     IconButton(onClick = { onNavigate("search") }) {
                         Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.onBackground)
+                    }
+                }
+            }
+
+            if (vm.playerSettings.videoSourcePreference == "animenosub") {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 6.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Animenosub 인증", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "영상 재생 전에 Animenosub 인증을 완료해주세요.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Button(onClick = { onNavigate("animenosub-auth") }) {
+                                Text("인증하기")
+                            }
+                        }
                     }
                 }
             }
@@ -94,6 +132,8 @@ fun HomeScreen(
                 item { AnimeRail(vm.homeAnime.reversed().take(10), openDetail) }
             }
         }
+    }
+
     }
 }
 

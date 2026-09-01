@@ -19,7 +19,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
+import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
 
 @Composable
@@ -103,7 +103,7 @@ fun LibraryScreen(
                 ) {
                     items(currentList) { anime ->
                         Row(modifier = Modifier.fillMaxWidth().clickableNoIndication { open(anime) }) {
-                            AsyncImage(
+                            AnimeImage(
                                 model = anime.poster,
                                 contentDescription = anime.title,
                                 modifier = Modifier.size(width = 90.dp, height = 130.dp).clip(RoundedCornerShape(14.dp)),

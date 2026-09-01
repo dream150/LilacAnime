@@ -1,4 +1,4 @@
-#Mon Aug 31 12:28:56 GMT 2026
+#Tue Sep 01 04:16:52 GMT 2026
 base.0=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/intermediates/dex/debug/mergeExtDexDebug/classes.dex
 base.1=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/intermediates/dex/debug/mergeProjectDexDebug/0/classes.dex
 base.2=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/intermediates/dex/debug/mergeProjectDexDebug/11/classes.dex
@@ -8,6 +8,7 @@ base.5=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/in
 base.6=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/intermediates/dex/debug/mergeExtDexDebug/classes2.dex
 base.7=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/intermediates/dex/debug/mergeExtDexDebug/classes3.dex
 base.8=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/intermediates/dex/debug/mergeExtDexDebug/classes4.dex
+base.9=/data/data/com.neonide.studio/files/home/projects/LilacAnime/app/build/intermediates/dex/debug/mergeProjectDexDebug/7/classes.dex
 path.0=classes.dex
 path.1=0/classes.dex
 path.2=11/classes.dex
@@ -17,6 +18,7 @@ path.5=8/classes.dex
 path.6=classes2.dex
 path.7=classes3.dex
 path.8=classes4.dex
+path.9=7/classes.dex
 renamed.0=classes.dex
 renamed.1=classes2.dex
 renamed.2=classes3.dex
@@ -26,3 +28,4 @@ renamed.5=classes6.dex
 renamed.6=classes7.dex
 renamed.7=classes8.dex
 renamed.8=classes9.dex
+renamed.9=classes10.dex

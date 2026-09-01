@@ -15,7 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
+import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
 
 @Composable
@@ -30,7 +30,7 @@ fun AnimeRail(list: List<Anime>, openDetail: (Anime) -> Unit) {
                     .width(190.dp) // 계속 시청하기와 동일한 가로 너비
                     .clickableNoIndication { openDetail(anime) }
             ) {
-                AsyncImage(
+                AnimeImage(
                     model = anime.backdrop.ifEmpty { anime.poster }, // backdrop 사용[cite: 8]
                     contentDescription = anime.title,
                     modifier = Modifier

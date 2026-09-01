@@ -12,8 +12,8 @@ android {
         applicationId = "com.lilac.anime"
         minSdk = 23
         targetSdk = 37
-        versionCode = 11
-        versionName = "0.2.1"
+        versionCode = 15
+        versionName = "0.2.5"
     }
 
     buildFeatures {

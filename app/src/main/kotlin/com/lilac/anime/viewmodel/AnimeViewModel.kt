@@ -1,6 +1,7 @@
 package com.lilac.anime
 
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 
 import android.content.Context
 import android.content.Intent
@@ -59,6 +60,9 @@ class AnimeViewModel : ViewModel() {
         private set
 
     private var isAllAnimeFullyLoaded = false
+    private var allAnimeLoadJob: Job? = null
+    var sourceRevision by mutableIntStateOf(0)
+        private set
 
     var error by mutableStateOf<String?>(null)
         private set
@@ -181,7 +185,8 @@ class AnimeViewModel : ViewModel() {
     fun isEpisodeDownloaded(animeId: String, episode: Episode): Boolean {
         // New downloads use the exact Episode.id. Numeric legacy downloads are
         // still recognized for normal episodes without making 4 and 4a collide.
-        return _downloadedIds.value.contains(episode.id) ||
+        return _downloadedIds.value.contains(offlineDownloadId(animeId, episode)) ||
+            _downloadedIds.value.contains(episode.id) ||
             (episode.displayNumber == episode.number.toString() &&
                 _downloadedIds.value.contains("${animeId}_${episode.number}"))
     }
@@ -191,7 +196,7 @@ class AnimeViewModel : ViewModel() {
             val lib = OfflineStore.getLibrary(context)
             val history = OfflineStore.getWatchHistory(context)
             val settings = OfflineStore.getPlayerSettings(context)
-            val cachedList = OfflineStore.getSavedAnimeList(context)
+            val cachedList = OfflineStore.getSavedAnimeList(context, settings.videoSourcePreference)
 
             withContext(Dispatchers.Main) {
                 library = lib
@@ -210,14 +215,14 @@ class AnimeViewModel : ViewModel() {
 
             if (!_isOffline.value) {
                 try {
-                    val firstPageList = repository.getHomeAnimeList()
+                    val firstPageList = repository.getHomeAnimeList(playerSettings.videoSourcePreference)
                     if (firstPageList.isNotEmpty()) {
                         withContext(Dispatchers.Main) {
                             homeAnime = firstPageList.take(10)
                             if (allAnime.isEmpty()) allAnime = firstPageList
                             firstPageList.forEach { animeCache[it.id] = it }
                         }
-                        OfflineStore.saveAnimeList(context, firstPageList)
+                        OfflineStore.saveAnimeList(context, firstPageList, playerSettings.videoSourcePreference)
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
@@ -245,19 +250,55 @@ class AnimeViewModel : ViewModel() {
     }
 
     fun updatePlayerSettings(context: Context, newSettings: PlayerSettings) {
+        val sourceChanged = playerSettings.videoSourcePreference != newSettings.videoSourcePreference
         playerSettings = newSettings
+        if (sourceChanged) sourceRevision++
         viewModelScope.launch(Dispatchers.IO) {
             OfflineStore.savePlayerSettings(context, newSettings)
+            if (sourceChanged && !_isOffline.value) {
+                withContext(Dispatchers.Main) {
+                    homeAnime = emptyList()
+                    allAnime = emptyList()
+                    detailCache.clear()
+                    animeCache.clear()
+                    episodeCache.clear()
+                    dubEpisodeCache.clear()
+                    episodeLoading.clear()
+                    isOfflineOnlyCache.clear()
+                    isAllAnimeFullyLoaded = false
+                    allAnimeLoadJob?.cancel()
+                    allAnimeLoadJob = null
+                    isAllAnimeLoading = false
+                    loading = true
+                    error = null
+                }
+                try {
+                    val first = repository.getHomeAnimeList(newSettings.videoSourcePreference)
+                    withContext(Dispatchers.Main) {
+                        homeAnime = first.take(10)
+                        allAnime = first
+                        first.forEach { animeCache[it.id] = it }
+                        loading = false
+                    }
+                    OfflineStore.saveAnimeList(context, first, newSettings.videoSourcePreference)
+                    loadAllAnime(newSettings.videoSourcePreference)
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        loading = false
+                        error = e.message ?: "영상 소스 목록을 불러오지 못했습니다."
+                    }
+                }
+            }
         }
     }
 
-    fun loadAllAnime() {
+    fun loadAllAnime(source: String = playerSettings.videoSourcePreference) {
         if (isAllAnimeLoading || isAllAnimeFullyLoaded) return
         isAllAnimeLoading = true
-        
-        viewModelScope.launch {
+        allAnimeLoadJob?.cancel()
+        allAnimeLoadJob = viewModelScope.launch {
             try {
-                repository.getAllAnimeListFlow().collect { list ->
+                repository.getAllAnimeListFlow(source).collect { list ->
                     allAnime = list
                     list.forEach { animeCache[it.id] = it }
                 }
@@ -265,6 +306,7 @@ class AnimeViewModel : ViewModel() {
             } catch (_: Exception) {
             } finally {
                 isAllAnimeLoading = false
+                allAnimeLoadJob = null
             }
         }
     }
@@ -282,7 +324,7 @@ class AnimeViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    repository.getAnimeDetail(target)
+                    repository.getAnimeDetail(target, playerSettings.videoSourcePreference)
                 }
                 detailCache[result.id] = result
                 animeCache[result.id] = result
@@ -297,7 +339,12 @@ class AnimeViewModel : ViewModel() {
 
     suspend fun getDownloadedAnimeList(context: Context): List<Anime> = withContext(Dispatchers.IO) {
         val downloadedAnimeIds = _downloadedIds.value.mapNotNull { id ->
-            id.split("_").firstOrNull()
+            when {
+                "::" in id -> id.substringBefore("::").takeIf { it.isNotBlank() }
+                "_dub_ep_" in id -> id.substringBefore("_dub_ep_").takeIf { it.isNotBlank() }
+                "_ep_" in id -> id.substringBefore("_ep_").takeIf { it.isNotBlank() }
+                else -> id.substringBeforeLast("_").takeIf { it.isNotBlank() }
+            }
         }.toSet()
 
         val allAvailableAnime = (homeAnime + allAnime + detailCache.values + animeCache.values).distinctBy { it.id }
@@ -362,14 +409,14 @@ class AnimeViewModel : ViewModel() {
         episodeLoading[anime.id] = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val targetAnime = detailCache[anime.id] ?: repository.getAnimeDetail(anime).also {
+                val targetAnime = detailCache[anime.id] ?: repository.getAnimeDetail(anime, playerSettings.videoSourcePreference).also {
                     withContext(Dispatchers.Main) {
                         detailCache[it.id] = it
                         animeCache[it.id] = it
                     }
                 }
 
-                val result = repository.getEpisodes(targetAnime)
+                val result = repository.getEpisodes(targetAnime, playerSettings.videoSourcePreference)
                 
                 withContext(Dispatchers.Main) {
                     if (result.isNotEmpty()) {
@@ -403,15 +450,17 @@ class AnimeViewModel : ViewModel() {
             }
 
             val downloadedEpisodeIds = _downloadedIds.value
-                .filter { it.startsWith("${anime.id}_ep_") || it.startsWith("${anime.id}_dub_ep_") }
+                .filter { it.startsWith("${anime.id}::") || it.startsWith("${anime.id}_ep_") || it.startsWith("${anime.id}_dub_ep_") }
                 .sortedWith(compareByDescending<String> { Regex("(\\d+)").find(it.substringAfterLast("_ep_"))?.value?.toIntOrNull() ?: 0 }.thenByDescending { it })
 
-            val offlineList = downloadedEpisodeIds.mapNotNull { id ->
-                OfflineStore.getEpisodesForAnime(context, anime.id).firstOrNull { it.id == id }
+            val stored = OfflineStore.getEpisodesForAnime(context, anime.id)
+            val offlineList = downloadedEpisodeIds.mapNotNull { rawId ->
+                val id = rawId.substringAfter("::", rawId)
+                stored.firstOrNull { it.id == id }
                     ?: Regex("^(?:${Regex.escape(anime.id)}_(?:dub_)?ep_)(.+)$").find(id)?.let { m ->
                         val label = m.groupValues[1]
                         val num = Regex("^\\d+").find(label)?.value?.toIntOrNull() ?: return@mapNotNull null
-                        Episode(id = id, number = num, title = "${'$'}label화", displayNumber = label)
+                        Episode(id = id, number = num, title = "${label}화", displayNumber = label)
                     }
             }
 
@@ -428,7 +477,7 @@ class AnimeViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    repository.getDubEpisodes(anime)
+                    repository.getDubEpisodes(anime, playerSettings.videoSourcePreference)
                 }
                 dubEpisodeCache[anime.id] = result
             } catch (_: Exception) {
@@ -449,7 +498,10 @@ class AnimeViewModel : ViewModel() {
     fun deleteDownload(context: Context, anime: Anime, episode: Episode) {
         viewModelScope.launch(Dispatchers.IO) {
             val stored = OfflineStore.getEpisode(context, anime.id, episode)
-            deleteDownloadInternal(context, anime, episode.id, stored)
+            deleteDownloadInternal(context, anime, offlineDownloadId(anime.id, episode), stored)
+            DownloadService.sendRemoveDownload(
+                context, LilacDownloadService::class.java, episode.id, false
+            )
             if (episode.displayNumber == episode.number.toString()) {
                 // Remove the old download ID too when upgrading from the previous version.
                 DownloadService.sendRemoveDownload(
@@ -467,11 +519,11 @@ class AnimeViewModel : ViewModel() {
         downloadId: String,
         ep: Episode?
     ) {
-        ep?.vttUrl?.let { path ->
-            if (path.startsWith("/")) {
-                val file = File(path)
-                if (file.exists()) file.delete()
+        ep?.let { episode ->
+            listOf("linkkf", "kairan", "csora").forEach { source ->
+                try { SubtitleStore.delete(context, anime.id, episode.displayNumber, episode.number, source) } catch (_: Exception) { }
             }
+            episode.vttUrl?.let { path -> if (path.startsWith("/")) File(path).takeIf(File::isFile)?.delete() }
         }
 
         DownloadService.sendRemoveDownload(
@@ -551,11 +603,14 @@ class AnimeViewModel : ViewModel() {
     }
 
     fun cancelDownload(context: Context, anime: Anime, episode: Episode) {
-        val downloadKey = episode.id
+        val downloadKey = offlineDownloadId(anime.id, episode)
 
         // 1. 진행 중인 Media3 다운로드 취소
         DownloadService.sendRemoveDownload(
             context, LilacDownloadService::class.java, downloadKey, false
+        )
+        DownloadService.sendRemoveDownload(
+            context, LilacDownloadService::class.java, episode.id, false
         )
         if (episode.displayNumber == episode.number.toString()) {
             // 이전 버전의 숫자형 다운로드도 함께 정리한다.

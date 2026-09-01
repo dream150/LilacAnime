@@ -16,7 +16,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
+import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
 
 @Composable
@@ -29,7 +29,7 @@ fun HeroCard(anime: Anime, open: (Anime) -> Unit) {
             .clip(RoundedCornerShape(28.dp))
             .clickableNoIndication { open(anime) }
     ) {
-        AsyncImage(
+        AnimeImage(
             model = anime.backdrop,
             contentDescription = anime.title,
             // height(200.dp)를 fillMaxSize()로 변경하여 부모 Box(300.dp)를 꽉 채우도록 수정했습니다.

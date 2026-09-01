@@ -13,6 +13,8 @@ data class StreamQuality(
 
 data class PlayerSettings(
     val defaultQuality: String = "1080p",
+    // 영상 소스: Linkkf는 기존 동작을 그대로 유지하고, Animenosub은 별도 선택 가능
+    val videoSourcePreference: String = "linkkf",
     val subtitleFont: String = "기본체",
     val subtitleSize: Float = 100f,
     val textColor: Int = android.graphics.Color.WHITE,
