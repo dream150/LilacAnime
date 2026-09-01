@@ -60,6 +60,6 @@ object HangulSimilarityMatcher {
         return (1.0 - weightedEditDistance(a, b) / maxOf(a.length, b.length).toDouble()).coerceIn(0.0, 1.0)
     }
 
-    /** Compatibility score for existing AniSkip thresholds (0..10000). */
+    /** Compatibility score for existing chapter detection thresholds (0..10000). */
     fun score(first: String, second: String): Int = (similarity(first, second) * 10000.0).toInt()
 }

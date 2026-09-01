@@ -444,3 +444,12 @@ LilacAnime가 만들고 싶은 것은
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:E9DDF8,50:B99BE8,100:8B6FC7&height=160&section=footer" width="100%"/>
 
 </div>
+
+## OP/ED 분석 진단 로그
+
+Linkkf episode-to-episode OP/ED 분석에는 단계별 상태 로그가 추가되어 있습니다.
+
+- Logcat tag: `EpisodeChapters` — 다운로드, Fingerprint 생성, 후보 비교, 매칭 점수, 최종 OP/ED 판정
+- Logcat tag: `AniChapters` — 플레이어에서 분석 시작/완료 및 스킵 구간 진입/자동 스킵
+- 재생 화면 좌측 상단에 현재 분석 단계가 표시됩니다.
+- 분석 실패 시 HTTP/디코딩/비교 단계의 실패 상태를 구분해서 확인할 수 있습니다.

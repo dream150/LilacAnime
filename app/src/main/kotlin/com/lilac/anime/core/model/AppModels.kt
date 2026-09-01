@@ -29,7 +29,7 @@ data class PlayerSettings(
     // Discovered Kairan/Csora ASS font selected by the user.
     val subtitleFontPath: String? = null,
     val subtitleFontSource: String? = null,
-    val showAniSkipButton: Boolean = true,
+    val showChapterSkipButton: Boolean = true,
     // 좌/우 더블 탭 시 이동할 시간(초)
     val doubleTapSeekSeconds: Int = 10,
     // 기본 재생 배속
@@ -46,7 +46,7 @@ data class ExoVideoQualityOption(
     val isAuto: Boolean = false
 )
 
-data class AniSkipSegment(
+data class ChapterSkipSegment(
     val type: String,
     val startTime: Double,
     val endTime: Double,
