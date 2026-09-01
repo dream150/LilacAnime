@@ -5,6 +5,9 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -207,6 +210,37 @@ fun LilacApp(vm: AnimeViewModel = viewModel()) {
                             onBack = { nav.popBackStack() }
                         )
                     }
+                }
+            }
+
+            composable("animenosub-auth") {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { nav.popBackStack() }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "뒤로")
+                        }
+                        Text(
+                            "Animenosub 인증",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            WebView(ctx).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.mediaPlaybackRequiresUserGesture = false
+                                webViewClient = WebViewClient()
+                                loadUrl("https://animenosub.to/mushoku-tensei-jobless-reincarnation-season-3-episode-10/")
+                            }
+                        }
+                    )
                 }
             }
 

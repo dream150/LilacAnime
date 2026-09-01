@@ -28,12 +28,12 @@ class LinkkfClient {
         .callTimeout(45, TimeUnit.SECONDS)
         .build()
 
-    fun getDocument(url: String): Document {
+    fun getDocument(url: String, referer: String = "https://linkkf.tv/"): Document {
         var lastError: Exception? = null
 
         repeat(MAX_ATTEMPTS) { attempt ->
             try {
-                return requestDocument(url)
+                return requestDocument(url, referer)
             } catch (e: Exception) {
                 lastError = e
                 if (!isRetryable(e) || attempt == MAX_ATTEMPTS - 1) {
@@ -47,7 +47,7 @@ class LinkkfClient {
         throw lastError ?: IOException("네트워크 요청에 실패했습니다.")
     }
 
-    private fun requestDocument(url: String): Document {
+    private fun requestDocument(url: String, referer: String): Document {
         val request = Request.Builder()
             .url(url)
             .header(
@@ -61,7 +61,7 @@ class LinkkfClient {
             .header("Cache-Control", "no-cache")
             .header("Pragma", "no-cache")
             .header("Upgrade-Insecure-Requests", "1")
-            .header("Referer", "https://linkkf.tv/")
+            .header("Referer", referer)
             .build()
 
         client.newCall(request).execute().use { response ->

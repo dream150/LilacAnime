@@ -1,6 +1,9 @@
 package com.lilac.anime
 
 import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
@@ -25,6 +28,14 @@ class LilacDownloadService : DownloadService(
 
     override fun onCreate() {
         super.onCreate()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getSystemService(NotificationManager::class.java).createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "LilacAnime 다운로드", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "오프라인 영상 다운로드 진행 상태"
+                    setShowBadge(false)
+                }
+            )
+        }
         notificationHelper = DownloadNotificationHelper(this, CHANNEL_ID)
     }
 

@@ -26,7 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
+import com.lilac.anime.ui.AnimeImage
 
 @Composable
 fun WatchHistoryScreen(
@@ -122,7 +122,7 @@ fun WatchHistoryScreen(
                                     Modifier.fillMaxWidth().aspectRatio(16f / 9f)
                                         .clip(RoundedCornerShape(12.dp))
                                 ) {
-                                    AsyncImage(
+                                    AnimeImage(
                                         model = anime.backdrop.ifEmpty { anime.poster },
                                         contentDescription = anime.title,
                                         modifier = Modifier.fillMaxSize(),

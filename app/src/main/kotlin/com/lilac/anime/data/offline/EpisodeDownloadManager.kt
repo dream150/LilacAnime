@@ -29,7 +29,7 @@ fun startEpisodeDownload(
     val displayTitle = "$animeTitle - ${episode.displayNumber}화"
     val customData = displayTitle.toByteArray(Charsets.UTF_8)
     // displayNumber까지 포함된 Episode.id를 사용해 4화와 4a화를 완전히 별도 다운로드로 취급한다.
-    val downloadId = episode.id
+    val downloadId = offlineDownloadId(animeId, episode)
 
     val downloadRequest = DownloadRequest.Builder(
         downloadId,
@@ -40,10 +40,12 @@ fun startEpisodeDownload(
     .build()
 
     DownloadService.sendAddDownload(
-        context,
+        context.applicationContext,
         LilacDownloadService::class.java,
         downloadRequest,
-        false
+        true
     )
 
 }
+
+fun offlineDownloadId(animeId: String, episode: Episode): String = "${animeId}::${episode.id}"

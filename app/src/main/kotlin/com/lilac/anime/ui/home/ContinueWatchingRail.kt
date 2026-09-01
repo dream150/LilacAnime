@@ -18,7 +18,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
+import com.lilac.anime.ui.AnimeImage
 
 @Composable
 fun ContinueWatchingRail(vm: AnimeViewModel, open: (Anime) -> Unit) {
@@ -70,7 +70,7 @@ fun ContinueWatchingRail(vm: AnimeViewModel, open: (Anime) -> Unit) {
                 ) {
                     Column {
                         Box(Modifier.fillMaxWidth().height(110.dp).clip(RoundedCornerShape(16.dp))) {
-                            AsyncImage(model = anime.backdrop.ifEmpty { anime.poster }, contentDescription = anime.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                            AnimeImage(model = anime.backdrop.ifEmpty { anime.poster }, contentDescription = anime.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                             Box(Modifier.fillMaxSize().background(Lilac.copy(alpha = if (selected) .42f else 0f)))
                             Icon(Icons.Default.PlayArrow, null, Modifier.align(Alignment.Center).size(42.dp), tint = Color.White)
                             if (selected) {

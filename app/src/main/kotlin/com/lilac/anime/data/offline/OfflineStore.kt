@@ -19,6 +19,7 @@ object OfflineStore {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         prefs.edit().apply {
             putString("pref_default_quality", settings.defaultQuality)
+            putString("pref_video_source", settings.videoSourcePreference)
             putString("pref_subtitle_font", settings.subtitleFont)
             putFloat("pref_subtitle_size", settings.subtitleSize)
             putInt("pref_text_color", settings.textColor)
@@ -65,6 +66,8 @@ object OfflineStore {
 
         PlayerSettings(
             defaultQuality = prefs.getString("pref_default_quality", "1080p") ?: "1080p",
+            videoSourcePreference = prefs.getString("pref_video_source", "linkkf")
+                ?.takeIf { it == "linkkf" || it == "animenosub" } ?: "linkkf",
             subtitleFont = prefs.getString("pref_subtitle_font", "기본체") ?: "기본체",
             subtitleSize = prefs.getFloat("pref_subtitle_size", 100f),
             textColor = prefs.getInt("pref_text_color", android.graphics.Color.WHITE),
@@ -162,7 +165,7 @@ object OfflineStore {
         }
     }
 
-    suspend fun saveAnimeList(context: Context, list: List<Anime>) = withContext(Dispatchers.IO) {
+    suspend fun saveAnimeList(context: Context, list: List<Anime>, source: String = "linkkf") = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val array = JSONArray()
         list.forEach { anime ->
@@ -176,12 +179,12 @@ object OfflineStore {
             }
             array.put(json)
         }
-        prefs.edit().putString("cached_anime_list", array.toString()).apply()
+        prefs.edit().putString("cached_anime_list_$source", array.toString()).apply()
     }
 
-    suspend fun getSavedAnimeList(context: Context): List<Anime> = withContext(Dispatchers.IO) {
+    suspend fun getSavedAnimeList(context: Context, source: String = "linkkf"): List<Anime> = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        val jsonString = prefs.getString("cached_anime_list", null) ?: return@withContext emptyList()
+        val jsonString = prefs.getString("cached_anime_list_$source", null) ?: return@withContext emptyList()
         try {
             val array = JSONArray(jsonString)
             val list = mutableListOf<Anime>()
@@ -336,7 +339,7 @@ object OfflineStore {
                 } catch (_: Exception) {}
             }
         }
-        episodes.sortedBy { it.number }
+        episodes.distinctBy { it.id.lowercase(java.util.Locale.ROOT) }.sortedWith(compareBy<Episode> { it.number }.thenBy { it.displayNumber })
     }
 
     suspend fun removeEpisode(context: Context, animeId: String, episodeNumber: Int) = withContext(Dispatchers.IO) {

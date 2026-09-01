@@ -11,87 +11,110 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 
 class AnimeRepository {
-
-    private val client = LinkkfClient()
+    private val linkkfClient = LinkkfClient()
+    private val animenosubClient = AnimenosubHttpClient()
 
     companion object {
-        private const val BASE_URL = "https://linkkf.tv"
-        private const val LIST_URL = "$BASE_URL/list/2/"
+        private const val LINKKF_BASE_URL = "https://linkkf.tv"
+        private const val LINKKF_LIST_URL = "$LINKKF_BASE_URL/list/2/"
+        private const val ANIMENOSUB_BASE_URL = "https://animenosub.to"
         private const val BATCH_SIZE = 5
-        // MAX_LIST_PAGES와 MAX_EMPTY_PAGES는 무제한 탐색 및 즉시 종료 조건으로 변경되어 제거되었습니다.
     }
 
-    // 💡 홈 화면 전용: 1페이지만 빠르게 로드 (0.5초 소요)
-    suspend fun getHomeAnimeList(): List<Anime> {
-        val document = client.getDocument(LIST_URL)
-        return LinkkfParser.parseAnimeList(document)
+
+    suspend fun getHomeAnimeList(source: String = "linkkf"): List<Anime> {
+        return if (source == "animenosub") {
+            val document = getDocument(source, ANIMENOSUB_BASE_URL, ANIMENOSUB_BASE_URL + "/")
+            AnimenosubParser.parseAnimeList(document)
+        } else {
+            val document = getDocument(source, LINKKF_LIST_URL)
+            LinkkfParser.parseAnimeList(document)
+        }
     }
 
-    // 💡 전체 보기 탭 전용: 1페이지부터 순차적 백그라운드 수신
-    fun getAllAnimeListFlow(): Flow<List<Anime>> = flow {
+    fun getAllAnimeListFlow(source: String = "linkkf"): Flow<List<Anime>> = flow {
         val result = LinkedHashMap<String, Anime>()
+
+        if (source == "animenosub") {
+            // Animenosub is protected more aggressively when several pages are
+            // requested in parallel. Fetch its catalog sequentially and tolerate
+            // transient empty/error pages instead of stopping the entire catalog.
+            var emptyPages = 0
+            for (page in 1..50) {
+                val url = if (page == 1) ANIMENOSUB_BASE_URL else "$ANIMENOSUB_BASE_URL/page/$page/"
+                val list = try {
+                    val document = getDocument(source, url, ANIMENOSUB_BASE_URL + "/")
+                    AnimenosubParser.parseAnimeList(document)
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                if (list.isEmpty()) {
+                    emptyPages++
+                    if (emptyPages >= 2) break
+                } else {
+                    emptyPages = 0
+                    list.forEach { result[it.id] = it }
+                    emit(result.values.toList())
+                }
+                kotlinx.coroutines.delay(250L)
+            }
+            return@flow
+        }
+
         var batchStart = 1
-        var shouldStop = false
-
-        while (!shouldStop) {
+        var emptyBatches = 0
+        while (batchStart <= 50 && emptyBatches < 2) {
             val batchEnd = batchStart + BATCH_SIZE - 1
-            val pageRange = batchStart..batchEnd
-
             val pageResults = coroutineScope {
-                pageRange.map { page ->
+                (batchStart..batchEnd).map { page ->
                     async(Dispatchers.IO) {
-                        val url = if (page == 1) LIST_URL else "$LIST_URL" + "page/$page/"
+                        val url = if (page == 1) LINKKF_LIST_URL else "$LINKKF_LIST_URL" + "page/$page/"
                         try {
-                            val document = client.getDocument(url)
-                            val pageAnime = LinkkfParser.parseAnimeList(document)
-                            page to pageAnime
+                            val document = getDocument(source, url, "https://linkkf.tv/")
+                            page to LinkkfParser.parseAnimeList(document)
                         } catch (_: Exception) {
-                            // LinkkfClient already retries transient LTE/5G failures.
-                            // A final failure is kept as an empty page here so one
-                            // unavailable page does not crash the whole flow.
                             page to emptyList<Anime>()
                         }
                     }
                 }.awaitAll().sortedBy { it.first }
             }
-
-            for ((_, animeList) in pageResults) {
-                if (animeList.isEmpty()) {
-                    // 애니가 하나도 없는 페이지가 나오면 즉시 탐색 종료
-                    shouldStop = true
-                    break
-                } else {
-                    animeList.forEach { anime ->
-                        result[anime.id] = anime
-                    }
-                }
-            }
-
-            if (result.isNotEmpty()) {
-                emit(result.values.toList())
-            }
-
+            val hadData = pageResults.any { it.second.isNotEmpty() }
+            if (!hadData) emptyBatches++ else emptyBatches = 0
+            for ((_, list) in pageResults) list.forEach { result[it.id] = it }
+            if (result.isNotEmpty()) emit(result.values.toList())
             batchStart += BATCH_SIZE
         }
     }.flowOn(Dispatchers.IO)
 
-    suspend fun getAnimeDetail(anime: Anime): Anime {
-        val document = client.getDocument(anime.detailUrl)
-        val parsedDetail = LinkkfParser.parseAnimeDetail(document, anime)
+    private fun getDocument(source: String, url: String, referer: String = if (source == "animenosub") ANIMENOSUB_BASE_URL + "/" else "https://linkkf.tv/") =
+        if (source == "animenosub") animenosubClient.getDocument(url, referer) else linkkfClient.getDocument(url, referer)
 
-        return parsedDetail.copy(
-            episodes = parsedDetail.episodes.ifEmpty { anime.episodes },
-            dubEpisodes = parsedDetail.dubEpisodes.ifEmpty { anime.dubEpisodes }
-        )
+    suspend fun getAnimeDetail(anime: Anime, source: String = "linkkf"): Anime {
+        val document = getDocument(source, anime.detailUrl, if (source == "animenosub") ANIMENOSUB_BASE_URL + "/" else "https://linkkf.tv/" )
+        return if (source == "animenosub") {
+            val parsed = AnimenosubParser.parseAnimeDetail(document, anime)
+            parsed.copy(
+                episodes = parsed.episodes.ifEmpty { anime.episodes },
+                dubEpisodes = parsed.dubEpisodes.ifEmpty { anime.dubEpisodes }
+            )
+        } else {
+            val parsed = LinkkfParser.parseAnimeDetail(document, anime)
+            parsed.copy(
+                episodes = parsed.episodes.ifEmpty { anime.episodes },
+                dubEpisodes = parsed.dubEpisodes.ifEmpty { anime.dubEpisodes }
+            )
+        }
     }
 
-    suspend fun getEpisodes(anime: Anime): List<Episode> {
-        val document = client.getDocument(anime.detailUrl)
-        return LinkkfParser.parseEpisodes(document, anime)
+    suspend fun getEpisodes(anime: Anime, source: String = "linkkf"): List<Episode> {
+        val document = getDocument(source, anime.detailUrl, if (source == "animenosub") ANIMENOSUB_BASE_URL + "/" else "https://linkkf.tv/" )
+        return if (source == "animenosub") AnimenosubParser.parseEpisodes(document, anime)
+        else LinkkfParser.parseEpisodes(document, anime)
     }
 
-    suspend fun getDubEpisodes(anime: Anime): List<Episode> {
-        val document = client.getDocument(anime.detailUrl)
-        return LinkkfParser.parseDubEpisodes(document, anime)
+    suspend fun getDubEpisodes(anime: Anime, source: String = "linkkf"): List<Episode> {
+        val document = getDocument(source, anime.detailUrl, if (source == "animenosub") ANIMENOSUB_BASE_URL + "/" else "https://linkkf.tv/" )
+        return if (source == "animenosub") AnimenosubParser.parseDubEpisodes(document, anime)
+        else LinkkfParser.parseDubEpisodes(document, anime)
     }
 }

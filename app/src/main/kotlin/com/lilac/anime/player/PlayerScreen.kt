@@ -67,6 +67,8 @@ import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
@@ -313,6 +315,23 @@ private class VttStrokeTextView(context: Context) : TextView(context) {
     }
 }
 
+private fun isHttp404(error: PlaybackException): Boolean {
+    var cause: Throwable? = error
+    while (cause != null) {
+        if (cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+            Log.e("AnimenosubPlayer", "HTTP_RESPONSE code=${cause.responseCode} url=${cause.dataSpec.uri}")
+            if (cause.responseCode == 404) return true
+        }
+        cause = cause.cause
+    }
+    return false
+}
+
+private fun isAnimenosubM3u8(url: String?): Boolean {
+    val value = url.orEmpty().lowercase(Locale.ROOT)
+    return value.contains(".m3u8") || value.contains("m3u8")
+}
+
 @Composable
 fun PlayerScreen(
     anime: Anime,
@@ -330,6 +349,7 @@ fun PlayerScreen(
     
     var isFullScreen by rememberSaveable { mutableStateOf(true) }
     var streamUrl by remember { mutableStateOf<String?>(null) }
+    var resolvedVideoPageUrl by remember { mutableStateOf<String?>(null) }
     var subtitlesUrl by remember { mutableStateOf<String?>(null) }
     // Linkkf VTT 주소는 한 번 발견되면 자막 소스를 Kairan으로 바꿔도 유지한다.
     // 그래야 다시 Linkkf VTT를 선택했을 때 재탐색 없이 즉시 전환할 수 있다.
@@ -571,10 +591,10 @@ fun PlayerScreen(
         }
     }
 
-    // PlayerScreen에서는 뒤로가기 한 번으로 즉시 이전 화면으로 돌아간다.
-    BackHandler {
-        back()
-    }
+    // Animenosub 인증/쿠키 로직은 현재 비활성화한다.
+    // 스트림은 StreamUrlExtractor의 WebView에서 직접 탐지하고,
+    // 사용자가 PlayerScreen을 나가려는 경우에만 기존 Back 동작을 수행한다.
+    BackHandler { back() }
 
     // Restore a user-imported subtitle saved in OfflineStore even when the
     // current episode itself is not downloaded. This makes the custom subtitle
@@ -615,10 +635,19 @@ fun PlayerScreen(
         val targetUrl = if (isDownloaded) {
             offlineEp?.videoUrl ?: currentEpisode.videoUrl
         } else if (!isOffline) {
-            currentEpisode.videoUrl
+            if (vm.playerSettings.videoSourcePreference == "animenosub") {
+                // Animenosub episode links are already resolved by AnimenosubParser.
+                // Use the exact episode URL stored on the Episode instead of resolving
+                // the series/title again. This is important for pages whose player is
+                // embedded directly in the episode page/iframe.
+                currentEpisode.videoUrl
+            } else {
+                currentEpisode.videoUrl
+            }
         } else {
             null
         }
+        resolvedVideoPageUrl = targetUrl
 
         if (!targetUrl.isNullOrBlank()) {
             if (targetUrl.contains(".m3u8") || targetUrl.contains(".mp4") || isDownloaded) {
@@ -656,6 +685,9 @@ fun PlayerScreen(
             isLoading = false
         }
     }
+
+    // Animenosub 인증 WebView 자동 표시 로직은 비활성화했다.
+    // 스트림 탐색은 아래 StreamUrlExtractor가 즉시 수행한다.
 
     LaunchedEffect(anime.id, anime.title, currentEpisode.displayNumber, isOffline, isDownloaded, currentEpisode.vttUrl, linkkfSubtitleUrl, subtitleSourcePreference) {
         kairanSubtitleResolved = false
@@ -959,7 +991,7 @@ fun PlayerScreen(
         }
     }
 
-    DisposableEffect(exoPlayer) {
+    DisposableEffect(exoPlayer, currentEpisode.number, streamUrl) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
@@ -1019,6 +1051,17 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                Log.e(
+                    "AnimenosubPlayer",
+                    "PlaybackError source=${vm.playerSettings.videoSourcePreference} code=${error.errorCodeName} message=${error.message} streamUrl=$streamUrl",
+                    error
+                )
+
+                // Animenosub: M3U8을 찾은 뒤 실제 재생 단계에서 실패하면
+                // HTTP 404 여부에 의존하지 않고 인증 WebView를 한 번 표시한다.
+                // Media3에서는 HLS 내부 요청 오류가 PlaybackException으로 래핑되거나
+                // AnalyticsListener에 전달되지 않는 경우가 있으므로, 이 단계에서는
+                // "Animenosub + M3U8 재생 실패" 자체를 인증 필요 신호로 사용한다.
                 Toast.makeText(context, "재생 오류: ${error.errorCodeName}", Toast.LENGTH_SHORT).show()
             }
         }
@@ -1046,13 +1089,24 @@ fun PlayerScreen(
                 null
             } else {
                 DefaultHttpDataSource.Factory()
-                    .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .setUserAgent("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
                     .setAllowCrossProtocolRedirects(true)
                     .setDefaultRequestProperties(
-                        mapOf(
-                            "Referer" to "https://play.sub3.top/",
-                            "Origin" to "https://play.sub3.top"
-                        )
+                        buildMap {
+                            if (vm.playerSettings.videoSourcePreference == "animenosub") {
+                                // HAR: master/index/segment requests use the signed master
+                                // playlist URL as Referer when the M3U8 is opened directly.
+                                put("Referer", url)
+                                put("Accept", "*/*")
+                                put("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
+                                put("Cache-Control", "no-cache")
+                                put("Pragma", "no-cache")
+                                put("DNT", "1")
+                            } else {
+                                put("Referer", "https://play.sub3.top/")
+                                put("Origin", "https://play.sub3.top")
+                            }
+                        }
                     )
             }
             val cacheDataSourceFactory = CacheDataSource.Factory()
@@ -1529,32 +1583,40 @@ fun PlayerScreen(
                     )
                 }
             }
-            !isOffline && !videoUrl.isNullOrBlank() -> {
+            !isOffline && !resolvedVideoPageUrl.isNullOrBlank() -> {
+                val extractorTargetUrl = resolvedVideoPageUrl ?: ""
                 StreamUrlExtractor(
-                    targetUrl = videoUrl,
-                    onSubtitleFound = { foundUrl ->
-                        // 발견한 VTT를 항상 보관한다. Kairan을 보고 있는 동안 발견되어도
-                        // 나중에 Linkkf VTT를 선택하면 즉시 다시 사용할 수 있어야 한다.
-                        linkkfSubtitleUrl = foundUrl
-                        if (subtitleSourcePreference == "linkkf") {
-                            subtitlesUrl = foundUrl
-                            subtitleSource = "linkkf-vtt"
-                            Log.d("Subtitle", "USE_LINKKF_VTT url=$foundUrl")
-                        } else {
-                            Log.d("Subtitle", "CACHE_LINKKF_VTT url=$foundUrl")
-                        }
-                    },
+                    targetUrl = extractorTargetUrl,
                     onQualitiesFound = { qualities ->
                         parsedStreamingQualities = qualities
                         if (streamUrl == null && qualities.isNotEmpty()) {
+                            if (extractorTargetUrl.contains("animenosub", ignoreCase = true)) {
+                                Log.d("AnimenosubPlayer", "PLAYBACK_WATCHDOG_ARMED url=${qualities.first().url}")
+                            }
                             val selected = qualities.first()
                             selectedStreamingQuality = selected
                             streamUrl = selected.url
                             isLoading = false
                         }
+                    },
+                    onSubtitleFound = { foundUrl ->
+                        if (vm.playerSettings.videoSourcePreference == "linkkf") {
+                            // 발견한 VTT를 항상 보관한다. Kairan을 보고 있는 동안 발견되어도
+                            // 나중에 Linkkf VTT를 선택하면 즉시 다시 사용할 수 있어야 한다.
+                            linkkfSubtitleUrl = foundUrl
+                            if (subtitleSourcePreference == "linkkf") {
+                                subtitlesUrl = foundUrl
+                                subtitleSource = "linkkf-vtt"
+                                Log.d("Subtitle", "USE_LINKKF_VTT url=$foundUrl")
+                            } else {
+                                Log.d("Subtitle", "CACHE_LINKKF_VTT url=$foundUrl")
+                            }
+                        }
                     }
                 )
                 CircularProgressIndicator(color = Lilac)
+                // 인증 WebView는 현재 사용하지 않는다.
+                // StreamUrlExtractor가 페이지 내부의 HLS 요청을 직접 탐지한다.
             }
             else -> {
                 Text(
@@ -2417,6 +2479,7 @@ fun PlayerScreen(
         }
         }
         if (vm.playerSettings.showAniSkipButton) buttonAniSkipSegment?.let { segment ->
+            Box(modifier = Modifier.fillMaxSize()) {
             val label = if (segment.type == "op" || segment.type == "mixed-op") {
                 "OP 스킵"
             } else {
@@ -2453,6 +2516,7 @@ fun PlayerScreen(
                 shape = RoundedCornerShape(24.dp)
             ) {
                 Text(label)
+            }
             }
         }
 
@@ -2492,5 +2556,6 @@ fun PlayerScreen(
             }
         }
     }
-}
 
+
+}

@@ -17,7 +17,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
+import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
 
 @Composable
@@ -64,7 +64,7 @@ fun SearchScreen(
                         Modifier.fillMaxWidth().clickableNoIndication { open(anime) },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        AsyncImage(
+                        AnimeImage(
                             model = anime.poster,
                             contentDescription = anime.title,
                             modifier = Modifier.size(width = 78.dp, height = 110.dp).clip(RoundedCornerShape(12.dp)),

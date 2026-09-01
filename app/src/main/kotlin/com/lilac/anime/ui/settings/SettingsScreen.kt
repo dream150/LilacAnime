@@ -47,6 +47,27 @@ fun SettingsScreen(
             Text("재생 및 자막 설정", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
             Spacer(Modifier.height(16.dp))
 
+            Text("콘텐츠 / 영상 소스", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("linkkf" to "Linkkf", "animenosub" to "Animenosub").forEach { (source, label) ->
+                    FilterChip(
+                        selected = settings.videoSourcePreference == source,
+                        onClick = {
+                            vm.updatePlayerSettings(context, settings.copy(videoSourcePreference = source))
+                        },
+                        label = { Text(label) }
+                    )
+                }
+            }
+            Text(
+                "선택한 사이트의 애니 목록·제목·회차·영상 소스를 함께 사용합니다. Linkkf는 기존 방식 그대로 유지됩니다.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
+            )
+
+            Spacer(Modifier.height(16.dp))
+
             Text("기본 화질", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

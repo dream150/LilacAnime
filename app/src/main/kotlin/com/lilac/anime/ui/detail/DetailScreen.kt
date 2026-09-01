@@ -25,13 +25,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.exoplayer.offline.Download
-import coil3.compose.AsyncImage
+import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.net.URL
 import kotlinx.coroutines.CompletableDeferred
@@ -47,7 +48,7 @@ fun DetailScreen(
     val isOffline by vm.isOffline.collectAsState()
     var detailAnime by remember(anime.id) { mutableStateOf(anime) }
 
-    LaunchedEffect(anime.id, isOffline) {
+    LaunchedEffect(anime.id, isOffline, vm.sourceRevision) {
         vm.loadAnimeDetail(
             target = detailAnime,
             force = !isOffline,
@@ -119,18 +120,55 @@ fun DetailScreen(
 
     // 비동기 URL 추출용 Deferred 관리
     var currentExtractDeferred by remember { mutableStateOf<CompletableDeferred<Pair<List<StreamQuality>, String?>>?>(null) }
+    var activeExtractTargetUrl by remember { mutableStateOf<String?>(null) }
+    val animenosubClient = remember { AnimenosubClient() }
 
     // 비동기 URL 추출 함수
     suspend fun extractEpisodeInfo(ep: Episode): Pair<List<StreamQuality>, String?> {
+        // 이미 직접 재생 가능한 미디어 URL이면 WebView 추출을 거치지 않는다.
+        val direct = if (vm.playerSettings.videoSourcePreference == "linkkf") {
+            ep.videoUrl?.takeIf {
+                it.startsWith("http://", true) || it.startsWith("https://", true)
+            }
+        } else {
+            null
+        }
+        if (direct != null && (direct.contains(".m3u8", true) || direct.contains(".mp4", true))) {
+            val mimeQuality = StreamQuality(
+                if (direct.contains("1080", true)) "1080p" else "자동",
+                direct
+            )
+            return Pair(listOf(mimeQuality), null)
+        }
+
+        val targetUrl = if (vm.playerSettings.videoSourcePreference == "animenosub") {
+            ep.videoUrl ?: withContext(Dispatchers.IO) {
+                animenosubClient.resolveEpisodeUrl(currentAnime.title, ep.displayNumber)
+            }
+        } else {
+            ep.videoUrl
+        }
+
+        if (targetUrl.isNullOrBlank()) {
+            return Pair(emptyList(), null)
+        }
+
         val deferred = CompletableDeferred<Pair<List<StreamQuality>, String?>>()
         currentExtractDeferred = deferred
         activeExtractEpisode = ep
+        activeExtractTargetUrl = targetUrl
 
         val result = deferred.await()
 
         activeExtractEpisode = null
+        activeExtractTargetUrl = null
         currentExtractDeferred = null
-        return result
+        // Animenosub is a video source only. Keep Linkkf subtitle discovery independent.
+        return if (vm.playerSettings.videoSourcePreference == "animenosub") {
+            result.first to null
+        } else {
+            result
+        }
     }
 
     // 이미 영상이 다운로드된 에피소드에도 Linkkf VTT와 Kairan ASS를 모두 보충한다.
@@ -244,11 +282,19 @@ fun DetailScreen(
 
     // 단일 에피소드 다운로드 프로세스
     fun processSingleDownload(ep: Episode) {
+        // 버튼 클릭 자체가 정상적으로 들어왔는지 즉시 사용자에게 알린다.
+        // URL 추출/WebView가 지연되어도 이 Toast는 먼저 표시되어야 한다.
+        Toast.makeText(context, "${ep.displayNumber}화 다운로드 준비 중...", Toast.LENGTH_SHORT).show()
         scope.launch(Dispatchers.Main) {
             try {
-                val (qualities, vttUrl) = extractEpisodeInfo(ep)
+                val extracted = withTimeoutOrNull(20_000L) { extractEpisodeInfo(ep) }
+                activeExtractEpisode = null
+                activeExtractTargetUrl = null
+                currentExtractDeferred?.cancel()
+                currentExtractDeferred = null
+                val (qualities, vttUrl) = extracted ?: Pair(emptyList(), null)
                 if (qualities.isEmpty()) {
-                    Toast.makeText(context, "${ep.number}화의 다운로드 주소를 찾지 못했습니다.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "${ep.displayNumber}화의 다운로드 주소를 찾지 못했습니다.", Toast.LENGTH_SHORT).show()
                     return@launch
                 }
 
@@ -258,13 +304,33 @@ fun DetailScreen(
                     qualities.first()
                 }
 
+                // 영상 다운로드는 자막 서버보다 먼저 Media3 큐에 등록한다.
+                startEpisodeDownload(context, currentAnime.id, currentAnime.title, ep, selectedQuality.url)
+                Toast.makeText(context, "${ep.displayNumber}화 (${selectedQuality.label}) 다운로드를 시작합니다.", Toast.LENGTH_SHORT).show()
+
+
                 withContext(Dispatchers.IO) {
+                    // 영상 메타데이터는 다운로드 큐 등록 직후 저장한다. 자막 서버가 실패/지연되어도
+                    // 영상 다운로드 자체와 오프라인 회차 상태가 영향을 받지 않게 한다.
+                    OfflineStore.saveAnime(context, anime)
+                    OfflineStore.saveEpisode(
+                        context = context,
+                        animeId = currentAnime.id,
+                        episode = ep.copy(videoUrl = selectedQuality.url)
+                    )
+
                     // 오프라인 저장 시 Linkkf VTT와 Kairan ASS를 각각 별도로 저장한다.
                     // ASS는 vttUrl에 넣지 않는다. 오프라인에서는 VTT가 기본 자막으로 사용되고,
                     // Kairan ASS는 SubtitleStore/로컬 캐시에서 별도 선택할 수 있다.
-                    val localLinkkfPath = downloadSubtitleFile(
-                        context, currentAnime.id, ep.number, vttUrl
-                    )
+                    val localLinkkfPath = try {
+                        downloadSubtitleFile(
+                            context = context, animeId = currentAnime.id, episodeNumber = ep.number,
+                            episodeKey = ep.displayNumber, vttUrl = vttUrl
+                        )
+                    } catch (e: Exception) {
+                        Log.w("OfflineDownload", "LINKKF_SUBTITLE_FAILED episode=${ep.displayNumber}", e)
+                        null
+                    }
                     val localKairanPath = try {
                         when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
                             is KairanSubtitleResult.DirectFile -> result.path
@@ -277,21 +343,24 @@ fun DetailScreen(
                     SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "linkkf", localLinkkfPath)
                     SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "kairan", localKairanPath)
 
-                    startEpisodeDownload(context, currentAnime.id, currentAnime.title, ep, selectedQuality.url)
-
-                    OfflineStore.saveAnime(context, anime)
-                    OfflineStore.saveEpisode(
-                        context = context,
-                        animeId = currentAnime.id,
-                        episode = ep.copy(
-                            videoUrl = selectedQuality.url,
-                            vttUrl = localLinkkfPath ?: vttUrl
+                    if (localLinkkfPath != null) {
+                        OfflineStore.saveEpisode(
+                            context = context,
+                            animeId = currentAnime.id,
+                            episode = ep.copy(
+                                videoUrl = selectedQuality.url,
+                                vttUrl = localLinkkfPath
+                            )
                         )
-                    )
+                    }
                 }
-                Toast.makeText(context, "${ep.displayNumber}화 (${selectedQuality.label}) 다운로드를 시작합니다.", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e("OfflineDownload", "SINGLE_DOWNLOAD_FAILED episode=${ep.displayNumber}", e)
+                Toast.makeText(context, "${ep.displayNumber}화 다운로드를 시작하지 못했습니다.", Toast.LENGTH_SHORT).show()
+                activeExtractEpisode = null
+                activeExtractTargetUrl = null
+                currentExtractDeferred?.cancel()
+                currentExtractDeferred = null
             }
         }
     }
@@ -317,13 +386,30 @@ fun DetailScreen(
                             qualities.first()
                         }
 
+                        // 자막 처리 전에 영상 다운로드를 먼저 큐에 등록한다.
+                        startEpisodeDownload(context, currentAnime.id, currentAnime.title, ep, selectedQuality.url)
+
                         withContext(Dispatchers.IO) {
+                            // 영상 다운로드 큐에 등록된 상태를 즉시 저장한다. 자막 오류가 영상 다운로드를 막지 않는다.
+                            OfflineStore.saveAnime(context, anime)
+                            OfflineStore.saveEpisode(
+                                context = context,
+                                animeId = currentAnime.id,
+                                episode = ep.copy(videoUrl = selectedQuality.url)
+                            )
+
                             // 오프라인 저장 시 Linkkf VTT와 Kairan ASS를 각각 별도로 저장한다.
                     // ASS는 vttUrl에 넣지 않는다. 오프라인에서는 VTT가 기본 자막으로 사용되고,
                     // Kairan ASS는 SubtitleStore/로컬 캐시에서 별도 선택할 수 있다.
-                            val localLinkkfPath = downloadSubtitleFile(
-                                context, currentAnime.id, ep.number, vttUrl
-                            )
+                            val localLinkkfPath = try {
+                                downloadSubtitleFile(
+                                    context = context, animeId = currentAnime.id, episodeNumber = ep.number,
+                                    episodeKey = ep.displayNumber, vttUrl = vttUrl
+                                )
+                            } catch (e: Exception) {
+                                Log.w("OfflineDownload", "LINKKF_SUBTITLE_FAILED episode=${ep.displayNumber}", e)
+                                null
+                            }
                             val localKairanPath = try {
                                 when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
                                     is KairanSubtitleResult.DirectFile -> result.path
@@ -336,17 +422,16 @@ fun DetailScreen(
                             SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "linkkf", localLinkkfPath)
                             SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "kairan", localKairanPath)
 
-                            startEpisodeDownload(context, currentAnime.id, currentAnime.title, ep, selectedQuality.url)
-
-                            OfflineStore.saveAnime(context, anime)
-                            OfflineStore.saveEpisode(
-                                context = context,
-                                animeId = currentAnime.id,
-                                episode = ep.copy(
-                                    videoUrl = selectedQuality.url,
-                                    vttUrl = localLinkkfPath ?: vttUrl
+                            if (localLinkkfPath != null) {
+                                OfflineStore.saveEpisode(
+                                    context = context,
+                                    animeId = currentAnime.id,
+                                    episode = ep.copy(
+                                        videoUrl = selectedQuality.url,
+                                        vttUrl = localLinkkfPath
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -381,7 +466,7 @@ fun DetailScreen(
         ) {
             item {
                 Box(Modifier.fillMaxWidth().height(280.dp)) {
-                    AsyncImage(
+                    AnimeImage(
                         model = currentAnime.backdrop,
                         contentDescription = currentAnime.title,
                         modifier = Modifier.fillMaxSize(),
@@ -397,7 +482,7 @@ fun DetailScreen(
             item {
                 Column(Modifier.padding(20.dp)) {
                     Row {
-                        AsyncImage(
+                        AnimeImage(
                             model = currentAnime.poster,
                             contentDescription = currentAnime.title,
                             modifier = Modifier.size(width = 110.dp, height = 160.dp).clip(RoundedCornerShape(16.dp)),
@@ -559,7 +644,7 @@ fun DetailScreen(
                 }
 
                 items(visibleEpisodes) { ep ->
-                    val downloadKey = ep.id
+                    val downloadKey = offlineDownloadId(currentAnime.id, ep)
                     val isDownloaded = vm.isEpisodeDownloaded(currentAnime.id, ep)
                     val downloadingProgress = downloadProgressMap[downloadKey]
                     val epProgress = vm.getProgress(currentAnime.id, ep.displayNumber, ep.number)
@@ -663,7 +748,7 @@ fun DetailScreen(
 
         // 실제 추출기(StreamUrlExtractor) 호출 브릿지
         activeExtractEpisode?.let { ep ->
-            val target = ep.videoUrl
+            val target = activeExtractTargetUrl
             if (!target.isNullOrBlank()) {
                 var extractedVtt: String? = null
                 Box(modifier = Modifier.size(1.dp).alpha(0f)) {
@@ -672,7 +757,10 @@ fun DetailScreen(
                         onSubtitleFound = { vttUrl -> extractedVtt = vttUrl },
                         onQualitiesFound = { qualities ->
                             currentExtractDeferred?.complete(Pair(qualities, extractedVtt))
-                        }
+                        },
+                        allowedHosts = if (vm.playerSettings.videoSourcePreference == "animenosub") {
+                            setOf("animenosub.to", "www.animenosub.to")
+                        } else emptySet()
                     )
                 }
             } else {
