@@ -63,7 +63,7 @@ class AnimeRepository {
 
         var batchStart = 1
         var emptyBatches = 0
-        while (batchStart <= 50 && emptyBatches < 2) {
+        while (emptyBatches < 2) {
             val batchEnd = batchStart + BATCH_SIZE - 1
             val pageResults = coroutineScope {
                 (batchStart..batchEnd).map { page ->

@@ -67,6 +67,17 @@ object OfflineOpEdProfileStore {
             .sortedBy { it.startTime }
     }
 
+    fun deleteAll(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val keys = prefs.all.keys.filter { it.startsWith(KEY_PREFIX) }
+        if (keys.isNotEmpty()) {
+            val editor = prefs.edit()
+            keys.forEach(editor::remove)
+            editor.commit()
+        }
+        return keys.size
+    }
+
     fun recordTrainingResult(
         context: Context,
         animeId: String,

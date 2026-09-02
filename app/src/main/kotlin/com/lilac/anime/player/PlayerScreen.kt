@@ -91,6 +91,7 @@ import io.github.peerless2012.ass.media.type.AssRenderType
 import io.github.peerless2012.ass.media.widget.AssSubtitleView
 import com.lilac.anime.data.*
 import com.lilac.anime.network.LinkkfChapterService
+import com.lilac.anime.network.OfflineOpEdFingerprintStore
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.SubtitleAssetUtil
 import kotlinx.coroutines.Dispatchers
@@ -1303,32 +1304,29 @@ fun PlayerScreen(
         buttonChapterSkipSegment = null
         chapterSkipEnteredAtMs = -1L
         skippedChapterSkipKeys = emptySet()
-        // 스트리밍 재생에서는 OP/ED 분석을 완전히 비활성화한다.
-        // 분석은 다운로드 완료된 오프라인 에피소드에서만 수행한다.
-        if (!isDownloaded) {
-            chapterAnalysisStatus = null
-            chapterAnalysisVisible = false
+        chapterAnalysisStatus = null
+        chapterAnalysisVisible = false
+
+        // OP/ED 분석은 사용자가 켠 경우에만, 다운로드 완료된 오프라인 회차에서만 수행한다.
+        // 스트리밍에서는 이 효과가 분석 API/다운로드를 절대 호출하지 않는다.
+        if (!isDownloaded || !vm.playerSettings.offlineOpEdAnalysisEnabled) {
             skipEpisodeKey = null
             return@LaunchedEffect
         }
-        chapterAnalysisStatus = "분석 준비 중..."
-        chapterAnalysisVisible = true
 
         while (isActive) {
             val duration = exoPlayer.duration
             if (exoPlayer.playbackState == Player.STATE_READY && duration > 0L && duration != C.TIME_UNSET) {
                 val durationSeconds = (duration / 1000L).toInt().coerceAtLeast(1)
                 Log.d("AniChapters", "START episode=${currentEpisode.number} duration=$durationSeconds source=linkkf")
+                // 분석 과정은 화면에 표시하지 않는다. 상세 진행 로그는 Logcat에만 남긴다.
                 val chapterStatus: (String) -> Unit = { raw ->
-                    scope.launch(Dispatchers.Main.immediate) {
-                        chapterAnalysisStatus = formatChapterAnalysisStatus(raw)
-                        chapterAnalysisVisible = true
-                    }
+                    Log.d("AniChapters", "STATUS $raw")
                 }
 
                 // Downloaded episodes are analyzed entirely from the Media3 cache.
                 // This avoids WebView/network collection during the offline test.
-                chapterSkipSegments = if (isDownloaded) {
+                chapterSkipSegments = if (isDownloaded && vm.playerSettings.offlineOpEdAnalysisEnabled) {
                     Log.d("AniChapters", "OFFLINE_MODE episode=${currentEpisode.number}")
                     LinkkfChapterService.detectSkipSegmentsOffline(
                         context = context,
@@ -1344,7 +1342,33 @@ fun PlayerScreen(
                     emptyList()
                 }
                 skipEpisodeKey = "${anime.id}_${currentEpisode.displayNumber}"
-                Log.d("AniChapters", "LOADED count=${chapterSkipSegments.size}")
+                Log.d("AniChapters", "LOADED episode=${currentEpisode.number} count=${chapterSkipSegments.size}")
+
+                // 현재 회차 분석이 끝난 뒤, 바로 다음 회차도 다운로드가 완료되어
+                // 있다면 같은 백그라운드 흐름에서 한 번 더 분석한다. 스트리밍에는
+                // 이 LaunchedEffect 자체가 진입하지 않으므로 네트워크 분석은 없다.
+                val next = nextEpisode
+                var nextResult: List<ChapterSkipSegment> = emptyList()
+                if (next != null && vm.playerSettings.offlineOpEdAnalysisEnabled &&
+                    LinkkfChapterService.isOfflineEpisodeCompleted(anime.id, next)) {
+                    nextResult = LinkkfChapterService.detectSkipSegmentsOffline(
+                        context = context,
+                        animeId = anime.id,
+                        currentEpisode = next,
+                        episodes = episodeList,
+                        episodeDurationSeconds = 0,
+                        onStatus = chapterStatus
+                    )
+                    Log.d("AniChapters", "NEXT_LOADED episode=${next.number} count=${nextResult.size}")
+                }
+                chapterAnalysisStatus = null
+                chapterAnalysisVisible = false
+
+                // 모든 분석이 끝난 뒤에만 사용자에게 한 번 알린다.
+                // 캐시된 결과를 불러온 경우에도 실제 분석 과정을 표시하지 않는다.
+                if (chapterSkipSegments.isNotEmpty() || nextResult.isNotEmpty()) {
+                    Toast.makeText(context, "OP/ED를 발견했습니다.", Toast.LENGTH_SHORT).show()
+                }
                 break
             }
             delay(250L)
@@ -1741,16 +1765,8 @@ fun PlayerScreen(
             }
         }
 
-        LaunchedEffect(chapterAnalysisStatus) {
-            val status = chapterAnalysisStatus ?: return@LaunchedEffect
-            if (status.startsWith("✓ OP/ED 분석 완료") || status.startsWith("✗ OP/ED 분석 실패")) {
-                delay(5000L)
-                chapterAnalysisVisible = false
-            }
-        }
-
         AnimatedVisibility(
-            visible = chapterAnalysisVisible && !isPlayerLocked,
+            visible = false,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(top = 68.dp, start = 14.dp),

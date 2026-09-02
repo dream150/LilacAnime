@@ -773,14 +773,23 @@ object LinkkfChapterService {
     ): List<ChapterSkipSegment> = withContext(Dispatchers.Default) {
         fun status(message: String) { Log.d(TAG, message); onStatus(message) }
         runCatching {
-            val duration = episodeDurationSeconds.toDouble()
+            var duration = episodeDurationSeconds.toDouble()
             status("FINGERPRINT_ANALYSIS_START episode=${currentEpisode.number} duration=${duration}s")
+
+            val savedResult = OfflineOpEdFingerprintStore.loadAnalysis(context, animeId, currentEpisode.id)
+            if (savedResult != null) {
+                status("FINGERPRINT_ANALYSIS_CACHE_HIT episode=${currentEpisode.number} segments=${savedResult.size}")
+                return@runCatching savedResult.map {
+                    if (duration > 0.0) it.copy(episodeLength = duration) else it
+                }
+            }
 
             val template = OfflineOpEdFingerprintStore.load(context, animeId)
             if (template != null && (template.op != null || template.ed != null)) {
                 status("FINGERPRINT_TEMPLATE_HIT format=audio-only opSamples=${template.op?.size ?: 0} edSamples=${template.ed?.size ?: 0}")
                 val current = loadCompleteCachedFingerprint(context, animeId, currentEpisode, ::status)
                     ?: return@runCatching emptyList()
+                if (duration <= 0.0) duration = fingerprintFrames(current) * FINGERPRINT_FRAME_SECONDS
                 val result = ArrayList<ChapterSkipSegment>()
                 val opMatch = template.op?.let { op ->
                     scoreTemplateAgainstCurrent(current, op, "OP", ::status, minStartSeconds = 0.0)
@@ -808,6 +817,8 @@ object LinkkfChapterService {
                     }
                 }
                 val out = result.filter { it.endTime > it.startTime }.sortedBy { it.startTime }
+                OfflineOpEdFingerprintStore.saveAnalysis(context, animeId, currentEpisode.id, out, duration)
+                status("FINGERPRINT_ANALYSIS_SAVED episode=${currentEpisode.number} segments=${out.size}")
                 status("FINGERPRINT_ANALYSIS_COMPLETE segments=${out.size} template=audio-only")
                 return@runCatching out
             }
@@ -1111,10 +1122,13 @@ object LinkkfChapterService {
             val current = fps.firstOrNull { it.first.id == currentEpisode.id }?.second
                 ?: loadCompleteCachedFingerprint(context, animeId, currentEpisode, ::status)
                 ?: return@runCatching emptyList()
+            if (duration <= 0.0) duration = fingerprintFrames(current) * FINGERPRINT_FRAME_SECONDS
             val result = ArrayList<ChapterSkipSegment>()
             opTemplate?.let { scoreTemplateAgainstCurrent(current, it, "OP", ::status)?.let { m -> result += ChapterSkipSegment("op", m.startSeconds, m.endSeconds.coerceAtMost(duration), duration) } }
             edTemplate?.let { scoreTemplateAgainstCurrent(current, it, "ED", ::status)?.let { m -> result += ChapterSkipSegment("ed", m.startSeconds, m.endSeconds.coerceAtMost(duration), duration) } }
             val out = result.filter { it.endTime > it.startTime }.sortedBy { it.startTime }
+            OfflineOpEdFingerprintStore.saveAnalysis(context, animeId, currentEpisode.id, out, duration)
+            status("FINGERPRINT_ANALYSIS_SAVED episode=${currentEpisode.number} segments=${out.size}")
             status("FINGERPRINT_ANALYSIS_COMPLETE segments=${out.size} template=audio-only")
             out
         }.onFailure {
@@ -1124,7 +1138,7 @@ object LinkkfChapterService {
     }
 
     @OptIn(UnstableApi::class)
-    private fun isOfflineEpisodeCompleted(animeId: String, ep: Episode): Boolean {
+    fun isOfflineEpisodeCompleted(animeId: String, ep: Episode): Boolean {
         val cursor = LilacApplication.downloadManager.downloadIndex.getDownloads()
         return try {
             val ids = HashSet<String>()

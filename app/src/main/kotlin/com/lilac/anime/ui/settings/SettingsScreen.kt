@@ -5,12 +5,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Alignment
+import com.lilac.anime.network.OfflineOpEdFingerprintStore
 
 @Composable
 fun SettingsScreen(
@@ -21,6 +26,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val settings = vm.playerSettings
+    var deleteTarget by remember { mutableStateOf<String?>(null) }
 
     AppScaffold(selected = "settings", onSelect = onNavigate) { padding ->
         Column(
@@ -238,6 +244,59 @@ fun SettingsScreen(
             HorizontalDivider()
             Spacer(Modifier.height(20.dp))
 
+            Text(
+                "OP/ED 분석 데이터",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "다운로드된 회차의 OP/ED 분석 결과와 학습된 오디오 Fingerprint를 저장합니다. 저장된 데이터가 있으면 다음 재생부터 다시 분석하지 않습니다.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("오프라인 OP/ED 자동 분석", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
+                    Text("다운로드 완료 회차에서만 자동 분석합니다.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
+                }
+                Switch(
+                    checked = settings.offlineOpEdAnalysisEnabled,
+                    onCheckedChange = { enabled ->
+                        vm.updatePlayerSettings(context, settings.copy(offlineOpEdAnalysisEnabled = enabled))
+                    }
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { deleteTarget = "analysis" },
+                    modifier = Modifier.weight(1f)
+                ) { Text("분석 결과 삭제") }
+                OutlinedButton(
+                    onClick = { deleteTarget = "fingerprint" },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Fingerprint 삭제") }
+            }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { deleteTarget = "all" },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("분석 결과 + Fingerprint 모두 삭제") }
+
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(20.dp))
+
             Text("Lilac Anime", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
             val appVersion = context.packageManager
                 .getPackageInfo(context.packageName, 0)
@@ -246,5 +305,36 @@ fun SettingsScreen(
                 .ifBlank { "Unknown" }
             Text("Version $appVersion", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
         }
+    }
+
+    deleteTarget?.let { target ->
+        val title = when (target) {
+            "analysis" -> "분석 결과를 삭제할까요?"
+            "fingerprint" -> "Fingerprint를 삭제할까요?"
+            else -> "OP/ED 데이터를 모두 삭제할까요?"
+        }
+        val message = when (target) {
+            "analysis" -> "저장된 회차별 OP/ED 분석 결과만 삭제합니다. Fingerprint는 유지됩니다."
+            "fingerprint" -> "학습된 OP/ED Fingerprint와 이를 사용해 저장된 회차별 분석 결과를 함께 삭제합니다. 이후 다운로드된 회차를 다시 분석하고 Fingerprint를 다시 학습할 수 있습니다."
+            else -> "저장된 회차별 분석 결과와 학습된 Fingerprint를 모두 삭제합니다. 이후 다운로드된 회차를 다시 분석할 수 있습니다."
+        }
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text(title) },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = {
+                    when (target) {
+                        "analysis" -> OfflineOpEdFingerprintStore.deleteAllAnalysis(context)
+                        "fingerprint" -> OfflineOpEdFingerprintStore.deleteAllFingerprints(context)
+                        else -> OfflineOpEdFingerprintStore.deleteEverything(context)
+                    }
+                    deleteTarget = null
+                }) { Text("삭제") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text("취소") }
+            }
+        )
     }
 }
