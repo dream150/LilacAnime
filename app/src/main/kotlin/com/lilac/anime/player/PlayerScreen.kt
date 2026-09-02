@@ -458,7 +458,16 @@ fun PlayerScreen(
 
     var parsedStreamingQualities by remember { mutableStateOf<List<StreamQuality>>(emptyList()) }
     var selectedStreamingQuality by remember { mutableStateOf<StreamQuality?>(null) }
+    // 화질/자막 변경처럼 같은 회차 내부에서만 유지해야 하는 임시 seek 위치.
+    // 회차가 바뀌면 이전 회차의 위치를 절대로 새 회차에 넘기지 않는다.
     var pendingSeekPositionMs by remember { mutableLongStateOf(-1L) }
+
+    LaunchedEffect(currentEpisode.id, currentEpisode.displayNumber, currentEpisode.number) {
+        // 다음/이전 회차 이동 시 이전 회차의 임시 seek 위치를 폐기한다.
+        // 새 회차의 시작 위치는 아래의 episode별 저장 progress에서만 결정한다.
+        pendingSeekPositionMs = -1L
+        suppressProgressSaveForEpisode = null
+    }
 
     var exoQualities by remember { mutableStateOf<List<ExoVideoQualityOption>>(emptyList()) }
     var selectedQualityOption by remember { mutableStateOf<ExoVideoQualityOption?>(null) }
@@ -980,6 +989,31 @@ fun PlayerScreen(
         }
     }
 
+    fun switchEpisode(target: Episode) {
+        if (target.id == currentEpisode.id &&
+            target.displayNumber.equals(currentEpisode.displayNumber, ignoreCase = true)) return
+
+        // 회차 전환 직전에 현재 회차의 위치를 저장한다.
+        // 이후 ExoPlayer를 완전히 초기화하여 이전 회차의 position이 새 회차로
+        // 넘어가지 않도록 한다.
+        val oldEpisode = currentEpisode
+        val duration = exoPlayer.duration
+        if (duration > 0L && duration != C.TIME_UNSET) {
+            val progress = (exoPlayer.currentPosition.toFloat() / duration).coerceIn(0f, 1f)
+            vm.updateProgress(
+                context = context,
+                animeId = anime.id,
+                episodeNumber = oldEpisode.number,
+                episodeKey = oldEpisode.displayNumber,
+                progress = progress
+            )
+        }
+        pendingSeekPositionMs = -1L
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
+        currentEpisode = target
+    }
+
     val forwardingPlayer = remember(exoPlayer, prevEpisode, nextEpisode) {
         object : ForwardingPlayer(exoPlayer) {
             override fun isCommandAvailable(command: Int): Boolean {
@@ -995,10 +1029,10 @@ fun PlayerScreen(
             override fun hasNextMediaItem(): Boolean = nextEpisode != null
             override fun hasPreviousMediaItem(): Boolean = prevEpisode != null
 
-            override fun seekToNext() { nextEpisode?.let { currentEpisode = it } }
-            override fun seekToPrevious() { prevEpisode?.let { currentEpisode = it } }
-            override fun seekToNextMediaItem() { nextEpisode?.let { currentEpisode = it } }
-            override fun seekToPreviousMediaItem() { prevEpisode?.let { currentEpisode = it } }
+            override fun seekToNext() { nextEpisode?.let { switchEpisode(it) } }
+            override fun seekToPrevious() { prevEpisode?.let { switchEpisode(it) } }
+            override fun seekToNextMediaItem() { nextEpisode?.let { switchEpisode(it) } }
+            override fun seekToPreviousMediaItem() { prevEpisode?.let { switchEpisode(it) } }
         }
     }
 
@@ -1056,6 +1090,9 @@ fun PlayerScreen(
                         progress = 0f
                     )
                     if (currentAutoPlay && currentNextEpisode != null) {
+                        pendingSeekPositionMs = -1L
+                        exoPlayer.stop()
+                        exoPlayer.clearMediaItems()
                         currentEpisode = currentNextEpisode!!
                     }
                 }
@@ -1122,7 +1159,17 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(streamUrl, subtitlesUrl, subtitleSource, syncOffsetMs, isOffline, selectedSubtitleFontPath) {
+    LaunchedEffect(
+        streamUrl,
+        currentEpisode.id,
+        currentEpisode.displayNumber,
+        currentEpisode.number,
+        subtitlesUrl,
+        subtitleSource,
+        syncOffsetMs,
+        isOffline,
+        selectedSubtitleFontPath
+    ) {
         val url = streamUrl ?: return@LaunchedEffect
         val isLocalFile = url.startsWith("file://") || url.startsWith("/")
 
@@ -1291,7 +1338,12 @@ fun PlayerScreen(
         }
         exoPlayer.addListener(listener)
 
-        exoPlayer.setMediaSource(mediaSourceFactory.createMediaSource(mediaItemBuilder.build()))
+        // 회차 전환 시 ExoPlayer의 이전 position을 절대 이어받지 않는다.
+        // 이후 STATE_READY에서 해당 회차의 저장된 진행률만 적용한다.
+        exoPlayer.setMediaSource(
+            mediaSourceFactory.createMediaSource(mediaItemBuilder.build()),
+            0L
+        )
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
     }
