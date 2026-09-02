@@ -2,7 +2,7 @@
 2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
 3    package="com.lilac.anime"
 4    android:versionCode="15"
-5    android:versionName="0.2.5" >
+5    android:versionName="0.2.2" >
 6
 7    <uses-sdk
 8        android:minSdkVersion="23"
