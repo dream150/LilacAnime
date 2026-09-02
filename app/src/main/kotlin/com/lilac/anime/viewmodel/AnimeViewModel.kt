@@ -198,10 +198,17 @@ class AnimeViewModel : ViewModel() {
             val settings = OfflineStore.getPlayerSettings(context)
             val cachedList = OfflineStore.getSavedAnimeList(context, settings.videoSourcePreference)
 
+            val relevantIds = (lib + history.map { it.animeId }).distinct()
+            val relevantCachedAnime = relevantIds.mapNotNull { id -> OfflineStore.getAnime(context, id) }
+
             withContext(Dispatchers.Main) {
                 library = lib
                 watchHistory = history
                 playerSettings = settings
+                relevantCachedAnime.forEach { cached ->
+                    detailCache[cached.id] = cached
+                    animeCache[cached.id] = cached
+                }
                 if (cachedList.isNotEmpty() && homeAnime.isEmpty()) {
                     homeAnime = cachedList.take(10)
                     allAnime = cachedList
@@ -244,7 +251,7 @@ class AnimeViewModel : ViewModel() {
             // Load the complete catalog in the background so SearchScreen does
             // not depend on the user visiting the All Anime tab first.
             if (!_isOffline.value) {
-                loadAllAnime()
+                loadAllAnime(context = context)
             }
         }
     }
@@ -281,7 +288,7 @@ class AnimeViewModel : ViewModel() {
                         loading = false
                     }
                     OfflineStore.saveAnimeList(context, first, newSettings.videoSourcePreference)
-                    loadAllAnime(newSettings.videoSourcePreference)
+                    loadAllAnime(newSettings.videoSourcePreference, context)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
                         loading = false
@@ -292,7 +299,10 @@ class AnimeViewModel : ViewModel() {
         }
     }
 
-    fun loadAllAnime(source: String = playerSettings.videoSourcePreference) {
+    fun loadAllAnime(
+        source: String = playerSettings.videoSourcePreference,
+        context: Context? = null
+    ) {
         if (isAllAnimeLoading || isAllAnimeFullyLoaded) return
         isAllAnimeLoading = true
         allAnimeLoadJob?.cancel()
@@ -303,6 +313,9 @@ class AnimeViewModel : ViewModel() {
                     list.forEach { animeCache[it.id] = it }
                 }
                 isAllAnimeFullyLoaded = true
+                context?.let { ctx ->
+                    OfflineStore.saveAnimeList(ctx, allAnime, source)
+                }
             } catch (_: Exception) {
             } finally {
                 isAllAnimeLoading = false
@@ -314,6 +327,7 @@ class AnimeViewModel : ViewModel() {
     fun loadAnimeDetail(
         target: Anime,
         force: Boolean = false,
+        context: Context? = null,
         onLoaded: ((Anime) -> Unit)? = null
     ) {
         if (!force && detailCache.containsKey(target.id)) {
@@ -328,6 +342,7 @@ class AnimeViewModel : ViewModel() {
                 }
                 detailCache[result.id] = result
                 animeCache[result.id] = result
+                context?.let { OfflineStore.saveAnime(it, result) }
                 homeAnime = homeAnime.map { if (it.id == result.id) result else it }
                 allAnime = allAnime.map { if (it.id == result.id) result else it }
                 onLoaded?.invoke(result)
@@ -389,6 +404,20 @@ class AnimeViewModel : ViewModel() {
         return episodeLoading[anime.id] == true
     }
 
+    suspend fun findLinkkfEpisode(anime: Anime, target: Episode): Episode? = withContext(Dispatchers.IO) {
+        try {
+            val detail = repository.getAnimeDetail(anime, "linkkf")
+            repository.getEpisodes(detail, "linkkf").firstOrNull { episode ->
+                episode.id == target.id ||
+                    (episode.number == target.number &&
+                        episode.displayNumber.equals(target.displayNumber, ignoreCase = true))
+            }
+        } catch (e: Exception) {
+            Log.w("Subtitle", "LINKKF_EPISODE_LOOKUP_FAILED episode=${target.number}", e)
+            null
+        }
+    }
+
     fun loadEpisodes(
         context: Context,
         anime: Anime,
@@ -422,6 +451,10 @@ class AnimeViewModel : ViewModel() {
                     if (result.isNotEmpty()) {
                         episodeCache[anime.id] = result
                         isOfflineOnlyCache[anime.id] = false
+                        val cachedAnime = (detailCache[anime.id] ?: targetAnime).copy(episodes = result)
+                        detailCache[anime.id] = cachedAnime
+                        animeCache[anime.id] = cachedAnime
+                        OfflineStore.saveAnime(context, cachedAnime)
                     } else {
                         loadOfflineEpisodes(context, anime)
                     }
@@ -548,11 +581,46 @@ class AnimeViewModel : ViewModel() {
         }
     }
 
+    fun cacheAnime(context: Context, anime: Anime) {
+        detailCache[anime.id] = anime
+        animeCache[anime.id] = anime
+        viewModelScope.launch(Dispatchers.IO) {
+            OfflineStore.saveAnime(context, anime)
+        }
+    }
+
+    suspend fun getLibraryAnimeList(context: Context): List<Anime> = withContext(Dispatchers.IO) {
+        library.mapNotNull { id ->
+            OfflineStore.getAnime(context, id)
+                ?: detailCache[id]
+                ?: animeCache[id]
+                ?: homeAnime.firstOrNull { it.id == id }
+                ?: allAnime.firstOrNull { it.id == id }
+        }.distinctBy { it.id }
+    }
+
+    suspend fun getWatchHistoryAnimeMap(context: Context): Map<String, Anime> = withContext(Dispatchers.IO) {
+        watchHistory.map { it.animeId }.distinct().mapNotNull { id ->
+            val anime = OfflineStore.getAnime(context, id)
+                ?: detailCache[id]
+                ?: animeCache[id]
+                ?: homeAnime.firstOrNull { it.id == id }
+                ?: allAnime.firstOrNull { it.id == id }
+            anime?.let { id to it }
+        }.toMap()
+    }
+
     fun toggleLibrary(context: Context, animeId: String) {
-        library = if (animeId in library) library - animeId else library + animeId
+        val adding = animeId !in library
+        library = if (adding) library + animeId else library - animeId
         val updated = library
+        val animeToCache = if (adding) {
+            detailCache[animeId] ?: animeCache[animeId] ?: homeAnime.firstOrNull { it.id == animeId }
+                ?: allAnime.firstOrNull { it.id == animeId }
+        } else null
         viewModelScope.launch(Dispatchers.IO) {
             OfflineStore.saveLibrary(context, updated)
+            animeToCache?.let { OfflineStore.saveAnime(context, it) }
         }
     }
 
@@ -560,9 +628,30 @@ class AnimeViewModel : ViewModel() {
         return animeId in library
     }
 
-    fun updateProgress(context: Context, animeId: String, episodeNumber: Int, progress: Float, episodeKey: String = episodeNumber.toString()) {
-        val filtered = watchHistory.filterNot { it.animeId == animeId && it.episodeKey.equals(episodeKey, ignoreCase = true) }
-        val updatedItem = WatchProgress(animeId = animeId, episodeNumber = episodeNumber, progress = progress, episodeKey = episodeKey)
+    fun updateProgress(
+        context: Context,
+        animeId: String,
+        episodeNumber: Int,
+        progress: Float,
+        episodeKey: String = episodeNumber.toString(),
+        episodeId: String? = null
+    ) {
+        val filtered = watchHistory.filterNot { item ->
+            if (episodeId != null) {
+                item.animeId == animeId && item.episodeId == episodeId
+            } else {
+                item.animeId == animeId &&
+                    item.episodeNumber == episodeNumber &&
+                    item.episodeKey.equals(episodeKey, ignoreCase = true)
+            }
+        }
+        val updatedItem = WatchProgress(
+            animeId = animeId,
+            episodeNumber = episodeNumber,
+            progress = progress,
+            episodeId = episodeId,
+            episodeKey = episodeKey
+        )
         val newList = listOf(updatedItem) + filtered
         watchHistory = newList
         viewModelScope.launch(Dispatchers.IO) { OfflineStore.saveWatchHistory(context, newList) }
@@ -570,8 +659,28 @@ class AnimeViewModel : ViewModel() {
 
     fun getLatestProgress(animeId: String): WatchProgress? = watchHistory.firstOrNull { it.animeId == animeId }
 
-    fun getProgress(animeId: String, episodeKey: String, episodeNumber: Int): WatchProgress? =
-        watchHistory.firstOrNull { it.animeId == animeId && (it.episodeKey.equals(episodeKey, ignoreCase = true) || (it.episodeKey == it.episodeNumber.toString() && it.episodeNumber == episodeNumber && episodeKey == episodeNumber.toString())) }
+    fun getProgress(
+        animeId: String,
+        episodeKey: String,
+        episodeNumber: Int,
+        episodeId: String? = null
+    ): WatchProgress? =
+        if (episodeId != null) {
+            watchHistory.firstOrNull { it.animeId == animeId && it.episodeId == episodeId }
+                ?: watchHistory.firstOrNull {
+                    // 이전 버전 기록에는 episodeId가 없으므로 기존 키로 한 번만 보완한다.
+                    it.animeId == animeId &&
+                        it.episodeId == null &&
+                        it.episodeNumber == episodeNumber &&
+                        it.episodeKey.equals(episodeKey, ignoreCase = true)
+                }
+        } else {
+            watchHistory.firstOrNull {
+                it.animeId == animeId &&
+                    it.episodeNumber == episodeNumber &&
+                    it.episodeKey.equals(episodeKey, ignoreCase = true)
+            }
+        }
 
     fun getProgress(animeId: String, episodeNumber: Int): WatchProgress? =
         watchHistory.firstOrNull { it.animeId == animeId && it.episodeNumber == episodeNumber && it.episodeKey == episodeNumber.toString() }

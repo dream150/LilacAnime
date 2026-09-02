@@ -35,6 +35,7 @@ object OfflineStore {
             putString("pref_subtitle_font_path", settings.subtitleFontPath)
             putString("pref_subtitle_font_source", settings.subtitleFontSource)
             putBoolean("pref_show_chapter_skip_button", settings.showChapterSkipButton)
+            putBoolean("pref_offline_op_ed_analysis_enabled", settings.offlineOpEdAnalysisEnabled)
             putBoolean("pref_online_op_ed_analysis_enabled", settings.onlineOpEdAnalysisEnabled)
             putInt("pref_double_tap_seek_seconds", settings.doubleTapSeekSeconds)
             putFloat("pref_playback_speed", settings.playbackSpeed)
@@ -85,6 +86,7 @@ object OfflineStore {
             subtitleFontPath = prefs.getString("pref_subtitle_font_path", null),
             subtitleFontSource = prefs.getString("pref_subtitle_font_source", null),
             showChapterSkipButton = prefs.getBoolean("pref_show_chapter_skip_button", true),
+            offlineOpEdAnalysisEnabled = prefs.getBoolean("pref_offline_op_ed_analysis_enabled", true),
             onlineOpEdAnalysisEnabled = prefs.getBoolean("pref_online_op_ed_analysis_enabled", true),
             doubleTapSeekSeconds = prefs.getInt("pref_double_tap_seek_seconds", 10).coerceIn(1, 120),
             playbackSpeed = prefs.getFloat("pref_playback_speed", 1.0f).let { saved ->
@@ -136,6 +138,7 @@ object OfflineStore {
                         animeId = json.getString("animeId"),
                         episodeNumber = json.getInt("episodeNumber"),
                         progress = json.getDouble("progress").toFloat(),
+                        episodeId = json.optString("episodeId", "").takeIf { it.isNotBlank() },
                         episodeKey = json.optString("episodeKey", json.getInt("episodeNumber").toString())
                     )
                 )
@@ -224,9 +227,45 @@ object OfflineStore {
             put("poster", anime.poster)
             put("backdrop", anime.backdrop)
             put("description", anime.description)
+            put("detailUrl", anime.detailUrl)
             put("genres", JSONArray(anime.genres))
+            put("episodes", JSONArray().apply {
+                anime.episodes.forEach { put(episodeToJson(it)) }
+            })
+            put("dubEpisodes", JSONArray().apply {
+                anime.dubEpisodes.forEach { put(episodeToJson(it)) }
+            })
         }
         prefs.edit().putString("anime_${anime.id}", json.toString()).apply()
+    }
+
+    private fun episodeToJson(episode: Episode): JSONObject = JSONObject().apply {
+        put("id", episode.id)
+        put("number", episode.number)
+        put("displayNumber", episode.displayNumber)
+        put("title", episode.title)
+        put("description", episode.description)
+        put("videoUrl", episode.videoUrl)
+        put("vttUrl", episode.vttUrl)
+    }
+
+    private fun episodeFromJson(json: JSONObject): Episode = Episode(
+        id = json.getString("id"),
+        number = json.getInt("number"),
+        title = json.optString("title", ""),
+        description = json.optString("description", ""),
+        displayNumber = json.optString("displayNumber", json.getInt("number").toString()),
+        videoUrl = if (json.has("videoUrl") && !json.isNull("videoUrl")) json.getString("videoUrl") else null,
+        vttUrl = if (json.has("vttUrl") && !json.isNull("vttUrl")) json.getString("vttUrl") else null
+    )
+
+    private fun parseEpisodeArray(json: JSONObject, key: String): List<Episode> {
+        val array = json.optJSONArray(key) ?: return emptyList()
+        return buildList {
+            for (i in 0 until array.length()) {
+                runCatching { add(episodeFromJson(array.getJSONObject(i))) }
+            }
+        }
     }
 
     suspend fun getAnime(context: Context, animeId: String): Anime? = withContext(Dispatchers.IO) {
@@ -247,7 +286,10 @@ object OfflineStore {
                 poster = json.optString("poster", ""),
                 backdrop = json.optString("backdrop", ""),
                 description = json.optString("description", ""),
-                genres = genresList
+                detailUrl = json.optString("detailUrl", ""),
+                genres = genresList,
+                episodes = parseEpisodeArray(json, "episodes"),
+                dubEpisodes = parseEpisodeArray(json, "dubEpisodes")
             )
         } catch (e: Exception) {
             null

@@ -29,8 +29,8 @@ import kotlin.math.min
  *
  * No AniSkip API and no AnimeThemes API are used here.  The detector compares
  * the audio of the current Linkkf episode with other episodes of the SAME anime.
- * Repeated audio near the beginning is treated as an OP candidate; repeated audio
- * near the end is treated as an ED candidate.
+ * Repeated audio across multiple episodes is used as the primary evidence.
+ * No fixed beginning/end position is assumed for OP or ED.
  */
 object LinkkfChapterService {
     private const val TAG = "EpisodeChapters"
@@ -41,10 +41,11 @@ object LinkkfChapterService {
     // OP/ED detection is intentionally capped so a bad cross-episode match
     // cannot turn a large portion of an episode into a skip chapter.
     private const val MAX_DETECTED_CHAPTER_SECONDS = 85.0
-    // Ignore candidate matches whose position is too far from the consensus
-    // position of the other comparison episodes.
-    private const val POSITION_OUTLIER_TOLERANCE_SECONDS = 60.0
-    private const val MIN_MATCH_SECONDS = 30.0
+    private const val MIN_MATCH_SECONDS = 40.0
+    private const val TRAINING_EPISODE_COUNT = 5
+    private const val TRAINING_DISCOVERY_THRESHOLD = 0.68
+    private const val TRAINING_VALIDATION_THRESHOLD = 0.86
+    private const val TRAINING_CONTINUITY_THRESHOLD = 0.75
     private const val PLAY_REFERER = "https://play.sub3.top/"
     private const val PLAY_ORIGIN = "https://play.sub3.top"
     private val http = OkHttpClient.Builder()
@@ -239,11 +240,10 @@ object LinkkfChapterService {
             val end = it.endSeconds.coerceIn(it.startSeconds, duration)
             out += ChapterSkipSegment("op", it.startSeconds.coerceIn(0.0, duration), end, duration)
         }
-        val edStart = opMatch?.endSeconds?.coerceIn(0.0, duration) ?: 0.0
-        status("FINGERPRINT_ED_SEARCH_RANGE start=$edStart end=$duration")
+        status("FINGERPRINT_ED_SEARCH_RANGE start=0.0 end=$duration full_episode=true")
         template.ed?.let {
-            scoreTemplateAgainstCurrent(current, it, "ED", status, minStartSeconds = edStart)?.let { m ->
-                val start = m.startSeconds.coerceIn(edStart, duration)
+            scoreTemplateAgainstCurrent(current, it, "ED", status, minStartSeconds = 0.0)?.let { m ->
+                val start = m.startSeconds.coerceIn(0.0, duration)
                 val end = m.endSeconds.coerceIn(start, duration)
                 if (end > start) out += ChapterSkipSegment("ed", start, end, duration)
             }
@@ -292,7 +292,7 @@ object LinkkfChapterService {
                     for (seed in found) {
                         val templateCandidate = fps[aIndex].second
                             .sliceFingerprint(seed.startSeconds, seed.endSeconds)
-                        if (templateCandidate.size < FINGERPRINT_BINS * 300) continue // at least 30 seconds
+                        if (templateCandidate.size < FINGERPRINT_BINS * 400) continue // at least 40 seconds
 
                         val occurrences = ArrayList<Occurrence>()
                         var qualitySum = 0.0
@@ -308,7 +308,7 @@ object LinkkfChapterService {
                                 "TRAIN_OCCURRENCE_${episode.number}",
                                 { message: String -> status(message) }
                             )
-                            if (match == null || match.score < 0.82 || match.endSeconds <= match.startSeconds) {
+                            if (match == null || match.score < TRAINING_VALIDATION_THRESHOLD || match.endSeconds <= match.startSeconds) {
                                 valid = false
                                 break
                             }
@@ -323,6 +323,10 @@ object LinkkfChapterService {
                         }
 
                         if (valid && occurrences.size == fps.size) {
+                            // Do NOT use episode position as a feature. OP/ED can be
+                            // placed unusually early, late, or around inserted scenes.
+                            // Only recurrence and audio similarity decide whether this
+                            // template is useful.
                             candidates += TrainingCandidate(
                                 templateCandidate,
                                 occurrences,
@@ -402,72 +406,35 @@ object LinkkfChapterService {
             // If episode 1 places OP at the end, its occurrence simply votes in the
             // opposite order; the majority of the remaining episodes can still
             // identify the two templates correctly.
-            var opCluster: TrainingCluster? = null
-            var edCluster: TrainingCluster? = null
-            var bestPairScore = Double.NEGATIVE_INFINITY
-
-            for (i in recurring.indices) {
-                for (j in i + 1 until recurring.size) {
-                    val a = recurring[i]
-                    val b = recurring[j]
-                    var aEarlier = 0
-                    var bEarlier = 0
-                    var comparable = 0
-                    for (episode in fps) {
-                        val ao = a.occurrences.firstOrNull { it.episodeId == episode.first.id }
-                        val bo = b.occurrences.firstOrNull { it.episodeId == episode.first.id }
-                        if (ao != null && bo != null) {
-                            comparable++
-                            when {
-                                ao.startSeconds + 5.0 < bo.startSeconds -> aEarlier++
-                                bo.startSeconds + 5.0 < ao.startSeconds -> bEarlier++
-                            }
-                        }
-                    }
-                    if (comparable == 0) continue
-
-                    val earlierRatio = maxOf(aEarlier, bEarlier).toDouble() / comparable.toDouble()
-                    val pairScore =
-                        (a.quality + b.quality) * 0.5 +
-                            earlierRatio * 0.20 +
-                            minOf(a.occurrences.size, b.occurrences.size).toDouble() /
-                                fps.size.toDouble() * 0.10
-                    if (pairScore > bestPairScore && earlierRatio >= 0.60) {
-                        bestPairScore = pairScore
-                        if (aEarlier >= bEarlier) {
-                            opCluster = a
-                            edCluster = b
-                        } else {
-                            opCluster = b
-                            edCluster = a
-                        }
-                    }
-                }
-            }
-
-            // If the two templates have no stable majority ordering, do not average
-            // timestamps. Pick the strongest distinct pair and use only the earliest
-            // observed occurrence as a deterministic fallback. These timestamps are
-            // training-only observations and are never persisted.
+            // Choose the strongest two recurring audio templates by audio evidence
+            // only.  Episode position is NOT a detection feature and does not affect
+            // which templates are accepted.
+            val strongestPair = recurring.take(2)
+            var opCluster: TrainingCluster? = strongestPair.getOrNull(0)
+            var edCluster: TrainingCluster? = strongestPair.getOrNull(1)
             if (opCluster == null || edCluster == null) {
-                val pair = recurring.take(2)
-                if (pair.size < 2) {
-                    status("FINGERPRINT_TRAINING_FAILED only_one_recurring_template")
-                    return null
-                }
-                val first = pair[0]
-                val second = pair[1]
-                val firstFirst = first.occurrences.minOf { it.startSeconds }
-                val secondFirst = second.occurrences.minOf { it.startSeconds }
-                if (firstFirst <= secondFirst) {
-                    opCluster = first
-                    edCluster = second
-                } else {
-                    opCluster = second
-                    edCluster = first
-                }
-                status("FINGERPRINT_TRAIN_ORDER_FALLBACK")
+                status("FINGERPRINT_TRAINING_FAILED only_one_recurring_template")
+                return null
             }
+            // The OP/ED labels are metadata only.  If the two recurring sounds occur
+            // in a consistent temporal order, use that order for naming; this does
+            // not reject or score a candidate based on where it appears.
+            val opBeforeEdVotes = strongestPair[0].occurrences.sumOf { a ->
+                val b = strongestPair[1].occurrences.firstOrNull { it.episodeId == a.episodeId }
+                if (b != null && a.startSeconds < b.startSeconds) 1 else 0
+            }
+            val edBeforeOpVotes = strongestPair[1].occurrences.sumOf { b ->
+                val a = strongestPair[0].occurrences.firstOrNull { it.episodeId == b.episodeId }
+                if (a != null && b.startSeconds < a.startSeconds) 1 else 0
+            }
+            if (edBeforeOpVotes > opBeforeEdVotes) {
+                val tmp = opCluster
+                opCluster = edCluster
+                edCluster = tmp
+            }
+            status("FINGERPRINT_TRAIN_LABELS audio_only_pair=true")
+
+
 
             val opTemplate = opCluster?.fingerprint?.copyOf()
             val edTemplate = edCluster?.fingerprint?.copyOf()
@@ -1005,20 +972,17 @@ object LinkkfChapterService {
                     result += ChapterSkipSegment("op", m.startSeconds, m.endSeconds.coerceAtMost(duration), duration)
                 }
 
-                // ED is searched only after the detected OP. This prevents the ED
-                // template from selecting a high-correlation region inside the OP
-                // (which can happen when both templates share similar instrumentation
-                // or the training template is short). If OP cannot be found, fall back
-                // to the full episode rather than inventing an OP boundary.
-                val edSearchStart = opMatch?.endSeconds?.coerceIn(0.0, duration) ?: 0.0
-                status("FINGERPRINT_ED_SEARCH_RANGE start=$edSearchStart end=$duration")
+                // ED is also searched across the COMPLETE episode.
+                // OP/ED may appear at unusual positions, so there is deliberately
+                // no "ED must be after OP" or fixed-position assumption here.
+                status("FINGERPRINT_ED_SEARCH_RANGE start=0.0 end=$duration full_episode=true")
                 template.ed?.let { ed ->
                     scoreTemplateAgainstCurrent(
                         current,
                         ed,
                         "ED",
                         { message: String -> status(message) },
-                        minStartSeconds = edSearchStart
+                        minStartSeconds = 0.0
                     )?.let { m ->
                         result += ChapterSkipSegment("ed", m.startSeconds, m.endSeconds.coerceAtMost(duration), duration)
                     }
@@ -1035,12 +999,12 @@ object LinkkfChapterService {
 
             val completed = episodes.filter { ep -> isOfflineEpisodeCompleted(animeId, ep) }
                 .sortedBy { ep -> kotlin.math.abs(ep.number - currentEpisode.number) }
-                .take(3)
-            if (completed.size < 2) {
-                status("FINGERPRINT_TRAINING_WAIT completed=${completed.size}")
+                .take(TRAINING_EPISODE_COUNT)
+            if (completed.size < TRAINING_EPISODE_COUNT) {
+                status("FINGERPRINT_TRAINING_WAIT completed=${completed.size}/$TRAINING_EPISODE_COUNT")
                 return@runCatching emptyList()
             }
-            status("FINGERPRINT_TRAINING_START references=${completed.joinToString(",") { it.number.toString() }}")
+            status("FINGERPRINT_TRAINING_START references=${completed.joinToString(",") { it.number.toString() }} count=${completed.size}")
 
             // Training fingerprints are temporary working data. Only the final OP/ED
             // templates are persisted; these episode fingerprints are released after
@@ -1050,8 +1014,8 @@ object LinkkfChapterService {
                 loadCompleteCachedFingerprint(context, animeId, ep, { message: String -> status(message) })
                     ?.let { fps += ep to it }
             }
-            if (fps.size < 2) {
-                status("FINGERPRINT_TRAINING_FAILED fingerprints=${fps.size}")
+            if (fps.size < TRAINING_EPISODE_COUNT) {
+                status("FINGERPRINT_TRAINING_FAILED fingerprints=${fps.size}/$TRAINING_EPISODE_COUNT")
                 return@runCatching emptyList()
             }
 
@@ -1091,7 +1055,7 @@ object LinkkfChapterService {
                     for (seed in found) {
                         val templateCandidate = fps[aIndex].second
                             .sliceFingerprint(seed.startSeconds, seed.endSeconds)
-                        if (templateCandidate.size < FINGERPRINT_BINS * 300) continue // at least 30 seconds
+                        if (templateCandidate.size < FINGERPRINT_BINS * 400) continue // at least 40 seconds
 
                         val occurrences = ArrayList<Occurrence>()
                         var qualitySum = 0.0
@@ -1107,7 +1071,7 @@ object LinkkfChapterService {
                                 "TRAIN_OCCURRENCE_${episode.number}",
                                 { message: String -> status(message) }
                             )
-                            if (match == null || match.score < 0.82 || match.endSeconds <= match.startSeconds) {
+                            if (match == null || match.score < TRAINING_VALIDATION_THRESHOLD || match.endSeconds <= match.startSeconds) {
                                 valid = false
                                 break
                             }
@@ -1122,6 +1086,10 @@ object LinkkfChapterService {
                         }
 
                         if (valid && occurrences.size == fps.size) {
+                            // Do NOT use episode position as a feature. OP/ED can be
+                            // placed unusually early, late, or around inserted scenes.
+                            // Only recurrence and audio similarity decide whether this
+                            // template is useful.
                             candidates += TrainingCandidate(
                                 templateCandidate,
                                 occurrences,
@@ -1268,6 +1236,7 @@ object LinkkfChapterService {
                 status("FINGERPRINT_TRAIN_ORDER_FALLBACK")
             }
 
+
             val opTemplate = opCluster?.fingerprint?.copyOf()
             val edTemplate = edCluster?.fingerprint?.copyOf()
             status(
@@ -1294,6 +1263,11 @@ object LinkkfChapterService {
                     "FINGERPRINT_TEMPLATE_SAVED format=audio-only " +
                         "opSamples=${opTemplate?.size ?: 0} edSamples=${edTemplate?.size ?: 0}"
                 )
+                // The old timestamp/profile cache is no longer used by the audio
+                // fingerprint detector. Remove it once the authoritative audio
+                // templates have been persisted.
+                OfflineOpEdProfileStore.delete(context, animeId)
+                status("FINGERPRINT_UNUSED_PROFILE_CACHE_RELEASED")
             }
 
             val current = fps.firstOrNull { it.first.id == currentEpisode.id }?.second
@@ -1413,7 +1387,7 @@ object LinkkfChapterService {
             // Do not require an unrealistically high score at the discovery stage.
             // The later full-template validation decides whether the repeated audio
             // is strong enough to become a persisted template.
-            if (bestBi >= 0 && bestScore >= 0.55) {
+            if (bestBi >= 0 && bestScore >= TRAINING_DISCOVERY_THRESHOLD) {
                 var leftA = ai
                 var leftB = bestBi
                 var rightA = ai + seedBlock
@@ -1425,7 +1399,7 @@ object LinkkfChapterService {
                 while (leftA - extensionBlock >= 0 && leftB - extensionBlock >= 0) {
                     val score = sequenceCosineFrames(a, leftA - extensionBlock, b, leftB - extensionBlock, extensionBlock)
                     totalBlocks++
-                    if (score < 0.55) break
+                    if (score < TRAINING_DISCOVERY_THRESHOLD) break
                     goodBlocks++
                     extensionScoreSum += score
                     leftA -= extensionBlock
@@ -1435,7 +1409,7 @@ object LinkkfChapterService {
                 while (rightA + extensionBlock <= aFrames && rightB + extensionBlock <= bFrames) {
                     val score = sequenceCosineFrames(a, rightA, b, rightB, extensionBlock)
                     totalBlocks++
-                    if (score < 0.55) break
+                    if (score < TRAINING_DISCOVERY_THRESHOLD) break
                     goodBlocks++
                     extensionScoreSum += score
                     rightA += extensionBlock
@@ -1446,7 +1420,7 @@ object LinkkfChapterService {
                 val average = extensionScoreSum / totalBlocks.coerceAtLeast(1)
                 val score = bestScore * 0.45 + average * 0.35 + continuity * 0.20
                 val duration = (rightA - leftA) * FINGERPRINT_FRAME_SECONDS
-                if (score >= 0.60 && continuity >= 0.50 && duration >= 40.0) {
+                if (score >= TRAINING_DISCOVERY_THRESHOLD && continuity >= TRAINING_CONTINUITY_THRESHOLD && duration >= MIN_MATCH_SECONDS) {
                     seeds += Match(
                         leftA * FINGERPRINT_FRAME_SECONDS,
                         rightA * FINGERPRINT_FRAME_SECONDS,
@@ -1561,7 +1535,7 @@ object LinkkfChapterService {
             i += scanStep
         }
 
-        if (bestStart < 0 || bestCosine < 0.65) {
+        if (bestStart < 0 || bestCosine < 0.72) {
             status("FINGERPRINT_${label}_REJECT cosine=$bestCosine minStartSeconds=$minStartSeconds")
             return null
         }
@@ -1598,7 +1572,7 @@ object LinkkfChapterService {
                 "continuity=$continuity average=$average blocks=$good/$total score=$score"
         )
 
-        if (score < 0.65 || continuity < 0.60) {
+        if (score < 0.72 || continuity < 0.75) {
             status("FINGERPRINT_${label}_REJECT reason=continuity score=$score continuity=$continuity")
             return null
         }

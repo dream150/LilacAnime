@@ -28,6 +28,8 @@ data class WatchProgress(
     val animeId: String,
     val episodeNumber: Int,
     val progress: Float,
+    // 가장 안정적인 회차 식별자. 이전 저장 데이터에는 없을 수 있으므로 nullable이다.
+    val episodeId: String? = null,
     // 숫자만으로는 4화와 4a화를 구분할 수 없으므로 실제 회차 키를 함께 저장한다.
     val episodeKey: String = episodeNumber.toString()
 )

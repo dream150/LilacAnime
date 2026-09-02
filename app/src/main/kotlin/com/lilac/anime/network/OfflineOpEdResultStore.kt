@@ -15,7 +15,7 @@ import org.json.JSONObject
 object OfflineOpEdResultStore {
     private const val PREFS = "linkkf_oped_results"
     private const val KEY_PREFIX = "anime_"
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     fun load(
         context: Context,
@@ -61,6 +61,13 @@ object OfflineOpEdResultStore {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(key(animeId, episodeId), root.toString())
+            .commit()
+    }
+
+    fun delete(context: Context, animeId: String, episodeId: String): Boolean {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .remove(key(animeId, episodeId))
             .commit()
     }
 

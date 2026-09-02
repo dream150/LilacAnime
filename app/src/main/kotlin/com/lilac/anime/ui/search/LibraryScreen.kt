@@ -37,12 +37,17 @@ fun LibraryScreen(
     }
 
     var downloadedAnimeList by remember { mutableStateOf<List<Anime>>(emptyList()) }
-    LaunchedEffect(downloadedIds, vm.homeAnime, vm.allAnime) {
+    var savedAnime by remember { mutableStateOf<List<Anime>>(emptyList()) }
+
+    LaunchedEffect(downloadedIds) {
         downloadedAnimeList = vm.getDownloadedAnimeList(context)
     }
 
-    val allAnimeList = (vm.allAnime + vm.homeAnime).distinctBy { it.id }
-    val savedAnime = allAnimeList.filter { it.id in vm.library }
+    // 내 목록은 전체 애니메이션 카탈로그에 의존하지 않는다.
+    // 작품을 추가할 때 저장한 개별 캐시를 먼저 사용한다.
+    LaunchedEffect(vm.library) {
+        savedAnime = vm.getLibraryAnimeList(context)
+    }
 
     var selectedTab by remember { mutableIntStateOf(if (isOffline) 1 else 0) }
 

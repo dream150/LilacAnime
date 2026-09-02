@@ -52,6 +52,7 @@ fun DetailScreen(
         vm.loadAnimeDetail(
             target = detailAnime,
             force = !isOffline,
+            context = context,
             onLoaded = { refreshed -> detailAnime = refreshed }
         )
         vm.loadEpisodes(context, detailAnime, force = !isOffline)
