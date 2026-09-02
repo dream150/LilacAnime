@@ -1,0 +1,745 @@
+   180	    }.getOrNull()
+   181	
+   182	    private fun durationForHls(context: Context, url: String): Double? = runCatching {
+   183	        val p = fetchPlaylistIfHls(url) ?: return@runCatching null
+   184	        var mediaUrl = p.url
+   185	        var text = p.text
+   186	        if (text.contains("#EXT-X-STREAM-INF")) {
+   187	            val v = parseMasterVariants(text, mediaUrl).maxByOrNull { it.bandwidth } ?: return@runCatching null
+   188	            mediaUrl = v.url
+   189	            text = getText(mediaUrl)
+   190	        }
+   191	        parseMediaSegments(text, mediaUrl).lastOrNull()?.end
+   192	    }.getOrNull()
+   193	
+   194	    private fun matchSavedFingerprintTemplate(
+   195	        current: FloatArray,
+   196	        template: OfflineOpEdFingerprintStore.Template,
+   197	        duration: Double,
+   198	        status: (String) -> Unit
+   199	    ): List<ChapterSkipSegment> {
+   200	        val out = ArrayList<ChapterSkipSegment>()
+   201	        val opMatch = template.op?.let { scoreTemplateAgainstCurrent(current, it, "OP", status, minStartSeconds = 0.0) }
+   202	        opMatch?.let {
+   203	            val end = it.endSeconds.coerceIn(it.startSeconds, duration)
+   204	            out += ChapterSkipSegment("op", it.startSeconds.coerceIn(0.0, duration), end, duration)
+   205	        }
+   206	        val edStart = opMatch?.endSeconds?.coerceIn(0.0, duration) ?: 0.0
+   207	        status("FINGERPRINT_ED_SEARCH_RANGE start=$edStart end=$duration")
+   208	        template.ed?.let {
+   209	            scoreTemplateAgainstCurrent(current, it, "ED", status, minStartSeconds = edStart)?.let { m ->
+   210	                val start = m.startSeconds.coerceIn(edStart, duration)
+   211	                val end = m.endSeconds.coerceIn(start, duration)
+   212	                if (end > start) out += ChapterSkipSegment("ed", start, end, duration)
+   213	            }
+   214	        }
+   215	        return out.filter { it.endTime > it.startTime }.sortedBy { it.startTime }
+   216	    }
+   217	
+   218	
+   219	    private fun trainFingerprintTemplates(
+   220	        fps: List<Pair<Episode, FloatArray>>,
+   221	        status: (String) -> Unit
+   222	    ): Pair<FloatArray?, FloatArray?>? {
+   223	            // Build real audio templates from complete-episode repetition.
+   224	            // IMPORTANT: no episode timestamp is averaged or persisted here.  Every
+   225	            // candidate is an actual slice of audio fingerprint data.  We validate
+   226	            // that the same audio occurs in every training episode, then cluster
+   227	            // equivalent fingerprints so OP/ED are selected by recurrence rather
+   228	            // than by their absolute position in any one episode.
+   229	            data class Occurrence(
+   230	                val episodeId: String,
+   231	                val episodeNumber: Int,
+   232	                val startSeconds: Double,
+   233	                val endSeconds: Double,
+   234	                val score: Double
+   235	            )
+   236	            data class TrainingCandidate(
+   237	                val fingerprint: FloatArray,
+   238	                val occurrences: MutableList<Occurrence>,
+   239	                val quality: Double
+   240	            )
+   241	            data class TrainingCluster(
+   242	                var fingerprint: FloatArray,
+   243	                val occurrences: MutableList<Occurrence>,
+   244	                var quality: Double
+   245	            )
+   246	
+   247	            val candidates = ArrayList<TrainingCandidate>()
+   248	            for (aIndex in fps.indices) {
+   249	                for (bIndex in aIndex + 1 until fps.size) {
+   250	                    val found = findTopRepeatedRegions(fps[aIndex].second, fps[bIndex].second, 12)
+   251	                    status(
+   252	                        "FINGERPRINT_TRAIN_PAIR a=${fps[aIndex].first.number} " +
+   253	                            "b=${fps[bIndex].first.number} candidates=${found.size}"
+   254	                    )
+   255	
+   256	                    for (seed in found) {
+   257	                        val templateCandidate = fps[aIndex].second
+   258	                            .sliceFingerprint(seed.startSeconds, seed.endSeconds)
+   259	                        if (templateCandidate.size < FINGERPRINT_BINS * 300) continue // at least 30 seconds
+   260	
+   261	                        val occurrences = ArrayList<Occurrence>()
+   262	                        var qualitySum = 0.0
+   263	                        var valid = true
+   264	
+   265	                        // Search the ENTIRE fingerprint of every training episode for
+   266	                        // this exact audio template.  The location is only an
+   267	                        // occurrence discovered during training; it is never stored.
+   268	                        for ((episode, fingerprint) in fps) {
+   269	                            val match = scoreTemplateAgainstCurrent(
+   270	                                fingerprint,
+   271	                                templateCandidate,
+   272	                                "TRAIN_OCCURRENCE_${episode.number}",
+   273	                                ::status
+   274	                            )
+   275	                            if (match == null || match.score < 0.82 || match.endSeconds <= match.startSeconds) {
+   276	                                valid = false
+   277	                                break
+   278	                            }
+   279	                            occurrences += Occurrence(
+   280	                                episode.id,
+   281	                                episode.number,
+   282	                                match.startSeconds,
+   283	                                match.endSeconds,
+   284	                                match.score
+   285	                            )
+   286	                            qualitySum += match.score
+   287	                        }
+   288	
+   289	                        if (valid && occurrences.size == fps.size) {
+   290	                            candidates += TrainingCandidate(
+   291	                                templateCandidate,
+   292	                                occurrences,
+   293	                                qualitySum / occurrences.size.coerceAtLeast(1)
+   294	                            )
+   295	                        }
+   296	                    }
+   297	                }
+   298	            }
+   299	
+   300	            if (candidates.isEmpty()) {
+   301	                status("FINGERPRINT_TRAINING_FAILED no_common_audio_templates")
+   302	                return null
+   303	            }
+   304	
+   305	            // Merge the same OP/ED audio found from different episode pairs.
+   306	            // Clustering is based on the fingerprint samples themselves, never on
+   307	            // start/end timestamps.  This is what allows episode 1 to have the OP
+   308	            // at a completely different position from the other episodes.
+   309	            val clusters = ArrayList<TrainingCluster>()
+   310	            for (candidate in candidates.sortedByDescending { it.quality }) {
+   311	                var matchedCluster: TrainingCluster? = null
+   312	                for (cluster in clusters) {
+   313	                    val minLength = minOf(candidate.fingerprint.size, cluster.fingerprint.size)
+   314	                    val maxLength = maxOf(candidate.fingerprint.size, cluster.fingerprint.size)
+   315	                    if (minLength < 300 || minLength.toDouble() / maxLength.toDouble() < 0.60) continue
+   316	                    val similarity = cosine(
+   317	                        candidate.fingerprint, 0,
+   318	                        cluster.fingerprint, 0,
+   319	                        minLength
+   320	                    )
+   321	                    if (similarity >= 0.90) {
+   322	                        matchedCluster = cluster
+   323	                        break
+   324	                    }
+   325	                }
+   326	
+   327	                if (matchedCluster == null) {
+   328	                    clusters += TrainingCluster(
+   329	                        candidate.fingerprint.copyOf(),
+   330	                        ArrayList(candidate.occurrences),
+   331	                        candidate.quality
+   332	                    )
+   333	                } else {
+   334	                    // Keep the best-quality actual audio fingerprint as the
+   335	                    // representative; merge only the discovered occurrences.
+   336	                    for (occurrence in candidate.occurrences) {
+   337	                        val old = matchedCluster.occurrences.indexOfFirst { it.episodeId == occurrence.episodeId }
+   338	                        if (old < 0) {
+   339	                            matchedCluster.occurrences += occurrence
+   340	                        } else if (occurrence.score > matchedCluster.occurrences[old].score) {
+   430	                    opCluster = second
+   431	                    edCluster = first
+   432	                }
+   433	                status("FINGERPRINT_TRAIN_ORDER_FALLBACK")
+   434	            }
+   435	
+   436	            val opTemplate = opCluster?.fingerprint?.copyOf()
+   437	            val edTemplate = edCluster?.fingerprint?.copyOf()
+   438	            status(
+   439	                "FINGERPRINT_TEMPLATES_SELECTED " +
+   440	                    "opSeconds=${opTemplate?.let { fingerprintFrames(it) * FINGERPRINT_FRAME_SECONDS } ?: 0.0} " +
+   441	                    "edSeconds=${edTemplate?.let { fingerprintFrames(it) * FINGERPRINT_FRAME_SECONDS } ?: 0.0} " +
+   442	                    "clusters=${recurring.size}"
+   443	            )
+   444	            opCluster?.let { cluster ->
+   445	                status("FINGERPRINT_OP_OCCURRENCES " + cluster.occurrences.joinToString(";") {
+   446	                    "ep=${it.episodeNumber}@${it.startSeconds}-${it.endSeconds},score=${it.score}"
+   447	                })
+   448	            }
+   449	            edCluster?.let { cluster ->
+   450	                status("FINGERPRINT_ED_OCCURRENCES " + cluster.occurrences.joinToString(";") {
+   451	                    "ep=${it.episodeNumber}@${it.startSeconds}-${it.endSeconds},score=${it.score}"
+   452	                })
+   453	            }
+   454	
+   455	
+   456	            return opTemplate to edTemplate
+   457	    }
+   458	
+   459	    private fun materializeTailWindow(context: Context, url: String, seconds: Double): TailWindow? {
+   460	        Log.d(TAG, "MATERIALIZE_TAIL_WINDOW_START url=$url seconds=$seconds")
+   461	        return runCatching {
+   462	            val playlistResult = fetchPlaylistIfHls(url)
+   463	            if (playlistResult == null) {
+   464	                Log.w(TAG, "MATERIALIZE_TAIL_NOT_HLS url=$url")
+   465	                return@runCatching null
+   466	            }
+   467	            var mediaUrl = playlistResult.url
+   468	            var playlist = playlistResult.text
+   469	            if (playlist.contains("#EXT-X-STREAM-INF")) {
+   470	                val variants = parseMasterVariants(playlist, mediaUrl)
+   471	                Log.d(TAG, "HLS_MASTER_VARIANTS count=${variants.size} url=$mediaUrl")
+   472	                mediaUrl = variants.maxByOrNull { it.bandwidth }?.url ?: return@runCatching null
+   473	                playlist = getText(mediaUrl)
+   474	            }
+   475	            val segments = parseMediaSegments(playlist, mediaUrl)
+   476	            Log.d(TAG, "HLS_MEDIA_PLAYLIST segments=${segments.size} url=$mediaUrl")
+   477	            val total = segments.lastOrNull()?.end ?: return@runCatching null
+   478	            val actualStart = max(0.0, total - seconds)
+   479	            Log.d(TAG, "HLS_ACTUAL_DURATION playlist=${total}s requestedWindow=${seconds}s tailStart=${actualStart}s tailEnd=${total}s")
+   480	            materializeHlsWindow(context, mediaUrl, actualStart, total, playlist)?.let { file ->
+   481	                TailWindow(file, actualStart, total)
+   482	            }
+   483	        }.onFailure {
+   484	            Log.e(TAG, "MATERIALIZE_TAIL_FAILED ${it.javaClass.simpleName}: ${it.message}", it)
+   485	        }.getOrNull()
+   486	    }
+   487	
+   488	    private fun materializeWindow(context: Context, url: String, start: Double, end: Double): File? {
+   489	        Log.d(TAG, "MATERIALIZE_WINDOW_START url=$url start=$start end=$end")
+   490	        return runCatching {
+   491	            val playlistResult = fetchPlaylistIfHls(url)
+   492	            if (playlistResult != null) {
+   493	                Log.d(TAG, "MATERIALIZE_HLS_DETECTED url=${playlistResult.url} contentType=${playlistResult.contentType}")
+   494	                var mediaUrl = playlistResult.url
+   495	                var playlist = playlistResult.text
+   496	                if (playlist.contains("#EXT-X-STREAM-INF")) {
+   497	                    val variants = parseMasterVariants(playlist, mediaUrl)
+   498	                    Log.d(TAG, "HLS_MASTER_VARIANTS count=${variants.size} url=$mediaUrl")
+   499	                    mediaUrl = variants.maxByOrNull { it.bandwidth }?.url
+   500	                        ?: throw IllegalStateException("HLS master has no variants")
+   501	                    playlist = getText(mediaUrl)
+   502	                    Log.d(TAG, "HLS_VARIANT_SELECTED url=$mediaUrl")
+   503	                }
+   504	                return@runCatching materializeHlsWindow(context, mediaUrl, start, end, playlist)
+   505	            }
+   506	            Log.d(TAG, "MATERIALIZE_NOT_HLS_DIRECT_DOWNLOAD url=$url")
+   507	            download(context, url, "episode")
+   508	        }.onFailure {
+   509	            Log.e(TAG, "MATERIALIZE_WINDOW_FAILED ${it.javaClass.simpleName}: ${it.message}", it)
+   510	        }.getOrNull()
+   720	     * the later recurring template (ED).
+   721	     */
+   722	    @OptIn(UnstableApi::class)
+   723	    suspend fun detectSkipSegmentsOffline(
+   724	        context: Context,
+   725	        animeId: String,
+   726	        currentEpisode: Episode,
+   727	        episodes: List<Episode>,
+   728	        episodeDurationSeconds: Int,
+   729	        onStatus: (String) -> Unit = {}
+   730	    ): List<ChapterSkipSegment> = withContext(Dispatchers.Default) {
+   731	        fun status(message: String) { Log.d(TAG, message); onStatus(message) }
+   732	        runCatching {
+   733	            val duration = episodeDurationSeconds.toDouble()
+   734	            status("FINGERPRINT_ANALYSIS_START episode=${currentEpisode.number} duration=${duration}s")
+   735	
+   736	            val template = OfflineOpEdFingerprintStore.load(context, animeId)
+   737	            if (template != null && (template.op != null || template.ed != null)) {
+   738	                status("FINGERPRINT_TEMPLATE_HIT format=audio-only opSamples=${template.op?.size ?: 0} edSamples=${template.ed?.size ?: 0}")
+   739	                val current = loadCompleteCachedFingerprint(context, animeId, currentEpisode, ::status)
+   740	                    ?: return@runCatching emptyList()
+   741	                val result = ArrayList<ChapterSkipSegment>()
+   742	                val opMatch = template.op?.let { op ->
+   743	                    scoreTemplateAgainstCurrent(current, op, "OP", ::status, minStartSeconds = 0.0)
+   744	                }
+   745	                opMatch?.let { m ->
+   746	                    result += ChapterSkipSegment("op", m.startSeconds, m.endSeconds.coerceAtMost(duration), duration)
+   747	                }
+   748	
+   749	                // ED is searched only after the detected OP. This prevents the ED
+   750	                // template from selecting a high-correlation region inside the OP
+   751	                // (which can happen when both templates share similar instrumentation
+   752	                // or the training template is short). If OP cannot be found, fall back
+   753	                // to the full episode rather than inventing an OP boundary.
+   754	                val edSearchStart = opMatch?.endSeconds?.coerceIn(0.0, duration) ?: 0.0
+   755	                status("FINGERPRINT_ED_SEARCH_RANGE start=$edSearchStart end=$duration")
+   756	                template.ed?.let { ed ->
+   757	                    scoreTemplateAgainstCurrent(
+   758	                        current,
+   759	                        ed,
+   760	                        "ED",
+   761	                        ::status,
+   762	                        minStartSeconds = edSearchStart
+   763	                    )?.let { m ->
+   764	                        result += ChapterSkipSegment("ed", m.startSeconds, m.endSeconds.coerceAtMost(duration), duration)
+   765	                    }
+   766	                }
+   767	                val out = result.filter { it.endTime > it.startTime }.sortedBy { it.startTime }
+   768	                status("FINGERPRINT_ANALYSIS_COMPLETE segments=${out.size} template=audio-only")
+   769	                return@runCatching out
+   770	            }
+   771	
+   772	            val completed = episodes.filter { ep -> isOfflineEpisodeCompleted(animeId, ep) }
+   773	                .sortedBy { ep -> kotlin.math.abs(ep.number - currentEpisode.number) }
+   774	                .take(3)
+   775	            if (completed.size < 2) {
+   776	                status("FINGERPRINT_TRAINING_WAIT completed=${completed.size}")
+   777	                return@runCatching emptyList()
+   778	            }
+   779	            status("FINGERPRINT_TRAINING_START references=${completed.joinToString(",") { it.number.toString() }}")
+   780	
+   781	            val fps = completed.mapNotNull { ep ->
+   782	                loadCompleteCachedFingerprint(context, animeId, ep, ::status)?.let { ep to it }
+   783	            }
+   784	            if (fps.size < 2) {
+   785	                status("FINGERPRINT_TRAINING_FAILED fingerprints=${fps.size}")
+   786	                return@runCatching emptyList()
+   787	            }
+   788	
+   789	            // Build real audio templates from complete-episode repetition.
+   790	            // IMPORTANT: no episode timestamp is averaged or persisted here.  Every
+   791	            // candidate is an actual slice of audio fingerprint data.  We validate
+   792	            // that the same audio occurs in every training episode, then cluster
+   793	            // equivalent fingerprints so OP/ED are selected by recurrence rather
+   794	            // than by their absolute position in any one episode.
+   795	            data class Occurrence(
+   796	                val episodeId: String,
+   797	                val episodeNumber: Int,
+   798	                val startSeconds: Double,
+   799	                val endSeconds: Double,
+   800	                val score: Double
+   801	            )
+   802	            data class TrainingCandidate(
+   803	                val fingerprint: FloatArray,
+   804	                val occurrences: MutableList<Occurrence>,
+   805	                val quality: Double
+   806	            )
+   807	            data class TrainingCluster(
+   808	                var fingerprint: FloatArray,
+   809	                val occurrences: MutableList<Occurrence>,
+   810	                var quality: Double
+   811	            )
+   812	
+   813	            val candidates = ArrayList<TrainingCandidate>()
+   814	            for (aIndex in fps.indices) {
+   815	                for (bIndex in aIndex + 1 until fps.size) {
+   816	                    val found = findTopRepeatedRegions(fps[aIndex].second, fps[bIndex].second, 12)
+   817	                    status(
+   818	                        "FINGERPRINT_TRAIN_PAIR a=${fps[aIndex].first.number} " +
+   819	                            "b=${fps[bIndex].first.number} candidates=${found.size}"
+   820	                    )
+   821	
+   822	                    for (seed in found) {
+   823	                        val templateCandidate = fps[aIndex].second
+   824	                            .sliceFingerprint(seed.startSeconds, seed.endSeconds)
+   825	                        if (templateCandidate.size < FINGERPRINT_BINS * 300) continue // at least 30 seconds
+   826	
+   827	                        val occurrences = ArrayList<Occurrence>()
+   828	                        var qualitySum = 0.0
+   829	                        var valid = true
+   830	
+   831	                        // Search the ENTIRE fingerprint of every training episode for
+   832	                        // this exact audio template.  The location is only an
+   833	                        // occurrence discovered during training; it is never stored.
+   834	                        for ((episode, fingerprint) in fps) {
+   835	                            val match = scoreTemplateAgainstCurrent(
+   836	                                fingerprint,
+   837	                                templateCandidate,
+   838	                                "TRAIN_OCCURRENCE_${episode.number}",
+   839	                                ::status
+   840	                            )
+   841	                            if (match == null || match.score < 0.82 || match.endSeconds <= match.startSeconds) {
+   842	                                valid = false
+   843	                                break
+   844	                            }
+   845	                            occurrences += Occurrence(
+   846	                                episode.id,
+   847	                                episode.number,
+   848	                                match.startSeconds,
+   849	                                match.endSeconds,
+   850	                                match.score
+   851	                            )
+   852	                            qualitySum += match.score
+   853	                        }
+   854	
+   855	                        if (valid && occurrences.size == fps.size) {
+   856	                            candidates += TrainingCandidate(
+   857	                                templateCandidate,
+   858	                                occurrences,
+   859	                                qualitySum / occurrences.size.coerceAtLeast(1)
+   860	                            )
+   861	                        }
+   862	                    }
+   863	                }
+   864	            }
+   865	
+   866	            if (candidates.isEmpty()) {
+   867	                status("FINGERPRINT_TRAINING_FAILED no_common_audio_templates")
+   868	                return@runCatching emptyList()
+   869	            }
+   870	
+   871	            // Merge the same OP/ED audio found from different episode pairs.
+   872	            // Clustering is based on the fingerprint samples themselves, never on
+   873	            // start/end timestamps.  This is what allows episode 1 to have the OP
+   874	            // at a completely different position from the other episodes.
+   875	            val clusters = ArrayList<TrainingCluster>()
+   876	            for (candidate in candidates.sortedByDescending { it.quality }) {
+   877	                var matchedCluster: TrainingCluster? = null
+   878	                for (cluster in clusters) {
+   879	                    val minLength = minOf(candidate.fingerprint.size, cluster.fingerprint.size)
+   880	                    val maxLength = maxOf(candidate.fingerprint.size, cluster.fingerprint.size)
+   881	                    if (minLength < 300 || minLength.toDouble() / maxLength.toDouble() < 0.60) continue
+   882	                    val similarity = cosine(
+   883	                        candidate.fingerprint, 0,
+   884	                        cluster.fingerprint, 0,
+   885	                        minLength
+   886	                    )
+   887	                    if (similarity >= 0.90) {
+   888	                        matchedCluster = cluster
+   889	                        break
+   890	                    }
+   891	                }
+   892	
+   893	                if (matchedCluster == null) {
+   894	                    clusters += TrainingCluster(
+   895	                        candidate.fingerprint.copyOf(),
+   896	                        ArrayList(candidate.occurrences),
+   897	                        candidate.quality
+   898	                    )
+   899	                } else {
+   900	                    // Keep the best-quality actual audio fingerprint as the
+  1010	            opCluster?.let { cluster ->
+  1011	                status("FINGERPRINT_OP_OCCURRENCES " + cluster.occurrences.joinToString(";") {
+  1012	                    "ep=${it.episodeNumber}@${it.startSeconds}-${it.endSeconds},score=${it.score}"
+  1013	                })
+  1014	            }
+  1015	            edCluster?.let { cluster ->
+  1016	                status("FINGERPRINT_ED_OCCURRENCES " + cluster.occurrences.joinToString(";") {
+  1017	                    "ep=${it.episodeNumber}@${it.startSeconds}-${it.endSeconds},score=${it.score}"
+  1018	                })
+  1019	            }
+  1020	
+  1021	            if (!OfflineOpEdFingerprintStore.save(context, animeId, opTemplate, edTemplate)) {
+  1022	                status("FINGERPRINT_TEMPLATE_SAVE_FAILED")
+  1023	            } else {
+  1024	                status(
+  1025	                    "FINGERPRINT_TEMPLATE_SAVED format=audio-only " +
+  1026	                        "opSamples=${opTemplate?.size ?: 0} edSamples=${edTemplate?.size ?: 0}"
+  1027	                )
+  1028	            }
+  1029	
+  1030	            val current = fps.firstOrNull { it.first.id == currentEpisode.id }?.second
+  1031	                ?: loadCompleteCachedFingerprint(context, animeId, currentEpisode, ::status)
+  1032	                ?: return@runCatching emptyList()
+  1033	            val result = ArrayList<ChapterSkipSegment>()
+  1034	            opTemplate?.let { scoreTemplateAgainstCurrent(current, it, "OP", ::status)?.let { m -> result += ChapterSkipSegment("op", m.startSeconds, m.endSeconds.coerceAtMost(duration), duration) } }
+  1035	            edTemplate?.let { scoreTemplateAgainstCurrent(current, it, "ED", ::status)?.let { m -> result += ChapterSkipSegment("ed", m.startSeconds, m.endSeconds.coerceAtMost(duration), duration) } }
+  1036	            val out = result.filter { it.endTime > it.startTime }.sortedBy { it.startTime }
+  1037	            status("FINGERPRINT_ANALYSIS_COMPLETE segments=${out.size} template=audio-only")
+  1038	            out
+  1039	        }.onFailure {
+  1040	            Log.e(TAG, "FINGERPRINT_ANALYSIS_FAILED ${it.javaClass.simpleName}: ${it.message}", it)
+  1041	            onStatus("FINGERPRINT_ANALYSIS_FAILED ${it.javaClass.simpleName}: ${it.message ?: "unknown"}")
+  1042	        }.getOrDefault(emptyList())
+  1043	    }
+  1044	
+  1045	    @OptIn(UnstableApi::class)
+  1046	    private fun isOfflineEpisodeCompleted(animeId: String, ep: Episode): Boolean {
+  1047	        val cursor = LilacApplication.downloadManager.downloadIndex.getDownloads()
+  1048	        return try {
+  1049	            val ids = HashSet<String>()
+  1050	            while (cursor.moveToNext()) if (cursor.download.state == Download.STATE_COMPLETED) ids += cursor.download.request.id
+  1051	            val exact = offlineDownloadId(animeId, ep)
+  1052	            exact in ids || ep.id in ids || (ep.displayNumber == ep.number.toString() && "${animeId}_${ep.number}" in ids)
+  1053	        } finally { cursor.close() }
+  1054	    }
+  1055	
+  1056	    @OptIn(UnstableApi::class)
+  1057	    private fun loadCompleteCachedFingerprint(
+  1058	        context: Context,
+  1059	        animeId: String,
+  1060	        episode: Episode,
+  1061	        status: (String) -> Unit
+  1062	    ): FloatArray? {
+  1063	        val cursor = LilacApplication.downloadManager.downloadIndex.getDownloads()
+  1064	        val download = try {
+  1065	            var found: Download? = null
+  1066	            while (cursor.moveToNext()) {
+  1067	                val d = cursor.download
+  1068	                if (d.state == Download.STATE_COMPLETED && (d.request.id == offlineDownloadId(animeId, episode) || d.request.id == episode.id || d.request.id == "${animeId}_${episode.number}")) found = d
+  1069	            }
+  1070	            found
+  1071	        } finally { cursor.close() }
+  1072	        if (download == null) { status("FINGERPRINT_EPISODE_MISSING episode=${episode.number}"); return null }
+  1073	        val media = resolveCachedMediaPlaylist(download.request.uri.toString()) ?: return null
+  1074	        val total = media.segments.lastOrNull()?.end ?: return null
+  1075	        status("FINGERPRINT_FULL_WINDOW episode=${episode.number} start=0 end=$total segments=${media.segments.size}")
+  1076	        val file = materializeCachedSegments(context, media, 0.0, total) ?: return null
+  1077	        return decodeFingerprint(file, 0.0, total)?.also { status("FINGERPRINT_CURRENT_FULL_OK episode=${episode.number} samples=${it.size}") }
+  1078	    }
+  1079	
+  1080	    /**
+  1081	     * Finds long, contiguous repeated audio regions between two complete episodes.
+  1082	     * A 20-second seed is only the starting point.  The candidate is extended while
+  1083	     * adjacent 5-second blocks continue to match, so the persisted template is the
+  1084	     * actual repeated audio region rather than a fixed analysis window.
+  1085	     */
+  1086	    private fun findTopRepeatedRegions(a: FloatArray, b: FloatArray, maxResults: Int): List<Match> {
+  1087	        // Work in fingerprint frames, not flattened mel-bin samples.
+  1088	        // A seed is a 20-second sequence (200 x 0.1s frames).  The score is the
+  1089	        // average cosine similarity of corresponding 32-bin frames.  This makes
+  1090	        // the meaning of the score independent of FINGERPRINT_BINS and avoids
+  1091	        // treating a flattened 454,752-element array as a single frame sequence.
+  1092	        val seedBlock = 200 // 20 seconds
+  1093	        val extensionBlock = 50 // 5 seconds
+  1094	        val step = 20 // 2 seconds during discovery
+  1095	        val aFrames = fingerprintFrames(a)
+  1096	        val bFrames = fingerprintFrames(b)
+  1097	        if (aFrames < seedBlock || bFrames < seedBlock) return emptyList()
+  1098	
+  1099	        val seeds = ArrayList<Match>()
+  1100	        var globalBest = -1.0
+  1101	        var globalBestA = -1
+  1102	        var globalBestB = -1
+  1103	
+  1104	        var ai = 0
+  1105	        while (ai + seedBlock <= aFrames) {
+  1106	            var bestBi = -1
+  1107	            var bestScore = -1.0
+  1108	            var bi = 0
+  1109	            while (bi + seedBlock <= bFrames) {
+  1110	                val score = sequenceCosineFrames(a, ai, b, bi, seedBlock)
+  1111	                if (score > bestScore) {
+  1112	                    bestScore = score
+  1113	                    bestBi = bi
+  1114	                }
+  1115	                bi += step
+  1116	            }
+  1117	
+  1118	            if (bestScore > globalBest) {
+  1119	                globalBest = bestScore
+  1120	                globalBestA = ai
+  1121	                globalBestB = bestBi
+  1122	            }
+  1123	
+  1124	            // Do not require an unrealistically high score at the discovery stage.
+  1125	            // The later full-template validation decides whether the repeated audio
+  1126	            // is strong enough to become a persisted template.
+  1127	            if (bestBi >= 0 && bestScore >= 0.55) {
+  1128	                var leftA = ai
+  1129	                var leftB = bestBi
+  1130	                var rightA = ai + seedBlock
+  1131	                var rightB = bestBi + seedBlock
+  1132	                var goodBlocks = 1
+  1133	                var totalBlocks = 1
+  1134	                var extensionScoreSum = bestScore
+  1135	
+  1136	                while (leftA - extensionBlock >= 0 && leftB - extensionBlock >= 0) {
+  1137	                    val score = sequenceCosineFrames(a, leftA - extensionBlock, b, leftB - extensionBlock, extensionBlock)
+  1138	                    totalBlocks++
+  1139	                    if (score < 0.55) break
+  1140	                    goodBlocks++
+  1141	                    extensionScoreSum += score
+  1142	                    leftA -= extensionBlock
+  1143	                    leftB -= extensionBlock
+  1144	                }
+  1145	
+  1146	                while (rightA + extensionBlock <= aFrames && rightB + extensionBlock <= bFrames) {
+  1147	                    val score = sequenceCosineFrames(a, rightA, b, rightB, extensionBlock)
+  1148	                    totalBlocks++
+  1149	                    if (score < 0.55) break
+  1150	                    goodBlocks++
+  1151	                    extensionScoreSum += score
+  1152	                    rightA += extensionBlock
+  1153	                    rightB += extensionBlock
+  1154	                }
+  1155	
+  1156	                val continuity = goodBlocks.toDouble() / totalBlocks.coerceAtLeast(1)
+  1157	                val average = extensionScoreSum / totalBlocks.coerceAtLeast(1)
+  1158	                val score = bestScore * 0.45 + average * 0.35 + continuity * 0.20
+  1159	                val duration = (rightA - leftA) * FINGERPRINT_FRAME_SECONDS
+  1160	                if (score >= 0.60 && continuity >= 0.50 && duration >= 40.0) {
+  1161	                    seeds += Match(
+  1162	                        leftA * FINGERPRINT_FRAME_SECONDS,
+  1163	                        rightA * FINGERPRINT_FRAME_SECONDS,
+  1164	                        score
+  1165	                    )
+  1166	                }
+  1167	            }
+  1168	            ai += step
+  1169	        }
+  1170	
+  1171	        // Always expose the best pair score.  This is diagnostic information, not
+  1172	        // a persisted template: it lets us distinguish "no similarity" from a
+  1173	        // candidate being rejected by a later validation rule.
+  1174	        Log.d(
+  1175	            TAG,
+  1176	            "FINGERPRINT_PAIR_BEST score=$globalBest " +
+  1177	                "aStart=${globalBestA * FINGERPRINT_FRAME_SECONDS} " +
+  1178	                "bStart=${globalBestB * FINGERPRINT_FRAME_SECONDS}"
+  1179	        )
+  1180	
+  1181	        val selected = ArrayList<Match>()
+  1182	        for (candidate in seeds.sortedByDescending { it.score }) {
+  1183	            if (selected.none {
+  1184	                    kotlin.math.abs(it.startSeconds - candidate.startSeconds) < 30.0 ||
+  1185	                        rangesOverlap(it.startSeconds, it.endSeconds, candidate.startSeconds, candidate.endSeconds)
+  1186	                }) {
+  1187	                selected += candidate
+  1188	                if (selected.size >= maxResults) break
+  1189	            }
+  1190	        }
+  1191	        return selected.sortedBy { it.startSeconds }
+  1192	    }
+  1193	
+  1194	    private fun rangesOverlap(aStart: Double, aEnd: Double, bStart: Double, bEnd: Double): Boolean =
+  1195	        aStart < bEnd && bStart < aEnd
+  1196	
+  1197	    private fun FloatArray.sliceFingerprint(startSeconds: Double, endSeconds: Double): FloatArray {
+  1198	        val frameCount = size / FINGERPRINT_BINS
+  1199	        val sFrame = (startSeconds / FINGERPRINT_FRAME_SECONDS).toInt().coerceIn(0, frameCount)
+  1200	        val eFrame = (endSeconds / FINGERPRINT_FRAME_SECONDS).toInt().coerceIn(sFrame, frameCount)
+  1201	        return copyOfRange(sFrame * FINGERPRINT_BINS, eFrame * FINGERPRINT_BINS)
+  1202	    }
+  1203	
+  1204	    private fun fingerprintFrames(values: FloatArray): Int = values.size / FINGERPRINT_BINS
+  1205	
+  1206	    private fun cosineFrames(a: FloatArray, aFrame: Int, b: FloatArray, bFrame: Int, frames: Int): Double =
+  1207	        cosine(a, aFrame * FINGERPRINT_BINS, b, bFrame * FINGERPRINT_BINS, frames * FINGERPRINT_BINS)
+  1208	
+  1209	    private fun sequenceCosineFrames(
+  1210	        a: FloatArray,
+  1240	     * fingerprint that was actually persisted.  This avoids turning a short OP/ED
+  1241	     * template into an arbitrary 90/400-second chapter because adjacent audio also
+  1242	     * happens to correlate.
+  1243	     */
+  1244	    private fun scoreTemplateAgainstCurrent(
+  1245	        current: FloatArray,
+  1246	        template: FloatArray,
+  1247	        label: String,
+  1248	        status: (String) -> Unit,
+  1249	        minStartSeconds: Double = 0.0
+  1250	    ): Match? {
+  1251	        if (template.size < FINGERPRINT_BINS * 10 || current.size < template.size) return null
+  1252	
+  1253	        val scanStep = 10 // 1 second coarse scan in 0.1s frames; final score uses the whole template.
+  1254	        val currentFrames = fingerprintFrames(current)
+  1255	        val templateFrames = fingerprintFrames(template)
+  1256	        val minStartFrame = kotlin.math.ceil(
+  1257	            minStartSeconds / FINGERPRINT_FRAME_SECONDS
+  1258	        ).toInt().coerceIn(0, currentFrames)
+  1259	        status(
+  1260	            "FINGERPRINT_${label}_SEARCH_START seconds=$minStartSeconds frame=$minStartFrame " +
+  1261	                "duration=${currentFrames * FINGERPRINT_FRAME_SECONDS}"
+  1262	        )
+  1263	        var bestStart = -1
+  1264	        var bestCosine = -1.0
+  1265	        var i = minStartFrame
+  1266	        while (i + templateFrames <= currentFrames) {
+  1267	            val c = sequenceCosineFrames(current, i, template, 0, templateFrames)
+  1268	            if (c > bestCosine) {
+  1269	                bestCosine = c
+  1270	                bestStart = i
+  1271	            }
+  1272	            i += scanStep
+  1273	        }
+  1274	
+  1275	        if (bestStart < 0 || bestCosine < 0.65) {
+  1276	            status("FINGERPRINT_${label}_REJECT cosine=$bestCosine minStartSeconds=$minStartSeconds")
+  1277	            return null
+  1278	        }
+  1279	
+  1280	        // Validate the same candidate over the entire template in 5-second blocks.
+  1281	        // This prevents one short high-correlation patch from determining the match.
+  1282	        val block = 50 // 5 seconds in fingerprint frames
+  1283	        var good = 0
+  1284	        var total = 0
+  1285	        var sum = 0.0
+  1286	        var q = 0
+  1287	        while (q + block <= templateFrames) {
+  1288	            val c = sequenceCosineFrames(current, bestStart + q, template, q, block)
+  1289	            sum += c
+  1290	            total++
+  1291	            if (c >= 0.55) good++
+  1292	            q += block
+  1293	        }
+  1294	        if (q < templateFrames) {
+  1295	            val remaining = templateFrames - q
+  1296	            if (remaining >= 10) {
+  1297	                val c = sequenceCosineFrames(current, bestStart + q, template, q, remaining)
+  1298	                sum += c
+  1299	                total++
+  1300	                if (c >= 0.55) good++
+  1301	            }
+  1302	        }
+  1303	
+  1304	        val continuity = good.toDouble() / total.coerceAtLeast(1)
+  1305	        val average = sum / total.coerceAtLeast(1)
+  1306	        val score = bestCosine * 0.40 + continuity * 0.35 + average * 0.25
+  1307	        status(
+  1308	            "FINGERPRINT_${label}_SCORE cosine=$bestCosine " +
+  1309	                "continuity=$continuity average=$average blocks=$good/$total score=$score"
+  1310	        )
+  1311	
+  1312	        if (score < 0.65 || continuity < 0.60) {
+  1313	            status("FINGERPRINT_${label}_REJECT reason=continuity score=$score continuity=$continuity")
+  1314	            return null
+  1315	        }
+  1316	
+  1317	        // The persisted fingerprint length defines the chapter length exactly.
+  1318	        val start = bestStart * FINGERPRINT_FRAME_SECONDS
+  1319	        val end = (bestStart + fingerprintFrames(template)) * FINGERPRINT_FRAME_SECONDS
+  1320	        status(
+  1321	            "FINGERPRINT_${label}_MATCH start=$start end=$end " +
+  1322	                "score=$score templateSeconds=${fingerprintFrames(template) * FINGERPRINT_FRAME_SECONDS}"
+  1323	        )
+  1324	        return Match(start, end, score)
+  1325	    }
+  1326	
+  1327	    @OptIn(UnstableApi::class)
+  1328	    private fun materializeCachedTailWindow(
+  1329	        context: Context,
+  1330	        url: String,
+  1331	        seconds: Double
+  1332	    ): TailWindow? {
+  1333	        return runCatching {
+  1334	            val media = resolveCachedMediaPlaylist(url) ?: return@runCatching null
+  1335	            val total = media.segments.lastOrNull()?.end ?: return@runCatching null
+  1336	            val start = max(0.0, total - seconds)
+  1337	            Log.d(TAG, "OFFLINE_HLS_ACTUAL_DURATION total=$total tailStart=$start tailEnd=$total")
+  1338	            materializeCachedSegments(context, media, start, total)?.let {
+  1339	                TailWindow(it, start, total)
+  1340	            }
+  1341	        }.onFailure {
+  1342	            Log.e(TAG, "OFFLINE_TAIL_FAILED ${it.javaClass.simpleName}: ${it.message}", it)
+  1343	        }.getOrNull()
+  1344	    }
+  1345	
+  1346	    @OptIn(UnstableApi::class)
+  1347	    private fun materializeCachedWindow(
+  1348	        context: Context,
+  1349	        url: String,
+  1350	        start: Double,
+  1351	        end: Double
+  1352	    ): File? {
+  1353	        return runCatching {
+  1354	            val media = resolveCachedMediaPlaylist(url) ?: return@runCatching null
+  1355	            materializeCachedSegments(context, media, start, end)
+  1356	        }.onFailure {
+  1357	            Log.e(TAG, "OFFLINE_WINDOW_FAILED ${it.javaClass.simpleName}: ${it.message}", it)
+  1358	        }.getOrNull()
+  1359	    }
+  1360	

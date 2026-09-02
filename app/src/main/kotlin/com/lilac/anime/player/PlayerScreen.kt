@@ -26,6 +26,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -91,6 +92,7 @@ import io.github.peerless2012.ass.media.type.AssRenderType
 import io.github.peerless2012.ass.media.widget.AssSubtitleView
 import com.lilac.anime.data.*
 import com.lilac.anime.network.LinkkfChapterService
+import com.lilac.anime.network.OfflineOpEdResultStore
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.SubtitleAssetUtil
 import kotlinx.coroutines.Dispatchers
@@ -105,6 +107,30 @@ private fun formatChapterAnalysisStatus(raw: String): String {
     val parts = raw.split(' ')
     return when {
         raw == "ANALYSIS_START" || raw.startsWith("ANALYSIS_START") -> "OP/ED 분석 시작"
+        raw.startsWith("ONLINE_FINGERPRINT_ANALYSIS_START") -> "온라인 OP/ED 분석 시작"
+        raw.startsWith("ONLINE_FINGERPRINT_TEMPLATE_HIT") -> "저장된 OP/ED Fingerprint 불러오는 중..."
+        raw.startsWith("ONLINE_FINGERPRINT_TRAINING_START") -> "OP/ED 학습용 에피소드 분석 중..."
+        raw.startsWith("ONLINE_FINGERPRINT_M3U8_COLLECTION_COMPLETE") -> "학습 에피소드 스트림 확인 완료"
+        raw.startsWith("M3U8_WEBVIEW_") && raw.contains("_START") -> "에피소드 스트림 확인 중..."
+        raw.startsWith("M3U8_WEBVIEW_") && raw.contains("_LOAD_PAGE") -> "에피소드 페이지 불러오는 중..."
+        raw.startsWith("M3U8_WEBVIEW_") && raw.contains("_FOUND") -> "스트림 주소 확인 완료"
+        raw.startsWith("M3U8_WEBVIEW_") && raw.contains("_PAGE_START") -> "WebView 분석 중..."
+        raw.startsWith("M3U8_WEBVIEW_") && raw.contains("_PAGE_FINISHED") -> "플레이어 요청 분석 중..."
+        raw.startsWith("ONLINE_FINGERPRINT_REFERENCE_DOWNLOAD episode=") -> "학습 에피소드 전체 다운로드 중..."
+        raw.startsWith("ONLINE_FINGERPRINT_REFERENCE_DOWNLOAD_OK") -> "학습 에피소드 다운로드 완료"
+        raw.startsWith("ONLINE_FINGERPRINT_REFERENCE_FINGERPRINT_OK") -> "학습 에피소드 오디오 분석 완료"
+        raw.startsWith("ONLINE_FINGERPRINT_TEMPLATE_SAVED") -> "OP/ED Fingerprint 저장 완료"
+        raw.startsWith("FINGERPRINT_FULL_WINDOW") -> "현재 에피소드 전체 오디오 분석 중..."
+        raw.startsWith("FINGERPRINT_CURRENT_FULL_OK") -> "현재 에피소드 오디오 분석 완료"
+        raw.startsWith("FINGERPRINT_TEMPLATE_HIT") -> "OP/ED Fingerprint 비교 중..."
+        raw.startsWith("FINGERPRINT_OP_SEARCH_START") -> "OP 구간 검색 중..."
+        raw.startsWith("FINGERPRINT_OP_SCORE") -> "OP 후보 점수 계산 중..."
+        raw.startsWith("FINGERPRINT_OP_MATCH") -> "✓ OP 구간 발견"
+        raw.startsWith("FINGERPRINT_ED_SEARCH_RANGE") -> "ED 구간 검색 중..."
+        raw.startsWith("FINGERPRINT_ED_SCORE") -> "ED 후보 점수 계산 중..."
+        raw.startsWith("FINGERPRINT_ED_MATCH") -> "✓ ED 구간 발견"
+        raw.startsWith("ONLINE_FINGERPRINT_ANALYSIS_FAILED") -> "✗ 온라인 OP/ED 분석 실패: ${raw.removePrefix("ONLINE_FINGERPRINT_ANALYSIS_FAILED ")}"
+        raw.startsWith("ONLINE_FINGERPRINT_TRAINING_FAILED") -> "✗ OP/ED 학습 실패: ${raw.removePrefix("ONLINE_FINGERPRINT_TRAINING_FAILED ")}"
         raw.startsWith("CURRENT_FRONT_DOWNLOAD start=") -> "현재 에피소드 앞부분 다운로드 중..."
         raw.startsWith("CURRENT_FRONT_DOWNLOAD_OK") -> "✓ 현재 에피소드 앞부분 다운로드 완료"
         raw.startsWith("CURRENT_FRONT_DOWNLOAD_FAILED") -> "✗ 현재 에피소드 앞부분 다운로드 실패"
@@ -458,6 +484,8 @@ fun PlayerScreen(
     var parsedStreamingQualities by remember { mutableStateOf<List<StreamQuality>>(emptyList()) }
     var selectedStreamingQuality by remember { mutableStateOf<StreamQuality?>(null) }
     var pendingSeekPositionMs by remember { mutableLongStateOf(-1L) }
+    // 수동 회차 전환 시 새 회차의 기록을 미리 고정한다.
+    var pendingEpisodeProgress by remember { mutableStateOf<Float?>(null) }
 
     var exoQualities by remember { mutableStateOf<List<ExoVideoQualityOption>>(emptyList()) }
     var selectedQualityOption by remember { mutableStateOf<ExoVideoQualityOption?>(null) }
@@ -605,6 +633,9 @@ fun PlayerScreen(
             fun hidePlayerSystemBars() {
                 controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 controller.hide(hiddenTypes)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    window.isNavigationBarContrastEnforced = false
+                }
                 @Suppress("DEPRECATION")
                 decorView.systemUiVisibility =
                     View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
@@ -614,6 +645,8 @@ fun PlayerScreen(
                         View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
                         View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             }
+
+            WindowCompat.setDecorFitsSystemWindows(window, false)
 
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             hidePlayerSystemBars()
@@ -635,6 +668,7 @@ fun PlayerScreen(
                 @Suppress("DEPRECATION")
                 decorView.setOnSystemUiVisibilityChangeListener(null)
                 ViewCompat.setOnApplyWindowInsetsListener(decorView, null)
+                WindowCompat.setDecorFitsSystemWindows(window, true)
             }
         }
     }
@@ -979,6 +1013,37 @@ fun PlayerScreen(
         }
     }
 
+    // 다음화/이전화 버튼은 단순히 currentEpisode만 바꾸지 않고,
+    // 현재 재생 상태를 먼저 저장한 뒤 새 회차의 기록을 로드하도록 한다.
+    // PlayerView의 controller가 이전 ForwardingPlayer 인스턴스를 잠깐 잡고 있어도
+    // 실제 회차 전환은 항상 이 경로를 거치게 한다.
+    fun switchEpisodeFromPlayer(target: Episode) {
+        if (target.id == currentEpisode.id) return
+
+        val duration = exoPlayer.duration
+        if (duration > 0L && duration != C.TIME_UNSET) {
+            val progress = (exoPlayer.currentPosition.toFloat() / duration).coerceIn(0f, 1f)
+            vm.updateProgress(
+                context = context,
+                animeId = anime.id,
+                episodeNumber = currentEpisode.number,
+                episodeKey = currentEpisode.displayNumber,
+                progress = progress
+            )
+        }
+
+        Log.d("PlayerEpisode", "MANUAL_SWITCH from=${currentEpisode.number} to=${target.number} targetKey=${target.displayNumber}")
+        // 새 회차 기록은 현재 플레이어 상태와 분리해서 전환 전에 확정한다.
+        pendingEpisodeProgress = vm.getProgress(
+            anime.id,
+            target.displayNumber,
+            target.number
+        )?.progress
+        pendingSeekPositionMs = -1L
+        exoPlayer.stop()
+        currentEpisode = target
+    }
+
     val forwardingPlayer = remember(exoPlayer, prevEpisode, nextEpisode) {
         object : ForwardingPlayer(exoPlayer) {
             override fun isCommandAvailable(command: Int): Boolean {
@@ -994,10 +1059,10 @@ fun PlayerScreen(
             override fun hasNextMediaItem(): Boolean = nextEpisode != null
             override fun hasPreviousMediaItem(): Boolean = prevEpisode != null
 
-            override fun seekToNext() { nextEpisode?.let { currentEpisode = it } }
-            override fun seekToPrevious() { prevEpisode?.let { currentEpisode = it } }
-            override fun seekToNextMediaItem() { nextEpisode?.let { currentEpisode = it } }
-            override fun seekToPreviousMediaItem() { prevEpisode?.let { currentEpisode = it } }
+            override fun seekToNext() { nextEpisode?.let(::switchEpisodeFromPlayer) }
+            override fun seekToPrevious() { prevEpisode?.let(::switchEpisodeFromPlayer) }
+            override fun seekToNextMediaItem() { nextEpisode?.let(::switchEpisodeFromPlayer) }
+            override fun seekToPreviousMediaItem() { prevEpisode?.let(::switchEpisodeFromPlayer) }
         }
     }
 
@@ -1121,7 +1186,7 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(streamUrl, subtitlesUrl, subtitleSource, syncOffsetMs, isOffline, selectedSubtitleFontPath) {
+    LaunchedEffect(currentEpisode.id, streamUrl, subtitlesUrl, subtitleSource, syncOffsetMs, isOffline, selectedSubtitleFontPath) {
         val url = streamUrl ?: return@LaunchedEffect
         val isLocalFile = url.startsWith("file://") || url.startsWith("/")
 
@@ -1275,11 +1340,15 @@ fun PlayerScreen(
                         exoPlayer.seekTo(pendingSeekPositionMs)
                         pendingSeekPositionMs = -1L
                     } else {
-                        val savedProgress = vm.getProgress(anime.id, currentEpisode.displayNumber, currentEpisode.number)
-                        if (savedProgress != null) {
+                        // 수동 전환에서 미리 읽은 대상 회차 기록을 최우선으로 사용한다.
+                        // 없으면 이 LaunchedEffect가 준비한 회차의 기록만 다시 조회한다.
+                        val progressForThisEpisode = pendingEpisodeProgress
+                            ?: vm.getProgress(anime.id, currentEpisode.displayNumber, currentEpisode.number)?.progress
+                        pendingEpisodeProgress = null
+                        if (progressForThisEpisode != null) {
                             val duration = exoPlayer.duration
                             if (duration > 0 && duration != C.TIME_UNSET) {
-                                val seekPos = (savedProgress.progress * duration).toLong().coerceAtLeast(0)
+                                val seekPos = (progressForThisEpisode * duration).toLong().coerceAtLeast(0)
                                 exoPlayer.seekTo(seekPos)
                             }
                         }
@@ -1288,14 +1357,22 @@ fun PlayerScreen(
                 }
             }
         }
+        // This listener belongs to this exact episode/media preparation. Keep it
+        // attached only while this LaunchedEffect is alive. Without explicit
+        // removal, the listener from the previous episode remains attached and
+        // can seek the newly loaded episode to the previous episode's history.
         exoPlayer.addListener(listener)
-
-        exoPlayer.setMediaSource(mediaSourceFactory.createMediaSource(mediaItemBuilder.build()))
-        exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
+        try {
+            exoPlayer.setMediaSource(mediaSourceFactory.createMediaSource(mediaItemBuilder.build()))
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
+            awaitCancellation()
+        } finally {
+            exoPlayer.removeListener(listener)
+        }
     }
 
-    LaunchedEffect(streamUrl, currentEpisode.number) {
+    LaunchedEffect(currentEpisode.id, streamUrl, currentEpisode.number) {
         val currentStreamUrl = streamUrl ?: return@LaunchedEffect
 
         chapterSkipSegments = emptyList()
@@ -1303,6 +1380,59 @@ fun PlayerScreen(
         buttonChapterSkipSegment = null
         chapterSkipEnteredAtMs = -1L
         skippedChapterSkipKeys = emptySet()
+        // OP/ED analysis is intentionally available only for episodes stored offline.
+        // Online playback does not perform any OP/ED analysis.
+        if (!isDownloaded) {
+            chapterAnalysisStatus = null
+            chapterAnalysisVisible = false
+            Log.d("AniChapters", "ONLINE_ANALYSIS_DISABLED episode=${currentEpisode.number}")
+            return@LaunchedEffect
+        }
+
+        // Start the next downloaded episode's analysis in the background.
+        // It is deliberately fire-and-forget and never updates the playback UI.
+        fun startNextBackgroundAnalysis() {
+            val currentIndex = episodeList.indexOfFirst { it.id == currentEpisode.id }
+            val nextEpisode = episodeList.getOrNull(currentIndex + 1) ?: return
+            if (!LinkkfChapterService.isOfflineEpisodeCompleted(anime.id, nextEpisode)) return
+
+            scope.launch(Dispatchers.Default) {
+                runCatching {
+                    val cachedNext = OfflineOpEdResultStore.load(context, anime.id, nextEpisode.id)
+                    if (cachedNext != null) {
+                        Log.d("AniChapters", "NEXT_CACHED episode=${nextEpisode.number} segments=${cachedNext.size}")
+                        return@launch
+                    }
+                    Log.d("AniChapters", "NEXT_BACKGROUND_ANALYSIS_START episode=${nextEpisode.number}")
+                    LinkkfChapterService.detectSkipSegmentsOffline(
+                        context = context,
+                        animeId = anime.id,
+                        currentEpisode = nextEpisode,
+                        episodes = episodeList,
+                        episodeDurationSeconds = 0,
+                        onStatus = { message -> Log.d("AniChapters", "NEXT_BACKGROUND $message") }
+                    )
+                    Log.d("AniChapters", "NEXT_BACKGROUND_ANALYSIS_DONE episode=${nextEpisode.number}")
+                }.onFailure {
+                    Log.e("AniChapters", "NEXT_BACKGROUND_ANALYSIS_FAILED episode=${nextEpisode.number}", it)
+                }
+            }
+        }
+
+        // A previous background pass may already have resolved this episode.
+        // In that case playback uses the saved ranges immediately and does not
+        // show an analysis notification.
+        val cachedResult = OfflineOpEdResultStore.load(context, anime.id, currentEpisode.id)
+        if (cachedResult != null) {
+            chapterSkipSegments = cachedResult.map {
+                ChapterSkipSegment(it.type, it.startTime, it.endTime, 0.0)
+            }
+            skipEpisodeKey = "${anime.id}_${currentEpisode.displayNumber}"
+            Log.d("AniChapters", "CACHED_RESULT episode=${currentEpisode.number} segments=${cachedResult.size}")
+            startNextBackgroundAnalysis()
+            return@LaunchedEffect
+        }
+
         chapterAnalysisStatus = "분석 준비 중..."
         chapterAnalysisVisible = true
 
@@ -1313,14 +1443,35 @@ fun PlayerScreen(
                 Log.d("AniChapters", "START episode=${currentEpisode.number} duration=$durationSeconds source=linkkf")
                 val chapterStatus: (String) -> Unit = { raw ->
                     scope.launch(Dispatchers.Main.immediate) {
-                        chapterAnalysisStatus = formatChapterAnalysisStatus(raw)
-                        chapterAnalysisVisible = true
+                        if (isDownloaded) {
+                            // Offline mode: hide the detailed analysis log and show
+                            // only the final OP/ED result briefly.
+                            if (raw.startsWith("FINGERPRINT_ANALYSIS_COMPLETE") ||
+                                raw.startsWith("ANALYSIS_COMPLETE")
+                            ) {
+                                chapterAnalysisStatus = "✓ OP/ED 찾음"
+                                chapterAnalysisVisible = true
+                            }
+                        } else if (raw.startsWith("ONLINE_FINGERPRINT_ANALYSIS_COMPLETE")) {
+                            chapterAnalysisStatus = "✓ OP/ED 찾음"
+                            chapterAnalysisVisible = true
+                        } else if (raw.startsWith("ONLINE_FINGERPRINT_ANALYSIS_FAILED") ||
+                            raw.startsWith("ONLINE_FINGERPRINT_TRAINING_FAILED")) {
+                            chapterAnalysisStatus = formatChapterAnalysisStatus(raw)
+                            chapterAnalysisVisible = true
+                        } else if (raw.startsWith("ONLINE_") || raw.startsWith("M3U8_WEBVIEW_") ||
+                            raw.startsWith("FINGERPRINT_")) {
+                            // Online mode: show the detailed analysis progress directly
+                            // on the playback screen.
+                            chapterAnalysisStatus = formatChapterAnalysisStatus(raw)
+                            chapterAnalysisVisible = true
+                        }
                     }
                 }
 
                 // Downloaded episodes are analyzed entirely from the Media3 cache.
                 // This avoids WebView/network collection during the offline test.
-                chapterSkipSegments = if (isDownloaded) {
+                chapterSkipSegments = run {
                     Log.d("AniChapters", "OFFLINE_MODE episode=${currentEpisode.number}")
                     LinkkfChapterService.detectSkipSegmentsOffline(
                         context = context,
@@ -1330,18 +1481,11 @@ fun PlayerScreen(
                         episodeDurationSeconds = durationSeconds,
                         onStatus = chapterStatus
                     )
-                } else {
-                    LinkkfChapterService.detectSkipSegments(
-                        context = context,
-                        currentEpisode = currentEpisode,
-                        streamUrl = currentStreamUrl,
-                        episodeDurationSeconds = durationSeconds,
-                        episodes = episodeList,
-                        onStatus = chapterStatus
-                    )
                 }
                 skipEpisodeKey = "${anime.id}_${currentEpisode.displayNumber}"
                 Log.d("AniChapters", "LOADED count=${chapterSkipSegments.size}")
+
+                startNextBackgroundAnalysis()
                 break
             }
             delay(250L)
@@ -1734,10 +1878,14 @@ fun PlayerScreen(
             }
         }
 
-        LaunchedEffect(chapterAnalysisStatus) {
+        LaunchedEffect(chapterAnalysisStatus, isDownloaded) {
             val status = chapterAnalysisStatus ?: return@LaunchedEffect
-            if (status.startsWith("✓ OP/ED 분석 완료") || status.startsWith("✗ OP/ED 분석 실패")) {
-                delay(5000L)
+            if (status == "✓ OP/ED 찾음") {
+                delay(3000L)
+                chapterAnalysisVisible = false
+            } else if (!isDownloaded && (status.startsWith("✗ 온라인 OP/ED 분석 실패") ||
+                        status.startsWith("✗ OP/ED 학습 실패"))) {
+                delay(4000L)
                 chapterAnalysisVisible = false
             }
         }

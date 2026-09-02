@@ -47,8 +47,12 @@ object LinkkfEpisodeM3u8Collector {
         episodes: List<Episode>,
         onStatus: (String) -> Unit = {}
     ): Result = suspendCancellableCoroutine { continuation ->
+        // Online fingerprint training intentionally collects ONLY episodes 1, 2 and 3.
+        // Do not fall back to surrounding episodes here.
         val targets = episodes
-            .filter { !it.videoUrl.isNullOrBlank() }
+            .filter { it.number in 1..3 && !it.videoUrl.isNullOrBlank() }
+            .distinctBy { it.id }
+            .sortedBy { it.number }
             .take(MAX_WEBVIEWS)
 
         if (targets.isEmpty()) {
@@ -67,8 +71,13 @@ object LinkkfEpisodeM3u8Collector {
             if (completed.get() < targets.size) return
             finished = true
             Log.d(TAG, "M3U8_COLLECTION_COMPLETE success=${urls.size} failed=${failed.size}")
-            webViews.forEach { it.stopLoading(); it.destroy() }
-            webViews.clear()
+            mainHandler.post {
+                webViews.toList().forEach { webView ->
+                    runCatching { webView.stopLoading() }
+                    runCatching { webView.destroy() }
+                }
+                webViews.clear()
+            }
             if (continuation.isActive) continuation.resume(Result(urls.toMap(), failed.toSet()))
         }
 
@@ -79,8 +88,13 @@ object LinkkfEpisodeM3u8Collector {
                 if (!urls.containsKey(target.id)) failed += target.id
             }
             Log.d(TAG, "M3U8_COLLECTION_TIMEOUT success=${urls.size} failed=${failed.size}")
-            webViews.forEach { it.stopLoading(); it.destroy() }
-            webViews.clear()
+            mainHandler.post {
+                webViews.toList().forEach { webView ->
+                    runCatching { webView.stopLoading() }
+                    runCatching { webView.destroy() }
+                }
+                webViews.clear()
+            }
             if (continuation.isActive) continuation.resume(Result(urls.toMap(), failed.toSet()))
         }
 

@@ -30,6 +30,8 @@ data class PlayerSettings(
     val subtitleFontPath: String? = null,
     val subtitleFontSource: String? = null,
     val showChapterSkipButton: Boolean = true,
+    // 온라인 Linkkf OP/ED fingerprint 분석 사용 여부
+    val onlineOpEdAnalysisEnabled: Boolean = true,
     // 좌/우 더블 탭 시 이동할 시간(초)
     val doubleTapSeekSeconds: Int = 10,
     // 기본 재생 배속
