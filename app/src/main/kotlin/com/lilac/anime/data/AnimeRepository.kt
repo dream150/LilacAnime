@@ -18,8 +18,7 @@ class AnimeRepository {
         private const val LINKKF_BASE_URL = "https://linkkf.tv"
         private const val LINKKF_LIST_URL = "$LINKKF_BASE_URL/list/2/"
         private const val ANIMENOSUB_BASE_URL = "https://animenosub.to"
-        private const val BATCH_SIZE = 8
-        private const val PAGE_RETRY_COUNT = 3
+        private const val BATCH_SIZE = 5
     }
 
 
@@ -37,10 +36,11 @@ class AnimeRepository {
         val result = LinkedHashMap<String, Anime>()
 
         if (source == "animenosub") {
-            // Keep Animenosub sequential because concurrent catalog requests are
-            // more likely to trigger its protection. Do not stop on one empty page.
-            var consecutiveEmptyPages = 0
-            for (page in 1..100) {
+            // Animenosub is protected more aggressively when several pages are
+            // requested in parallel. Fetch its catalog sequentially and tolerate
+            // transient empty/error pages instead of stopping the entire catalog.
+            var emptyPages = 0
+            for (page in 1..50) {
                 val url = if (page == 1) ANIMENOSUB_BASE_URL else "$ANIMENOSUB_BASE_URL/page/$page/"
                 val list = try {
                     val document = getDocument(source, url, ANIMENOSUB_BASE_URL + "/")
@@ -49,112 +49,42 @@ class AnimeRepository {
                     emptyList()
                 }
                 if (list.isEmpty()) {
-                    consecutiveEmptyPages++
-                    // A single failed/empty response must not truncate the catalog.
-                    if (consecutiveEmptyPages >= 3) break
+                    emptyPages++
+                    if (emptyPages >= 2) break
                 } else {
-                    consecutiveEmptyPages = 0
+                    emptyPages = 0
                     list.forEach { result[it.id] = it }
                     emit(result.values.toList())
                 }
-                kotlinx.coroutines.delay(200L)
+                kotlinx.coroutines.delay(250L)
             }
             return@flow
         }
 
-        // Fetch page 1 first. It gives us both the first batch of titles and, when
-        // available, the site's actual last pagination page. This avoids the old
-        // fixed 50-page/2-empty-batch cutoff which could silently truncate the catalog.
-        val firstDocument = try {
-            getDocument(source, LINKKF_LIST_URL, "https://linkkf.tv/")
-        } catch (e: Exception) {
-            throw e
-        }
-        val firstList = LinkkfParser.parseAnimeList(firstDocument)
-        firstList.forEach { result[it.id] = it }
-        if (result.isNotEmpty()) emit(result.values.toList())
-
-        val advertisedLastPage = LinkkfParser.parseLastCatalogPage(firstDocument)
-
-        // The pagination rendered by Linkkf is authoritative. Do NOT impose an
-        // artificial maximum page count: if the site advertises page 138, fetch
-        // through page 138. A missing/failed page is retried and never treated as
-        // the end of the catalog.
-        val maxPage = if (advertisedLastPage > 1) {
-            advertisedLastPage
-        } else {
-            // Fallback for responses where the pagination block was stripped by a
-            // proxy/cache. Discover the end without assuming a fixed catalog size.
-            discoverLastCatalogPage(source, startPage = 2)
-        }
-
-        var page = 2
-        while (page <= maxPage) {
-            val batchEnd = minOf(page + BATCH_SIZE - 1, maxPage)
-            val batch = coroutineScope {
-                (page..batchEnd).map { pageNumber ->
+        var batchStart = 1
+        var emptyBatches = 0
+        while (batchStart <= 50 && emptyBatches < 2) {
+            val batchEnd = batchStart + BATCH_SIZE - 1
+            val pageResults = coroutineScope {
+                (batchStart..batchEnd).map { page ->
                     async(Dispatchers.IO) {
-                        val url = "$LINKKF_LIST_URL" + "page/$pageNumber/"
-                        repeat(PAGE_RETRY_COUNT) { attempt ->
-                            try {
-                                val document = getDocument(source, url, "https://linkkf.tv/")
-                                val list = LinkkfParser.parseAnimeList(document)
-                                if (list.isNotEmpty()) return@async list
-                            } catch (_: Exception) {
-                                // Retry transient HTTP/cache failures.
-                            }
-                            if (attempt + 1 < PAGE_RETRY_COUNT) {
-                                kotlinx.coroutines.delay(350L * (attempt + 1))
-                            }
+                        val url = if (page == 1) LINKKF_LIST_URL else "$LINKKF_LIST_URL" + "page/$page/"
+                        try {
+                            val document = getDocument(source, url, "https://linkkf.tv/")
+                            page to LinkkfParser.parseAnimeList(document)
+                        } catch (_: Exception) {
+                            page to emptyList<Anime>()
                         }
-                        emptyList()
                     }
-                }.awaitAll()
+                }.awaitAll().sortedBy { it.first }
             }
-
-            batch.flatten().forEach { result[it.id] = it }
-            if (batch.any { it.isNotEmpty() }) {
-                emit(result.values.toList())
-            }
-
-            page = batchEnd + 1
-            kotlinx.coroutines.delay(200L)
+            val hadData = pageResults.any { it.second.isNotEmpty() }
+            if (!hadData) emptyBatches++ else emptyBatches = 0
+            for ((_, list) in pageResults) list.forEach { result[it.id] = it }
+            if (result.isNotEmpty()) emit(result.values.toList())
+            batchStart += BATCH_SIZE
         }
     }.flowOn(Dispatchers.IO)
-
-    private suspend fun discoverLastCatalogPage(source: String, startPage: Int): Int {
-        suspend fun hasItems(page: Int): Boolean {
-            val url = "$LINKKF_LIST_URL" + "page/$page/"
-            repeat(PAGE_RETRY_COUNT) { attempt ->
-                try {
-                    val document = getDocument(source, url, "https://linkkf.tv/")
-                    if (LinkkfParser.parseAnimeList(document).isNotEmpty()) return true
-                } catch (_: Exception) {
-                    // Retry transient HTTP/cache failures.
-                }
-                if (attempt + 1 < PAGE_RETRY_COUNT) {
-                    kotlinx.coroutines.delay(350L * (attempt + 1))
-                }
-            }
-            return false
-        }
-
-        // Find an upper bound first, then binary-search the last non-empty page.
-        // Catalog pages are expected to be contiguous.
-        var low = startPage - 1
-        var high = maxOf(startPage, 2)
-        while (hasItems(high)) {
-            low = high
-            high *= 2
-            if (high > 4096) return low
-        }
-
-        while (low + 1 < high) {
-            val mid = low + (high - low) / 2
-            if (hasItems(mid)) low = mid else high = mid
-        }
-        return low
-    }
 
     private fun getDocument(source: String, url: String, referer: String = if (source == "animenosub") ANIMENOSUB_BASE_URL + "/" else "https://linkkf.tv/") =
         if (source == "animenosub") animenosubClient.getDocument(url, referer) else linkkfClient.getDocument(url, referer)

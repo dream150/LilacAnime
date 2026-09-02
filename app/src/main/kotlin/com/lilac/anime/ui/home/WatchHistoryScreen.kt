@@ -41,9 +41,12 @@ fun WatchHistoryScreen(
 
     val historyAnimeIds = vm.watchHistory.map { it.animeId }.distinct()
 
-    LaunchedEffect(historyAnimeIds) {
-        // 시청기록은 전체 카탈로그가 없어도 개별 작품 캐시만으로 복원한다.
-        resolvedAnime = vm.getWatchHistoryAnimeMap(context)
+    LaunchedEffect(historyAnimeIds, vm.homeAnime, vm.allAnime) {
+        val available = (vm.homeAnime + vm.allAnime).distinctBy { it.id }.associateBy { it.id }.toMutableMap()
+        for (id in historyAnimeIds) {
+            if (!available.containsKey(id)) OfflineStore.getAnime(context, id)?.let { available[id] = it }
+        }
+        resolvedAnime = available
     }
 
     val historyItems = vm.watchHistory

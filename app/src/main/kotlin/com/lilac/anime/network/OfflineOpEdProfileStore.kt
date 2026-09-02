@@ -58,13 +58,6 @@ object OfflineOpEdProfileStore {
         }.getOrNull()
     }
 
-    fun delete(context: Context, animeId: String): Boolean {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .remove(KEY_PREFIX + animeId)
-            .commit()
-    }
-
     /** Returns the baseline with only the episode-specific OP/ED types replaced by overrides. */
     fun segmentsForEpisode(profile: Profile, episodeNumber: Int): List<ChapterSkipSegment> {
         val override = profile.overrides[episodeNumber].orEmpty()

@@ -79,58 +79,6 @@ object LinkkfParser {
             .distinctBy { it.id }
     }
 
-    /**
-     * Returns the highest Linkkf catalog page advertised by the current list page.
-     * We prefer the site's own pagination instead of assuming a fixed page count.
-     */
-    fun parseLastCatalogPage(document: Document): Int {
-        var lastPage = 1
-
-        // Linkkf has used several pagination markups over time. Inspect the
-        // pagination container first, then fall back to every anchor on the page.
-        val paginationLinks = document.select(
-            "nav.pagination a[href], .pagination a[href], ul.page-numbers a[href], " +
-                "a.page-numbers[href], a[rel=last][href], a[href*='/list/2/page/']"
-        )
-
-        fun updateFromLink(link: org.jsoup.nodes.Element) {
-            val href = link.absUrl("href").ifBlank { link.attr("href") }.trim()
-
-            val patterns = listOf(
-                Regex("/list/2/page/(\\d+)(?:/)?(?:\\?.*)?$"),
-                Regex("/list/2/page/(\\d+)(?:/|\\?.*)"),
-                Regex("(?:[?&]page=)(\\d+)(?:&|$)")
-            )
-
-            for (pattern in patterns) {
-                val page = pattern.find(href)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                if (page != null) {
-                    lastPage = maxOf(lastPage, page)
-                    return
-                }
-            }
-
-            // Some themes render the last page as plain numeric text with a
-            // relative URL. Use the visible number only when the URL is clearly
-            // a catalog pagination link.
-            if (href.contains("/list/2/")) {
-                link.text().trim().toIntOrNull()?.let {
-                    lastPage = maxOf(lastPage, it)
-                }
-            }
-        }
-
-        paginationLinks.forEach(::updateFromLink)
-
-        // If the site's pagination container was omitted from the response, the
-        // broad fallback still finds numeric /page/N links.
-        if (lastPage == 1) {
-            document.select("a[href]").forEach(::updateFromLink)
-        }
-
-        Log.d("LinkkfParser", "CATALOG_LAST_PAGE=$lastPage")
-        return lastPage
-    }
     // =========================================================
     // 이미지 URL 정리
     // =========================================================

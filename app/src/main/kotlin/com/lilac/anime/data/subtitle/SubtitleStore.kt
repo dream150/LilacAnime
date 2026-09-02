@@ -10,6 +10,7 @@ object SubtitleStore {
     private const val IGNORED_PREFIX = "ignored_"
     private const val FONT_PATH_PREFIX = "font_path_"
     private const val FONT_SOURCE_PREFIX = "font_source_"
+    private const val ALL_PATHS_PREFIX = "all_paths_"
 
     data class SavedSubtitle(
         val source: String,
@@ -44,6 +45,7 @@ object SubtitleStore {
     private fun key(animeId: String, episodeNumber: Int, source: String) = key(animeId, episodeNumber.toString(), source)
     private fun fontPathKey(animeId: String, source: String) = FONT_PATH_PREFIX + "${animeId}_$source"
     private fun fontSourceKey(animeId: String, source: String) = FONT_SOURCE_PREFIX + "${animeId}_$source"
+    private fun allPathsKey(animeId: String, episodeKey: String, source: String) = ALL_PATHS_PREFIX + key(animeId, episodeKey, source)
 
     /**
      * Checks both the filename and ASS/SSA header metadata. Dialogue text is
@@ -103,7 +105,34 @@ object SubtitleStore {
 
     suspend fun save(context: Context, animeId: String, episodeKey: String, episodeNumber: Int, source: String, path: String?) = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(key(animeId, episodeKey, source), path).remove(ignoredKey(animeId, episodeKey, source)).apply()
+        val primaryKey = key(animeId, episodeKey, source)
+        val allKey = allPathsKey(animeId, episodeKey, source)
+        val existing = prefs.getStringSet(allKey, emptySet()).orEmpty().toMutableSet()
+        if (path.isNullOrBlank()) {
+            prefs.edit().remove(primaryKey).remove(allKey).remove(ignoredKey(animeId, episodeKey, source)).apply()
+        } else {
+            existing.add(path)
+            prefs.edit().putString(primaryKey, path).putStringSet(allKey, existing)
+                .remove(ignoredKey(animeId, episodeKey, source)).apply()
+        }
+    }
+
+    /** Persist every subtitle asset discovered for this episode while keeping [primaryPath] as the default. */
+    suspend fun saveAll(
+        context: Context, animeId: String, episodeKey: String, episodeNumber: Int,
+        source: String, paths: Collection<String>, primaryPath: String? = paths.firstOrNull()
+    ) = withContext(Dispatchers.IO) {
+        val valid = paths.filter { it.isNotBlank() && File(it).isFile }.distinct()
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val primaryKey = key(animeId, episodeKey, source)
+        val allKey = allPathsKey(animeId, episodeKey, source)
+        if (valid.isEmpty()) {
+            prefs.edit().remove(primaryKey).remove(allKey).apply()
+        } else {
+            val primary = primaryPath?.takeIf { it in valid } ?: valid.first()
+            prefs.edit().putString(primaryKey, primary).putStringSet(allKey, valid.toSet())
+                .remove(ignoredKey(animeId, episodeKey, source)).apply()
+        }
     }
 
     suspend fun get(context: Context, animeId: String, episodeKey: String, episodeNumber: Int, source: String): String? = withContext(Dispatchers.IO) {
@@ -119,10 +148,15 @@ object SubtitleStore {
 
     suspend fun list(context: Context, animeId: String, episodeKey: String, episodeNumber: Int): List<SavedSubtitle> = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        listOf("linkkf", "kairan", "csora").mapNotNull { source ->
-            val path = prefs.getString(key(animeId, episodeKey, source), null) ?: return@mapNotNull null
-            if (!File(path).isFile) return@mapNotNull null
-            SavedSubtitle(source, path, prefs.getBoolean(ignoredKey(animeId, episodeKey, source), false), subtitleMatchesEpisode(path, episodeKey, episodeNumber))
+        listOf("linkkf", "kairan", "csora").flatMap { source ->
+            val primary = prefs.getString(key(animeId, episodeKey, source), null)
+            val stored = prefs.getStringSet(allPathsKey(animeId, episodeKey, source), emptySet()).orEmpty()
+            val paths = (stored + listOfNotNull(primary)).distinct()
+            val ignored = prefs.getBoolean(ignoredKey(animeId, episodeKey, source), false)
+            paths.mapNotNull { path ->
+                if (!File(path).isFile) null
+                else SavedSubtitle(source, path, ignored, subtitleMatchesEpisode(path, episodeKey, episodeNumber))
+            }
         }
     }
 
@@ -132,9 +166,11 @@ object SubtitleStore {
 
     suspend fun delete(context: Context, animeId: String, episodeKey: String, episodeNumber: Int, source: String) = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        val k = key(animeId, episodeKey, source); val path = prefs.getString(k, null)
-        prefs.edit().remove(k).remove(ignoredKey(animeId, episodeKey, source)).apply()
-        path?.let { File(it).takeIf(File::isFile)?.delete() }
+        val k = key(animeId, episodeKey, source)
+        val paths = prefs.getStringSet(allPathsKey(animeId, episodeKey, source), emptySet()).orEmpty() +
+            listOfNotNull(prefs.getString(k, null))
+        prefs.edit().remove(k).remove(allPathsKey(animeId, episodeKey, source)).remove(ignoredKey(animeId, episodeKey, source)).apply()
+        paths.forEach { File(it).takeIf(File::isFile)?.delete() }
     }
 
     fun getSelectedFont(context: Context, animeId: String, source: String): String? =
@@ -160,12 +196,8 @@ object SubtitleStore {
     private fun ignoredKey(animeId: String, episodeNumber: Int, source: String) = IGNORED_PREFIX + key(animeId, episodeNumber, source)
     private fun ignoredKey(animeId: String, episodeKey: String, source: String) = IGNORED_PREFIX + key(animeId, episodeKey, source)
 
-    suspend fun save(context: Context, animeId: String, episodeNumber: Int, source: String, path: String?) = withContext(Dispatchers.IO) {
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit()
-            .putString(key(animeId, episodeNumber, source), path)
-            .remove(ignoredKey(animeId, episodeNumber, source))
-            .apply()
-    }
+    suspend fun save(context: Context, animeId: String, episodeNumber: Int, source: String, path: String?) =
+        save(context, animeId, episodeNumber.toString(), episodeNumber, source, path)
 
     suspend fun get(context: Context, animeId: String, episodeNumber: Int, source: String): String? = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -178,19 +210,8 @@ object SubtitleStore {
         null
     }
 
-    suspend fun list(context: Context, animeId: String, episodeNumber: Int): List<SavedSubtitle> = withContext(Dispatchers.IO) {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        listOf("linkkf", "kairan", "csora").mapNotNull { source ->
-            val path = prefs.getString(key(animeId, episodeNumber, source), null) ?: return@mapNotNull null
-            if (!File(path).isFile) return@mapNotNull null
-            SavedSubtitle(
-                source = source,
-                path = path,
-                ignored = prefs.getBoolean(ignoredKey(animeId, episodeNumber, source), false),
-                episodeMatch = subtitleMatchesEpisode(path, episodeNumber)
-            )
-        }
-    }
+    suspend fun list(context: Context, animeId: String, episodeNumber: Int): List<SavedSubtitle> =
+        list(context, animeId, episodeNumber.toString(), episodeNumber)
 
     suspend fun setIgnored(context: Context, animeId: String, episodeNumber: Int, source: String, ignored: Boolean) = withContext(Dispatchers.IO) {
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit()
@@ -201,9 +222,10 @@ object SubtitleStore {
     suspend fun delete(context: Context, animeId: String, episodeNumber: Int, source: String) = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val k = key(animeId, episodeNumber, source)
-        val path = prefs.getString(k, null)
-        prefs.edit().remove(k).remove(ignoredKey(animeId, episodeNumber, source))
+        val paths = prefs.getStringSet(allPathsKey(animeId, episodeNumber.toString(), source), emptySet()).orEmpty() +
+            listOfNotNull(prefs.getString(k, null))
+        prefs.edit().remove(k).remove(allPathsKey(animeId, episodeNumber.toString(), source)).remove(ignoredKey(animeId, episodeNumber, source))
             .remove(fontPathKey(animeId, source)).remove(fontSourceKey(animeId, source)).apply()
-        path?.let { File(it).takeIf(File::isFile)?.delete() }
+        paths.forEach { File(it).takeIf(File::isFile)?.delete() }
     }
 }

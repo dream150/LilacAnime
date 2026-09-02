@@ -51,8 +51,9 @@ object SubtitleAssetUtil {
             val chosen = valid.maxWithOrNull(compareBy<Pair<AssCandidate, List<Dialogue>>> { coveredDuration(it.second) }
                 .thenBy { it.second.size }
                 .thenBy { it.first.priority })!!.first
-            valid.filter { it.first.path != chosen.path }.forEach { File(it.first.path).delete() }
-            Log.d("Subtitle", "ASS_OVERLAP choose=${chosen.path} candidates=${valid.size} reason=longest_timeline")
+            // Keep every downloaded candidate on disk. The chosen file remains the
+            // default, while the other valid files stay available in offline subtitle management.
+            Log.d("Subtitle", "ASS_OVERLAP choose=${chosen.path} candidates=${valid.size} reason=longest_timeline keepAll=true")
             return chosen.path
         }
 
@@ -60,8 +61,9 @@ object SubtitleAssetUtil {
         val baseFile = File(base.path)
         val merged = File(baseFile.parentFile, "${baseFile.nameWithoutExtension}_merged_e$episode.ass")
         mergeAssFiles(baseFile, valid.filter { it.first.path != base.path }.map { File(it.first.path) }, merged)
-        valid.filter { it.first.path != merged.absolutePath && it.first.path != base.path }.forEach { File(it.first.path).delete() }
-        Log.d("Subtitle", "ASS_MERGED count=${valid.size} path=${merged.absolutePath} dialogueCount=${allDialogues.size}")
+        // Keep the original ASS files as well as the merged default. This is required
+        // for offline use: every discovered subtitle asset must remain selectable.
+        Log.d("Subtitle", "ASS_MERGED count=${valid.size} path=${merged.absolutePath} dialogueCount=${allDialogues.size} keepAll=true")
         return merged.absolutePath
     }
 
