@@ -20,7 +20,7 @@ import java.util.zip.GZIPOutputStream
 object OfflineOpEdFingerprintStore {
     private const val PREFS = "linkkf_oped_fingerprints"
     private const val KEY_PREFIX = "anime_"
-    private const val VERSION = 9
+    private const val VERSION = 10
 
     data class Template(
         val op: FloatArray?,
@@ -58,6 +58,13 @@ object OfflineOpEdFingerprintStore {
     fun isReady(context: Context, animeId: String): Boolean = load(context, animeId)?.let {
         it.op != null || it.ed != null
     } == true
+
+    fun delete(context: Context, animeId: String): Boolean {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_PREFIX + animeId)
+            .commit()
+    }
 
     private fun encode(values: FloatArray): String {
         val raw = ByteBuffer.allocate(values.size * 4)

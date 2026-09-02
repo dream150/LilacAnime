@@ -222,6 +222,37 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "오프라인 OP/ED 자동 분석",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        "다운로드된 회차의 OP/ED를 자동으로 분석합니다. 끄면 새 분석과 백그라운드 분석을 수행하지 않습니다.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
+                    )
+                }
+                Switch(
+                    checked = settings.offlineOpEdAnalysisEnabled,
+                    onCheckedChange = { enabled ->
+                        vm.updatePlayerSettings(
+                            context,
+                            settings.copy(offlineOpEdAnalysisEnabled = enabled)
+                        )
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
             Text("기본 자막 폰트", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
