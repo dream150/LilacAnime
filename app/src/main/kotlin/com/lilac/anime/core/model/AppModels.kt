@@ -30,6 +30,8 @@ data class PlayerSettings(
     val subtitleFontPath: String? = null,
     val subtitleFontSource: String? = null,
     val showChapterSkipButton: Boolean = true,
+    // 다운로드 완료 회차에서만 수행하는 OP/ED 자동 분석
+    val offlineOpEdAnalysisEnabled: Boolean = true,
     // 좌/우 더블 탭 시 이동할 시간(초)
     val doubleTapSeekSeconds: Int = 10,
     // 기본 재생 배속

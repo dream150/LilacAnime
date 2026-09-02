@@ -2,6 +2,7 @@ package com.lilac.anime.network
 
 import android.content.Context
 import android.util.Base64
+import com.lilac.anime.ChapterSkipSegment
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -20,11 +21,16 @@ import java.util.zip.GZIPOutputStream
 object OfflineOpEdFingerprintStore {
     private const val PREFS = "linkkf_oped_fingerprints"
     private const val KEY_PREFIX = "anime_"
+    private const val RESULT_PREFIX = "result_"
     private const val VERSION = 10
 
     data class Template(
         val op: FloatArray?,
         val ed: FloatArray?
+    )
+
+    data class AnalysisResult(
+        val segments: List<ChapterSkipSegment>
     )
 
     fun load(context: Context, animeId: String): Template? = runCatching {
@@ -54,6 +60,91 @@ object OfflineOpEdFingerprintStore {
             .putString(KEY_PREFIX + animeId, root.toString())
             .commit()
     }
+
+    fun loadAnalysis(
+        context: Context,
+        animeId: String,
+        episodeId: String
+    ): List<ChapterSkipSegment>? = runCatching {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(analysisKey(animeId, episodeId), null) ?: return null
+        val root = JSONObject(raw)
+        if (root.optInt("version", VERSION) != VERSION) return null
+        val duration = root.optDouble("episodeLength", 0.0)
+        val array = root.optJSONArray("segments") ?: return emptyList()
+        val result = ArrayList<ChapterSkipSegment>()
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            val type = item.optString("type")
+            val start = item.optDouble("start", Double.NaN)
+            val end = item.optDouble("end", Double.NaN)
+            if (type.isNotBlank() && start.isFinite() && end.isFinite() && end > start) {
+                result += ChapterSkipSegment(type, start, end, duration)
+            }
+        }
+        result
+    }.getOrNull()
+
+    fun saveAnalysis(
+        context: Context,
+        animeId: String,
+        episodeId: String,
+        segments: List<ChapterSkipSegment>,
+        episodeLengthSeconds: Double = segments.firstOrNull()?.episodeLength ?: 0.0
+    ): Boolean {
+        val root = JSONObject()
+            .put("version", VERSION)
+            .put("animeId", animeId)
+            .put("episodeId", episodeId)
+            .put("episodeLength", episodeLengthSeconds)
+        val array = JSONArray()
+        segments.forEach { segment ->
+            array.put(JSONObject()
+                .put("type", segment.type)
+                .put("start", segment.startTime)
+                .put("end", segment.endTime))
+        }
+        root.put("segments", array)
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(analysisKey(animeId, episodeId), root.toString())
+            .commit()
+    }
+
+    fun deleteAllAnalysis(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        val keys = prefs.all.keys.filter { it.startsWith(RESULT_PREFIX) }
+        keys.forEach(editor::remove)
+        editor.commit()
+        return keys.size
+    }
+
+    fun deleteAllFingerprints(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        val keys = prefs.all.keys.filter { it.startsWith(KEY_PREFIX) || it.startsWith(RESULT_PREFIX) }
+        keys.forEach(editor::remove)
+        editor.commit()
+        // 구버전에서 별도로 사용하던 프로필도 함께 제거하여 재학습을 확실히 한다.
+        OfflineOpEdProfileStore.deleteAll(context)
+        return keys.count { it.startsWith(KEY_PREFIX) }
+    }
+
+    fun deleteEverything(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        val keys = prefs.all.keys.filter { it.startsWith(KEY_PREFIX) || it.startsWith(RESULT_PREFIX) }
+        keys.forEach(editor::remove)
+        editor.commit()
+        return keys.size
+    }
+
+    private fun analysisKey(animeId: String, episodeId: String): String =
+        RESULT_PREFIX + Base64.encodeToString(
+            (animeId + "\u0000" + episodeId).toByteArray(Charsets.UTF_8),
+            Base64.NO_WRAP
+        )
 
     fun isReady(context: Context, animeId: String): Boolean = load(context, animeId)?.let {
         it.op != null || it.ed != null
