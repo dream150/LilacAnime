@@ -59,13 +59,6 @@ object OfflineOpEdFingerprintStore {
         it.op != null || it.ed != null
     } == true
 
-    fun delete(context: Context, animeId: String): Boolean {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .remove(KEY_PREFIX + animeId)
-            .commit()
-    }
-
     private fun encode(values: FloatArray): String {
         val raw = ByteBuffer.allocate(values.size * 4)
         values.forEach(raw::putFloat)

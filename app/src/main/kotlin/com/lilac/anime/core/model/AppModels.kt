@@ -30,10 +30,6 @@ data class PlayerSettings(
     val subtitleFontPath: String? = null,
     val subtitleFontSource: String? = null,
     val showChapterSkipButton: Boolean = true,
-    // 온라인 OP/ED 분석은 비활성화되어 있으며, 오프라인 저장 회차 분석만 이 설정으로 제어한다.
-    val offlineOpEdAnalysisEnabled: Boolean = true,
-    // Legacy compatibility for older stored settings.
-    val onlineOpEdAnalysisEnabled: Boolean = true,
     // 좌/우 더블 탭 시 이동할 시간(초)
     val doubleTapSeekSeconds: Int = 10,
     // 기본 재생 배속

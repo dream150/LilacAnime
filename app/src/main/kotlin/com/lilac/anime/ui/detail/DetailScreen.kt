@@ -1,5 +1,6 @@
 package com.lilac.anime
 
+import android.content.Context
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -36,6 +37,119 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.net.URL
 import kotlinx.coroutines.CompletableDeferred
+/**
+ * Copies every subtitle asset already discovered by each provider into the
+ * anime-id keyed offline store used by the player. Provider stores use their
+ * own cache keys (Linkkf=animeId, Kairan/Csora=normalized title), so simply
+ * saving the selected path is not enough to make every discovered file
+ * available offline.
+ */
+private suspend fun persistOfflineSubtitleAssets(
+    context: Context,
+    animeId: String,
+    title: String,
+    episodeKey: String,
+    episodeNumber: Int,
+    linkkfPath: String?,
+    kairanPath: String?,
+    csoraPath: String?
+) = withContext(Dispatchers.IO) {
+    /**
+     * Provider services use a title-based cache directory for Kairan/Csora,
+     * while the player uses the real anime id.  Bridge both stores here.
+     *
+     * Important: do not delete or replace candidate subtitle files.  Every
+     * subtitle asset found for this episode is registered in SubtitleStore so
+     * the offline player can present all available tracks.
+     */
+    val titleKey = KairanSubtitleService.normalizeTitleForFile(title)
+    fun safeEpisodeKey(value: String): String = value.lowercase(java.util.Locale.ROOT).replace(Regex("[^a-z0-9._-]"), "_")
+
+    val providerRoots = mapOf(
+        "linkkf" to context.filesDir.resolve("linkkf_subtitles"),
+        "kairan" to context.filesDir.resolve("kairan_subtitles").resolve(titleKey).resolve(safeEpisodeKey(episodeKey)),
+        "csora" to context.filesDir.resolve("csora_subtitles").resolve(titleKey).resolve(safeEpisodeKey(episodeKey))
+    )
+    val primaries = mapOf(
+        "linkkf" to linkkfPath,
+        "kairan" to kairanPath,
+        "csora" to csoraPath
+    )
+
+    fun isSubtitleFile(file: File): Boolean {
+        if (!file.isFile) return false
+        return file.extension.lowercase(java.util.Locale.ROOT) in
+            setOf("vtt", "srt", "ass", "ssa")
+    }
+
+    fun collectFromEpisodeDir(root: File): List<String> {
+        if (!root.isDirectory) return emptyList()
+        return root.walkTopDown()
+            .filter(::isSubtitleFile)
+            .map { it.absolutePath }
+            .filter { SubtitleStore.subtitleMatchesEpisode(it, episodeKey, episodeNumber) }
+            .distinct()
+            .toList()
+    }
+
+    for ((source, root) in providerRoots) {
+        try {
+            val discovered = linkedSetOf<String>()
+
+            // First include everything already registered in the provider's
+            // own SubtitleStore key. This also preserves older installations.
+            val providerStoreKey = if (source == "linkkf") animeId else titleKey
+            SubtitleStore.list(
+                context = context,
+                animeId = providerStoreKey,
+                episodeKey = episodeKey,
+                episodeNumber = episodeNumber
+            )
+                .filter { it.episodeMatch && File(it.path).isFile }
+                .forEach { discovered += File(it.path).absolutePath }
+
+            // Then scan the actual provider cache directory. This is the
+            // important part: candidates that were downloaded but were not
+            // selected as the primary subtitle are still retained offline.
+            discovered += collectFromEpisodeDir(root)
+
+            primaries[source]?.let { primary ->
+                if (File(primary).isFile && SubtitleStore.subtitleMatchesEpisode(primary, episodeKey, episodeNumber)) {
+                    discovered.add(File(primary).absolutePath)
+                }
+            }
+
+            if (discovered.isEmpty()) continue
+
+            val primary = primaries[source]
+                ?.let { File(it).takeIf(File::isFile)?.absolutePath }
+                ?.takeIf { it in discovered }
+                ?: discovered.first()
+
+            SubtitleStore.saveAll(
+                context = context,
+                animeId = animeId,
+                episodeKey = episodeKey,
+                episodeNumber = episodeNumber,
+                source = source,
+                paths = discovered,
+                primaryPath = primary
+            )
+
+            Log.d(
+                "OfflineDownload",
+                "SUBTITLE_ASSETS_PERSISTED source=$source episode=$episodeKey count=${discovered.size} root=${root.absolutePath}"
+            )
+        } catch (e: Exception) {
+            Log.w(
+                "OfflineDownload",
+                "SUBTITLE_ASSETS_PERSIST_FAILED source=$source episode=$episodeKey",
+                e
+            )
+        }
+    }
+}
+
 @Composable
 fun DetailScreen(
     vm: AnimeViewModel,
@@ -52,7 +166,6 @@ fun DetailScreen(
         vm.loadAnimeDetail(
             target = detailAnime,
             force = !isOffline,
-            context = context,
             onLoaded = { refreshed -> detailAnime = refreshed }
         )
         vm.loadEpisodes(context, detailAnime, force = !isOffline)
@@ -237,9 +350,11 @@ fun DetailScreen(
                 }
             }
 
-            SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "linkkf", linkkfPath)
-            SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "kairan", kairanPath)
-            SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "csora", csoraPath)
+            persistOfflineSubtitleAssets(
+                context = context, animeId = currentAnime.id, title = currentAnime.title,
+                episodeKey = ep.displayNumber, episodeNumber = ep.number,
+                linkkfPath = linkkfPath, kairanPath = kairanPath, csoraPath = csoraPath
+            )
 
             if (linkkfPath != null || kairanPath != null) {
                 val currentStored = OfflineStore.getEpisode(context, currentAnime.id, ep)
@@ -341,8 +456,20 @@ fun DetailScreen(
                         Log.w("Kairan", "OFFLINE_ASS_PRELOAD_FAILED episode=${ep.number}", e)
                         null
                     }
-                    SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "linkkf", localLinkkfPath)
-                    SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "kairan", localKairanPath)
+                    val localCsoraPath = try {
+                        when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                            is KairanSubtitleResult.DirectFile -> result.path
+                            null -> null
+                        }
+                    } catch (e: Exception) {
+                        Log.w("Csora", "OFFLINE_ASS_PRELOAD_FAILED episode=${ep.number}", e)
+                        null
+                    }
+                    persistOfflineSubtitleAssets(
+                        context = context, animeId = currentAnime.id, title = currentAnime.title,
+                        episodeKey = ep.displayNumber, episodeNumber = ep.number,
+                        linkkfPath = localLinkkfPath, kairanPath = localKairanPath, csoraPath = localCsoraPath
+                    )
 
                     if (localLinkkfPath != null) {
                         OfflineStore.saveEpisode(
@@ -420,8 +547,20 @@ fun DetailScreen(
                                 Log.w("Kairan", "OFFLINE_ASS_PRELOAD_FAILED episode=${ep.number}", e)
                                 null
                             }
-                            SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "linkkf", localLinkkfPath)
-                            SubtitleStore.save(context, currentAnime.id, ep.displayNumber, ep.number, "kairan", localKairanPath)
+                            val localCsoraPath = try {
+                                when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                                    is KairanSubtitleResult.DirectFile -> result.path
+                                    null -> null
+                                }
+                            } catch (e: Exception) {
+                                Log.w("Csora", "OFFLINE_ASS_PRELOAD_FAILED episode=${ep.number}", e)
+                                null
+                            }
+                            persistOfflineSubtitleAssets(
+                                context = context, animeId = currentAnime.id, title = currentAnime.title,
+                                episodeKey = ep.displayNumber, episodeNumber = ep.number,
+                                linkkfPath = localLinkkfPath, kairanPath = localKairanPath, csoraPath = localCsoraPath
+                            )
 
                             if (localLinkkfPath != null) {
                                 OfflineStore.saveEpisode(

@@ -26,7 +26,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.awaitCancellation
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -92,8 +91,6 @@ import io.github.peerless2012.ass.media.type.AssRenderType
 import io.github.peerless2012.ass.media.widget.AssSubtitleView
 import com.lilac.anime.data.*
 import com.lilac.anime.network.LinkkfChapterService
-import com.lilac.anime.network.OfflineOpEdResultStore
-import com.lilac.anime.network.OfflineOpEdFingerprintStore
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.SubtitleAssetUtil
 import kotlinx.coroutines.Dispatchers
@@ -108,30 +105,6 @@ private fun formatChapterAnalysisStatus(raw: String): String {
     val parts = raw.split(' ')
     return when {
         raw == "ANALYSIS_START" || raw.startsWith("ANALYSIS_START") -> "OP/ED 분석 시작"
-        raw.startsWith("ONLINE_FINGERPRINT_ANALYSIS_START") -> "온라인 OP/ED 분석 시작"
-        raw.startsWith("ONLINE_FINGERPRINT_TEMPLATE_HIT") -> "저장된 OP/ED Fingerprint 불러오는 중..."
-        raw.startsWith("ONLINE_FINGERPRINT_TRAINING_START") -> "OP/ED 학습용 에피소드 분석 중..."
-        raw.startsWith("ONLINE_FINGERPRINT_M3U8_COLLECTION_COMPLETE") -> "학습 에피소드 스트림 확인 완료"
-        raw.startsWith("M3U8_WEBVIEW_") && raw.contains("_START") -> "에피소드 스트림 확인 중..."
-        raw.startsWith("M3U8_WEBVIEW_") && raw.contains("_LOAD_PAGE") -> "에피소드 페이지 불러오는 중..."
-        raw.startsWith("M3U8_WEBVIEW_") && raw.contains("_FOUND") -> "스트림 주소 확인 완료"
-        raw.startsWith("M3U8_WEBVIEW_") && raw.contains("_PAGE_START") -> "WebView 분석 중..."
-        raw.startsWith("M3U8_WEBVIEW_") && raw.contains("_PAGE_FINISHED") -> "플레이어 요청 분석 중..."
-        raw.startsWith("ONLINE_FINGERPRINT_REFERENCE_DOWNLOAD episode=") -> "학습 에피소드 전체 다운로드 중..."
-        raw.startsWith("ONLINE_FINGERPRINT_REFERENCE_DOWNLOAD_OK") -> "학습 에피소드 다운로드 완료"
-        raw.startsWith("ONLINE_FINGERPRINT_REFERENCE_FINGERPRINT_OK") -> "학습 에피소드 오디오 분석 완료"
-        raw.startsWith("ONLINE_FINGERPRINT_TEMPLATE_SAVED") -> "OP/ED Fingerprint 저장 완료"
-        raw.startsWith("FINGERPRINT_FULL_WINDOW") -> "현재 에피소드 전체 오디오 분석 중..."
-        raw.startsWith("FINGERPRINT_CURRENT_FULL_OK") -> "현재 에피소드 오디오 분석 완료"
-        raw.startsWith("FINGERPRINT_TEMPLATE_HIT") -> "OP/ED Fingerprint 비교 중..."
-        raw.startsWith("FINGERPRINT_OP_SEARCH_START") -> "OP 구간 검색 중..."
-        raw.startsWith("FINGERPRINT_OP_SCORE") -> "OP 후보 점수 계산 중..."
-        raw.startsWith("FINGERPRINT_OP_MATCH") -> "✓ OP 구간 발견"
-        raw.startsWith("FINGERPRINT_ED_SEARCH_RANGE") -> "ED 구간 검색 중..."
-        raw.startsWith("FINGERPRINT_ED_SCORE") -> "ED 후보 점수 계산 중..."
-        raw.startsWith("FINGERPRINT_ED_MATCH") -> "✓ ED 구간 발견"
-        raw.startsWith("ONLINE_FINGERPRINT_ANALYSIS_FAILED") -> "✗ 온라인 OP/ED 분석 실패: ${raw.removePrefix("ONLINE_FINGERPRINT_ANALYSIS_FAILED ")}"
-        raw.startsWith("ONLINE_FINGERPRINT_TRAINING_FAILED") -> "✗ OP/ED 학습 실패: ${raw.removePrefix("ONLINE_FINGERPRINT_TRAINING_FAILED ")}"
         raw.startsWith("CURRENT_FRONT_DOWNLOAD start=") -> "현재 에피소드 앞부분 다운로드 중..."
         raw.startsWith("CURRENT_FRONT_DOWNLOAD_OK") -> "✓ 현재 에피소드 앞부분 다운로드 완료"
         raw.startsWith("CURRENT_FRONT_DOWNLOAD_FAILED") -> "✗ 현재 에피소드 앞부분 다운로드 실패"
@@ -417,12 +390,6 @@ fun PlayerScreen(
     val activity = context as? Activity
     val isOffline by vm.isOffline.collectAsState()
     val isInPictureInPicture = MainActivity.isInPictureInPicture
-
-    // 재생을 시작한 작품은 시청기록에서 카탈로그 전체 목록 없이도 복원할 수 있도록
-    // 작품 메타데이터를 영구 캐시한다.
-    LaunchedEffect(anime.id) {
-        vm.cacheAnime(context, anime)
-    }
     
     var currentEpisode by remember(episode) { mutableStateOf(episode) }
     
@@ -459,7 +426,7 @@ fun PlayerScreen(
     var chapterSkipEnteredAtMs by remember { mutableLongStateOf(-1L) }
     var skippedChapterSkipKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     var skipEpisodeKey by remember { mutableStateOf<String?>(null) }
-    var suppressProgressSaveForEpisode by remember { mutableStateOf<String?>(null) }
+    var suppressProgressSaveForEpisode by remember { mutableStateOf<Int?>(null) }
 
     var subtitleSizePercent by rememberSaveable { mutableFloatStateOf(vm.playerSettings.subtitleSize) }
     var subtitleSizeText by rememberSaveable { mutableStateOf(vm.playerSettings.subtitleSize.toInt().toString()) }
@@ -491,9 +458,6 @@ fun PlayerScreen(
     var parsedStreamingQualities by remember { mutableStateOf<List<StreamQuality>>(emptyList()) }
     var selectedStreamingQuality by remember { mutableStateOf<StreamQuality?>(null) }
     var pendingSeekPositionMs by remember { mutableLongStateOf(-1L) }
-    // 수동 회차 전환 시 새 회차의 기록을 미리 고정한다.
-    var pendingEpisodeProgress by remember { mutableStateOf<Float?>(null) }
-    var pendingEpisodeProgressEpisodeId by remember { mutableStateOf<String?>(null) }
 
     var exoQualities by remember { mutableStateOf<List<ExoVideoQualityOption>>(emptyList()) }
     var selectedQualityOption by remember { mutableStateOf<ExoVideoQualityOption?>(null) }
@@ -501,13 +465,6 @@ fun PlayerScreen(
     var discoveredSubtitleFonts by remember { mutableStateOf<List<SubtitleAssetUtil.FontInfo>>(emptyList()) }
     var savedSubtitles by remember { mutableStateOf<List<SubtitleStore.SavedSubtitle>>(emptyList()) }
     var showSubtitleManager by remember { mutableStateOf(false) }
-    var hasSavedOpEdAnalysis by remember(anime.id, currentEpisode.id) { mutableStateOf(false) }
-
-    LaunchedEffect(anime.id, currentEpisode.id) {
-        hasSavedOpEdAnalysis = withContext(Dispatchers.IO) {
-            OfflineOpEdResultStore.load(context, anime.id, currentEpisode.id) != null
-        }
-    }
 
     LaunchedEffect(anime.title, subtitlesUrl, subtitleSource) {
         discoveredSubtitleFonts = withContext(Dispatchers.IO) {
@@ -609,12 +566,7 @@ fun PlayerScreen(
         vm.episodes(anime).sortedWith(compareBy<Episode> { it.number }.thenBy { it.displayNumber })
     }
     val currentIndex = remember(episodeList, currentEpisode.id, currentEpisode.displayNumber) {
-        val exactIdIndex = episodeList.indexOfFirst { it.id == currentEpisode.id }
-        if (exactIdIndex >= 0) exactIdIndex
-        else episodeList.indexOfFirst {
-            it.displayNumber.equals(currentEpisode.displayNumber, ignoreCase = true) &&
-                it.number == currentEpisode.number
-        }
+        episodeList.indexOfFirst { it.id == currentEpisode.id || it.displayNumber.equals(currentEpisode.displayNumber, ignoreCase = true) }
     }
     val prevEpisode = remember(episodeList, currentIndex) {
         if (currentIndex > 0) episodeList.getOrNull(currentIndex - 1) else null
@@ -636,119 +588,6 @@ fun PlayerScreen(
         offlineEp = OfflineStore.getEpisode(context, anime.id, currentEpisode)
     }
 
-    // 다운로드된 회차를 온라인 상태에서 재생하는 경우에도 VTT가 로컬에 없으면
-    // 원본 Linkkf VTT 주소를 이용해 즉시 로컬 자막을 보충한다. ASS가 존재하더라도
-    // VTT 캐시는 별도로 유지하며, 이후 자막 소스 선택에서 항상 사용할 수 있다.
-    LaunchedEffect(
-        anime.id,
-        currentEpisode.id,
-        currentEpisode.number,
-        currentEpisode.displayNumber,
-        isDownloaded,
-        isOffline,
-        offlineEp?.vttUrl,
-        currentEpisode.vttUrl,
-        linkkfSubtitleUrl,
-        subtitleSourcePreference
-    ) {
-        if (!isDownloaded || isOffline) return@LaunchedEffect
-
-        val existingLocalVtt = withContext(Dispatchers.IO) {
-            SubtitleStore.get(
-                context,
-                anime.id,
-                currentEpisode.displayNumber,
-                currentEpisode.number,
-                "linkkf"
-            )
-        }?.takeIf { File(it).isFile && (it.endsWith(".vtt", true) || it.endsWith(".srt", true)) }
-            ?: offlineEp?.vttUrl?.takeIf {
-                File(it).isFile && (it.endsWith(".vtt", true) || it.endsWith(".srt", true))
-            }
-
-        if (existingLocalVtt != null) {
-            Log.d("Subtitle", "OFFLINE_EPISODE_VTT_ALREADY_LOCAL episode=${currentEpisode.number} path=$existingLocalVtt")
-            return@LaunchedEffect
-        }
-
-        var remoteVtt = sequenceOf(
-            linkkfSubtitleUrl,
-            currentEpisode.vttUrl,
-            offlineEp?.vttUrl
-        ).firstOrNull {
-            !it.isNullOrBlank() &&
-                (it.startsWith("http://") || it.startsWith("https://")) &&
-                !it.startsWith("file://")
-        }
-
-        // 다운로드된 영상은 이미 로컬 m3u8/mp4를 가지고 있으므로
-        // StreamUrlExtractor가 다시 실행되지 않는다. 이 경우 현재 Episode에
-        // VTT URL이 없으면 Linkkf 회차 페이지를 다시 조회해서 VTT를 찾는다.
-        if (remoteVtt.isNullOrBlank()) {
-            val linkkfEpisode = try {
-                vm.findLinkkfEpisode(anime, currentEpisode)
-            } catch (e: Exception) {
-                Log.w("Subtitle", "OFFLINE_EPISODE_LINKKF_LOOKUP_FAILED episode=${currentEpisode.number}", e)
-                null
-            }
-            remoteVtt = linkkfEpisode?.vttUrl?.takeIf {
-                it.startsWith("http://") || it.startsWith("https://")
-            }
-            if (!remoteVtt.isNullOrBlank()) {
-                linkkfSubtitleUrl = remoteVtt
-                Log.d(
-                    "Subtitle",
-                    "OFFLINE_EPISODE_VTT_FOUND_FROM_LINKKF episode=${currentEpisode.number} url=$remoteVtt"
-                )
-            }
-        }
-
-        remoteVtt = remoteVtt ?: return@LaunchedEffect
-
-        Log.d(
-            "Subtitle",
-            "OFFLINE_EPISODE_VTT_DOWNLOAD_START episode=${currentEpisode.number} url=$remoteVtt"
-        )
-
-        val downloadedPath = try {
-            downloadSubtitleFile(
-                context = context,
-                animeId = anime.id,
-                episodeNumber = currentEpisode.number,
-                episodeKey = currentEpisode.displayNumber,
-                vttUrl = remoteVtt
-            )
-        } catch (e: Exception) {
-            Log.w("Subtitle", "OFFLINE_EPISODE_VTT_DOWNLOAD_FAILED episode=${currentEpisode.number}", e)
-            null
-        }
-
-        if (downloadedPath.isNullOrBlank()) return@LaunchedEffect
-
-        withContext(Dispatchers.IO) {
-            SubtitleStore.save(
-                context, anime.id, currentEpisode.displayNumber, currentEpisode.number,
-                "linkkf", downloadedPath
-            )
-            val savedEpisode = offlineEp ?: OfflineStore.getEpisode(context, anime.id, currentEpisode)
-            if (savedEpisode != null) {
-                OfflineStore.saveEpisode(
-                    context = context,
-                    animeId = anime.id,
-                    episode = savedEpisode.copy(vttUrl = downloadedPath)
-                )
-            }
-        }
-
-        linkkfSubtitleUrl = remoteVtt
-        subtitlesUrl = downloadedPath
-        subtitleSource = "linkkf-vtt"
-        Log.d(
-            "Subtitle",
-            "OFFLINE_EPISODE_VTT_DOWNLOAD_DONE episode=${currentEpisode.number} path=$downloadedPath"
-        )
-    }
-
     // 재생 화면에서는 Android 상태표시줄/내비게이션바를 완전히 숨긴다.
     // 사용자가 위에서 아래로 스와이프해 시스템 상태표시줄을 잠깐 띄운 뒤에도
     // 재생 화면이 다시 immersive 상태로 돌아가도록 시스템 UI 변경을 감시한다.
@@ -766,9 +605,6 @@ fun PlayerScreen(
             fun hidePlayerSystemBars() {
                 controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 controller.hide(hiddenTypes)
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    window.isNavigationBarContrastEnforced = false
-                }
                 @Suppress("DEPRECATION")
                 decorView.systemUiVisibility =
                     View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
@@ -778,8 +614,6 @@ fun PlayerScreen(
                         View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
                         View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             }
-
-            WindowCompat.setDecorFitsSystemWindows(window, false)
 
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             hidePlayerSystemBars()
@@ -801,7 +635,6 @@ fun PlayerScreen(
                 @Suppress("DEPRECATION")
                 decorView.setOnSystemUiVisibilityChangeListener(null)
                 ViewCompat.setOnApplyWindowInsetsListener(decorView, null)
-                WindowCompat.setDecorFitsSystemWindows(window, true)
             }
         }
     }
@@ -871,12 +704,7 @@ fun PlayerScreen(
                 streamUrl = targetUrl
 
                 val storedSubtitle = offlineEp?.vttUrl ?: currentEpisode.vttUrl
-                // A subtitle stored inside the episode record is already associated with
-                // this episode. Do not reject a valid VTT merely because its filename
-                // does not contain an episode number.
-                val localStoredSubtitle = storedSubtitle?.takeIf { path ->
-                    path.startsWith("/") && File(path).isFile
-                }
+                val localStoredSubtitle = storedSubtitle?.takeIf { path -> path.startsWith("/") && File(path).isFile && SubtitleStore.pathMatchesEpisode(path, currentEpisode.number) }
                 val localUserSubtitle = localStoredSubtitle?.takeIf { isLocalUserSubtitlePath(it) }
                 val localLinkkf = withContext(Dispatchers.IO) {
                     SubtitleStore.get(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, "linkkf")
@@ -889,17 +717,15 @@ fun PlayerScreen(
                 }
                 subtitlesUrl = when {
                     localUserSubtitle != null -> localUserSubtitle
-                    subtitleSourcePreference == "linkkf" -> localLinkkf
                     subtitleSourcePreference == "kairan" -> localKairan ?: localCsora ?: localLinkkf
                     subtitleSourcePreference == "csora" -> localCsora ?: localKairan ?: localLinkkf
-                    else -> localLinkkf
+                    else -> localLinkkf ?: localKairan
                 }
                 subtitleSource = when {
                     localUserSubtitle != null -> "user"
-                    subtitleSourcePreference == "linkkf" && localLinkkf != null -> "linkkf-vtt"
                     subtitlesUrl == localKairan && localKairan != null -> "kairan"
                     subtitlesUrl == localCsora && localCsora != null -> "csora"
-                    subtitlesUrl == localLinkkf && localLinkkf != null -> "linkkf-vtt"
+                    subtitlesUrl != null -> "linkkf-vtt"
                     else -> "none"
                 }
                 kairanSubtitleResolved = true
@@ -926,16 +752,7 @@ fun PlayerScreen(
         }
 
         val storedSubtitle = offlineEp?.vttUrl ?: currentEpisode.vttUrl
-        val localStoredSubtitle = storedSubtitle?.takeIf { path ->
-            if (!path.startsWith("/") || !File(path).isFile) return@takeIf false
-            val ext = File(path).extension.lowercase(java.util.Locale.ROOT)
-            if (ext == "vtt" || ext == "srt") {
-                // A VTT/SRT stored in the episode record is already associated with this episode.
-                true
-            } else {
-                SubtitleStore.pathMatchesEpisode(path, currentEpisode.number)
-            }
-        }
+        val localStoredSubtitle = storedSubtitle?.takeIf { path -> path.startsWith("/") && File(path).isFile && SubtitleStore.pathMatchesEpisode(path, currentEpisode.number) }
 
         if (isOffline || isDownloaded) {
             val localLinkkf = withContext(Dispatchers.IO) {
@@ -959,14 +776,8 @@ fun PlayerScreen(
                     subtitleSource = when { localCsora != null -> "csora"; localKairan != null -> "kairan"; localLinkkf != null -> "linkkf-vtt"; else -> "none" }
                 }
                 else -> {
-                    // Linkkf VTT를 명시적으로 선택한 경우 ASS로 절대 자동 대체하지 않는다.
-                    // 로컬 VTT가 아직 없다면 위의 다운로드 effect가 온라인 VTT를 받아온다.
-                    subtitlesUrl = localLinkkf
-                    subtitleSource = if (localLinkkf != null) "linkkf-vtt" else "none"
-                    Log.d(
-                        "Subtitle",
-                        "LINKKF_VTT_SELECTED episode=${currentEpisode.number} local=${localLinkkf != null}"
-                    )
+                    subtitlesUrl = localLinkkf ?: localKairan ?: localCsora
+                    subtitleSource = when { localLinkkf != null -> "linkkf-vtt"; localKairan != null -> "kairan"; localCsora != null -> "csora"; else -> "none" }
                 }
             }
             kairanSubtitleResolved = true
@@ -992,10 +803,9 @@ fun PlayerScreen(
                     Log.d("Kairan", "USE_KAIRAN path=${result.path} episode=${currentEpisode.number}")
                 }
                 null -> {
-                    val fallback = linkkfSubtitleUrl ?: currentEpisode.vttUrl
-                    subtitlesUrl = fallback
-                    subtitleSource = if (!fallback.isNullOrBlank()) "linkkf-vtt" else "none"
-                    Log.d("Kairan", "NO_KAIRAN_SUBTITLE episode=${currentEpisode.number}; USE_LINKKF_VTT_FALLBACK=${!fallback.isNullOrBlank()}")
+                    subtitlesUrl = null
+                    subtitleSource = "none"
+                    Log.d("Kairan", "NO_KAIRAN_SUBTITLE episode=${currentEpisode.number}; waiting for Linkkf VTT fallback")
                 }
             }
         } else if (subtitleSourcePreference == "csora") {
@@ -1015,10 +825,9 @@ fun PlayerScreen(
                 subtitleSource = "csora"
                 Log.d("Csora", "USE_CSORA path=${result.path} episode=${currentEpisode.number}")
             } else {
-                val fallback = linkkfSubtitleUrl ?: currentEpisode.vttUrl
-                subtitlesUrl = fallback
-                subtitleSource = if (!fallback.isNullOrBlank()) "linkkf-vtt" else "none"
-                Log.d("Csora", "NO_CSORA_SUBTITLE episode=${currentEpisode.number}; USE_LINKKF_VTT_FALLBACK=${!fallback.isNullOrBlank()}")
+                subtitlesUrl = null
+                subtitleSource = "none"
+                Log.d("Csora", "NO_CSORA_SUBTITLE episode=${currentEpisode.number}")
             }
         } else {
             val linkkf = linkkfSubtitleUrl ?: currentEpisode.vttUrl
@@ -1170,49 +979,6 @@ fun PlayerScreen(
         }
     }
 
-    // 다음화/이전화 버튼은 단순히 currentEpisode만 바꾸지 않고,
-    // 현재 재생 상태를 먼저 저장한 뒤 새 회차의 기록을 로드하도록 한다.
-    // PlayerView의 controller가 이전 ForwardingPlayer 인스턴스를 잠깐 잡고 있어도
-    // 실제 회차 전환은 항상 이 경로를 거치게 한다.
-    fun switchEpisodeFromPlayer(target: Episode) {
-        if (target.id == currentEpisode.id) return
-
-        val duration = exoPlayer.duration
-        if (duration > 0L && duration != C.TIME_UNSET) {
-            val progress = (exoPlayer.currentPosition.toFloat() / duration).coerceIn(0f, 1f)
-            vm.updateProgress(
-                context = context,
-                animeId = anime.id,
-                episodeNumber = currentEpisode.number,
-                episodeKey = currentEpisode.displayNumber,
-                progress = progress,
-                episodeId = currentEpisode.id
-            )
-        }
-
-        Log.d(
-            "PlayerEpisode",
-            "MANUAL_SWITCH fromId=${currentEpisode.id} fromNo=${currentEpisode.number} fromKey=${currentEpisode.displayNumber} " +
-                "toId=${target.id} toNo=${target.number} toKey=${target.displayNumber}"
-        )
-        // 새 회차 기록은 현재 플레이어 상태와 분리해서 전환 전에 확정한다.
-        pendingEpisodeProgressEpisodeId = target.id
-        pendingEpisodeProgress = vm.getProgress(
-            anime.id,
-            target.displayNumber,
-            target.number,
-            target.id
-        )?.progress
-        Log.d(
-            "PlayerEpisode",
-            "TARGET_PROGRESS targetId=${target.id} targetNo=${target.number} " +
-                "targetKey=${target.displayNumber} progress=${pendingEpisodeProgress}"
-        )
-        pendingSeekPositionMs = -1L
-        exoPlayer.stop()
-        currentEpisode = target
-    }
-
     val forwardingPlayer = remember(exoPlayer, prevEpisode, nextEpisode) {
         object : ForwardingPlayer(exoPlayer) {
             override fun isCommandAvailable(command: Int): Boolean {
@@ -1228,17 +994,17 @@ fun PlayerScreen(
             override fun hasNextMediaItem(): Boolean = nextEpisode != null
             override fun hasPreviousMediaItem(): Boolean = prevEpisode != null
 
-            override fun seekToNext() { nextEpisode?.let(::switchEpisodeFromPlayer) }
-            override fun seekToPrevious() { prevEpisode?.let(::switchEpisodeFromPlayer) }
-            override fun seekToNextMediaItem() { nextEpisode?.let(::switchEpisodeFromPlayer) }
-            override fun seekToPreviousMediaItem() { prevEpisode?.let(::switchEpisodeFromPlayer) }
+            override fun seekToNext() { nextEpisode?.let { currentEpisode = it } }
+            override fun seekToPrevious() { prevEpisode?.let { currentEpisode = it } }
+            override fun seekToNextMediaItem() { nextEpisode?.let { currentEpisode = it } }
+            override fun seekToPreviousMediaItem() { prevEpisode?.let { currentEpisode = it } }
         }
     }
 
     DisposableEffect(currentEpisode) {
         val episodeNumberForSave = currentEpisode.number
         onDispose {
-            if (suppressProgressSaveForEpisode == currentEpisode.id) return@onDispose
+            if (suppressProgressSaveForEpisode == episodeNumberForSave) return@onDispose
             val duration = exoPlayer.duration
             if (duration > 0 && duration != C.TIME_UNSET) {
                 val progress = (exoPlayer.currentPosition.toFloat() / duration).coerceIn(0f, 1f)
@@ -1247,8 +1013,7 @@ fun PlayerScreen(
                     animeId = anime.id,
                     episodeNumber = episodeNumberForSave,
                     episodeKey = currentEpisode.displayNumber,
-                    progress = progress,
-                    episodeId = currentEpisode.id
+                    progress = progress
                 )
             }
         }
@@ -1281,14 +1046,13 @@ fun PlayerScreen(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
                     val completedEpisode = currentEpisodeState.number
-                    suppressProgressSaveForEpisode = currentEpisodeState.id
+                    suppressProgressSaveForEpisode = completedEpisode
                     vm.updateProgress(
                         context = context,
                         animeId = anime.id,
                         episodeNumber = completedEpisode,
                         episodeKey = currentEpisodeState.displayNumber,
-                        progress = 0f,
-                        episodeId = currentEpisodeState.id
+                        progress = 0f
                     )
                     if (currentAutoPlay && currentNextEpisode != null) {
                         currentEpisode = currentNextEpisode!!
@@ -1357,7 +1121,7 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(currentEpisode.id, streamUrl, subtitlesUrl, subtitleSource, syncOffsetMs, isOffline, selectedSubtitleFontPath) {
+    LaunchedEffect(streamUrl, subtitlesUrl, subtitleSource, syncOffsetMs, isOffline, selectedSubtitleFontPath) {
         val url = streamUrl ?: return@LaunchedEffect
         val isLocalFile = url.startsWith("file://") || url.startsWith("/")
 
@@ -1511,31 +1275,11 @@ fun PlayerScreen(
                         exoPlayer.seekTo(pendingSeekPositionMs)
                         pendingSeekPositionMs = -1L
                     } else {
-                        // 수동 전환에서 미리 읽은 대상 회차 기록을 최우선으로 사용한다.
-                        // 없으면 이 LaunchedEffect가 준비한 회차의 기록만 다시 조회한다.
-                        val pendingForCurrentEpisode = pendingEpisodeProgressEpisodeId == currentEpisode.id
-                        val progressForThisEpisode = if (pendingForCurrentEpisode) {
-                            pendingEpisodeProgress
-                        } else {
-                            vm.getProgress(
-                                anime.id,
-                                currentEpisode.displayNumber,
-                                currentEpisode.number,
-                                currentEpisode.id
-                            )?.progress
-                        }
-                        Log.d(
-                            "PlayerEpisode",
-                            "RESTORE_PROGRESS id=${currentEpisode.id} number=${currentEpisode.number} " +
-                                "key=${currentEpisode.displayNumber} pendingId=$pendingEpisodeProgressEpisodeId " +
-                                "pendingMatched=$pendingForCurrentEpisode progress=$progressForThisEpisode"
-                        )
-                        pendingEpisodeProgress = null
-                        pendingEpisodeProgressEpisodeId = null
-                        if (progressForThisEpisode != null) {
+                        val savedProgress = vm.getProgress(anime.id, currentEpisode.displayNumber, currentEpisode.number)
+                        if (savedProgress != null) {
                             val duration = exoPlayer.duration
                             if (duration > 0 && duration != C.TIME_UNSET) {
-                                val seekPos = (progressForThisEpisode * duration).toLong().coerceAtLeast(0)
+                                val seekPos = (savedProgress.progress * duration).toLong().coerceAtLeast(0)
                                 exoPlayer.seekTo(seekPos)
                             }
                         }
@@ -1544,22 +1288,14 @@ fun PlayerScreen(
                 }
             }
         }
-        // This listener belongs to this exact episode/media preparation. Keep it
-        // attached only while this LaunchedEffect is alive. Without explicit
-        // removal, the listener from the previous episode remains attached and
-        // can seek the newly loaded episode to the previous episode's history.
         exoPlayer.addListener(listener)
-        try {
-            exoPlayer.setMediaSource(mediaSourceFactory.createMediaSource(mediaItemBuilder.build()))
-            exoPlayer.prepare()
-            exoPlayer.playWhenReady = true
-            awaitCancellation()
-        } finally {
-            exoPlayer.removeListener(listener)
-        }
+
+        exoPlayer.setMediaSource(mediaSourceFactory.createMediaSource(mediaItemBuilder.build()))
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
     }
 
-    LaunchedEffect(currentEpisode.id, streamUrl, currentEpisode.number, vm.playerSettings.offlineOpEdAnalysisEnabled) {
+    LaunchedEffect(streamUrl, currentEpisode.number) {
         val currentStreamUrl = streamUrl ?: return@LaunchedEffect
 
         chapterSkipSegments = emptyList()
@@ -1567,68 +1303,14 @@ fun PlayerScreen(
         buttonChapterSkipSegment = null
         chapterSkipEnteredAtMs = -1L
         skippedChapterSkipKeys = emptySet()
-        // OP/ED analysis is intentionally available only for episodes stored offline.
-        // Online playback does not perform any OP/ED analysis.
+        // 스트리밍 재생에서는 OP/ED 분석을 완전히 비활성화한다.
+        // 분석은 다운로드 완료된 오프라인 에피소드에서만 수행한다.
         if (!isDownloaded) {
             chapterAnalysisStatus = null
             chapterAnalysisVisible = false
-            Log.d("AniChapters", "ONLINE_ANALYSIS_DISABLED episode=${currentEpisode.number}")
+            skipEpisodeKey = null
             return@LaunchedEffect
         }
-
-        if (!vm.playerSettings.offlineOpEdAnalysisEnabled) {
-            chapterSkipSegments = emptyList()
-            chapterAnalysisStatus = null
-            chapterAnalysisVisible = false
-            Log.d("AniChapters", "OFFLINE_ANALYSIS_DISABLED episode=${currentEpisode.number}")
-            return@LaunchedEffect
-        }
-
-        // Start the next downloaded episode's analysis in the background.
-        // It is deliberately fire-and-forget and never updates the playback UI.
-        fun startNextBackgroundAnalysis() {
-            val currentIndex = episodeList.indexOfFirst { it.id == currentEpisode.id }
-            val nextEpisode = episodeList.getOrNull(currentIndex + 1) ?: return
-            if (!LinkkfChapterService.isOfflineEpisodeCompleted(anime.id, nextEpisode)) return
-
-            scope.launch(Dispatchers.Default) {
-                runCatching {
-                    val cachedNext = OfflineOpEdResultStore.load(context, anime.id, nextEpisode.id)
-                    if (cachedNext != null) {
-                        Log.d("AniChapters", "NEXT_CACHED episode=${nextEpisode.number} segments=${cachedNext.size}")
-                        return@launch
-                    }
-                    Log.d("AniChapters", "NEXT_BACKGROUND_ANALYSIS_START episode=${nextEpisode.number}")
-                    LinkkfChapterService.detectSkipSegmentsOffline(
-                        context = context,
-                        animeId = anime.id,
-                        currentEpisode = nextEpisode,
-                        episodes = episodeList,
-                        episodeDurationSeconds = 0,
-                        onStatus = { message -> Log.d("AniChapters", "NEXT_BACKGROUND $message") }
-                    )
-                    Log.d("AniChapters", "NEXT_BACKGROUND_ANALYSIS_DONE episode=${nextEpisode.number}")
-                }.onFailure {
-                    Log.e("AniChapters", "NEXT_BACKGROUND_ANALYSIS_FAILED episode=${nextEpisode.number}", it)
-                }
-            }
-        }
-
-        // A previous background pass may already have resolved this episode.
-        // In that case playback uses the saved ranges immediately and does not
-        // show an analysis notification.
-        val cachedResult = OfflineOpEdResultStore.load(context, anime.id, currentEpisode.id)
-        if (cachedResult != null) {
-            chapterSkipSegments = cachedResult.map {
-                ChapterSkipSegment(it.type, it.startTime, it.endTime, 0.0)
-            }
-            skipEpisodeKey = "${anime.id}_${currentEpisode.displayNumber}"
-            hasSavedOpEdAnalysis = true
-            Log.d("AniChapters", "CACHED_RESULT episode=${currentEpisode.number} segments=${cachedResult.size}")
-            startNextBackgroundAnalysis()
-            return@LaunchedEffect
-        }
-
         chapterAnalysisStatus = "분석 준비 중..."
         chapterAnalysisVisible = true
 
@@ -1639,35 +1321,14 @@ fun PlayerScreen(
                 Log.d("AniChapters", "START episode=${currentEpisode.number} duration=$durationSeconds source=linkkf")
                 val chapterStatus: (String) -> Unit = { raw ->
                     scope.launch(Dispatchers.Main.immediate) {
-                        if (isDownloaded) {
-                            // Offline mode: hide the detailed analysis log and show
-                            // only the final OP/ED result briefly.
-                            if (raw.startsWith("FINGERPRINT_ANALYSIS_COMPLETE") ||
-                                raw.startsWith("ANALYSIS_COMPLETE")
-                            ) {
-                                chapterAnalysisStatus = "✓ OP/ED 찾음"
-                                chapterAnalysisVisible = true
-                            }
-                        } else if (raw.startsWith("ONLINE_FINGERPRINT_ANALYSIS_COMPLETE")) {
-                            chapterAnalysisStatus = "✓ OP/ED 찾음"
-                            chapterAnalysisVisible = true
-                        } else if (raw.startsWith("ONLINE_FINGERPRINT_ANALYSIS_FAILED") ||
-                            raw.startsWith("ONLINE_FINGERPRINT_TRAINING_FAILED")) {
-                            chapterAnalysisStatus = formatChapterAnalysisStatus(raw)
-                            chapterAnalysisVisible = true
-                        } else if (raw.startsWith("ONLINE_") || raw.startsWith("M3U8_WEBVIEW_") ||
-                            raw.startsWith("FINGERPRINT_")) {
-                            // Online mode: show the detailed analysis progress directly
-                            // on the playback screen.
-                            chapterAnalysisStatus = formatChapterAnalysisStatus(raw)
-                            chapterAnalysisVisible = true
-                        }
+                        chapterAnalysisStatus = formatChapterAnalysisStatus(raw)
+                        chapterAnalysisVisible = true
                     }
                 }
 
                 // Downloaded episodes are analyzed entirely from the Media3 cache.
                 // This avoids WebView/network collection during the offline test.
-                chapterSkipSegments = run {
+                chapterSkipSegments = if (isDownloaded) {
                     Log.d("AniChapters", "OFFLINE_MODE episode=${currentEpisode.number}")
                     LinkkfChapterService.detectSkipSegmentsOffline(
                         context = context,
@@ -1677,12 +1338,13 @@ fun PlayerScreen(
                         episodeDurationSeconds = durationSeconds,
                         onStatus = chapterStatus
                     )
+                } else {
+                    // 방어 코드: 위에서 스트리밍은 이미 return 되었으므로
+                    // 네트워크/스트림 기반 OP/ED 분석은 절대로 호출하지 않는다.
+                    emptyList()
                 }
                 skipEpisodeKey = "${anime.id}_${currentEpisode.displayNumber}"
-                hasSavedOpEdAnalysis = OfflineOpEdResultStore.load(context, anime.id, currentEpisode.id) != null
                 Log.d("AniChapters", "LOADED count=${chapterSkipSegments.size}")
-
-                startNextBackgroundAnalysis()
                 break
             }
             delay(250L)
@@ -1810,7 +1472,7 @@ fun PlayerScreen(
 
         val transparentStyle = CaptionStyleCompat(
             vm.playerSettings.textColor,
-            vm.playerSettings.backgroundColor,
+            android.graphics.Color.TRANSPARENT,
             android.graphics.Color.TRANSPARENT,
             CaptionStyleCompat.EDGE_TYPE_OUTLINE,
             vm.playerSettings.strokeColor,
@@ -1907,6 +1569,10 @@ fun PlayerScreen(
                             VttStrokeTextView(ctx).apply {
                                 vttOverlayRef = this
                                 gravity = android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
+                                isSingleLine = true
+                                maxLines = 1
+                                ellipsize = null
+                                setHorizontallyScrolling(true)
                                 setTextColor(vm.playerSettings.textColor)
                                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                                 setPadding(12, 4, 12, 4)
@@ -1947,16 +1613,17 @@ fun PlayerScreen(
                         }
                     },
                     onSubtitleFound = { foundUrl ->
-                        // VTT는 ASS/Kairan/Csora의 존재 여부와 관계없이 항상 보관한다.
-                        // 영상 소스가 Linkkf가 아니더라도 extractor가 발견한 VTT를
-                        // 현재 회차의 VTT 후보로 유지해서 사용자가 언제든 선택할 수 있게 한다.
-                        linkkfSubtitleUrl = foundUrl
-                        if (subtitleSourcePreference == "linkkf") {
-                            subtitlesUrl = foundUrl
-                            subtitleSource = "linkkf-vtt"
-                            Log.d("Subtitle", "USE_VTT url=$foundUrl source=${vm.playerSettings.videoSourcePreference}")
-                        } else {
-                            Log.d("Subtitle", "CACHE_VTT url=$foundUrl source=${vm.playerSettings.videoSourcePreference}")
+                        if (vm.playerSettings.videoSourcePreference == "linkkf") {
+                            // 발견한 VTT를 항상 보관한다. Kairan을 보고 있는 동안 발견되어도
+                            // 나중에 Linkkf VTT를 선택하면 즉시 다시 사용할 수 있어야 한다.
+                            linkkfSubtitleUrl = foundUrl
+                            if (subtitleSourcePreference == "linkkf") {
+                                subtitlesUrl = foundUrl
+                                subtitleSource = "linkkf-vtt"
+                                Log.d("Subtitle", "USE_LINKKF_VTT url=$foundUrl")
+                            } else {
+                                Log.d("Subtitle", "CACHE_LINKKF_VTT url=$foundUrl")
+                            }
                         }
                     }
                 )
@@ -2074,14 +1741,10 @@ fun PlayerScreen(
             }
         }
 
-        LaunchedEffect(chapterAnalysisStatus, isDownloaded) {
+        LaunchedEffect(chapterAnalysisStatus) {
             val status = chapterAnalysisStatus ?: return@LaunchedEffect
-            if (status == "✓ OP/ED 찾음") {
-                delay(3000L)
-                chapterAnalysisVisible = false
-            } else if (!isDownloaded && (status.startsWith("✗ 온라인 OP/ED 분석 실패") ||
-                        status.startsWith("✗ OP/ED 학습 실패"))) {
-                delay(4000L)
+            if (status.startsWith("✓ OP/ED 분석 완료") || status.startsWith("✗ OP/ED 분석 실패")) {
+                delay(5000L)
                 chapterAnalysisVisible = false
             }
         }
@@ -2298,42 +1961,6 @@ fun PlayerScreen(
                                     checked = isAutoSkipEnabled,
                                     onCheckedChange = { isAutoSkipEnabled = it }
                                 )
-
-                                if (isDownloaded && vm.playerSettings.offlineOpEdAnalysisEnabled && hasSavedOpEdAnalysis) {
-                                        Spacer(Modifier.height(8.dp))
-                                        OutlinedButton(
-                                            onClick = {
-                                                OfflineOpEdResultStore.delete(context, anime.id, currentEpisode.id)
-                                                chapterSkipSegments = emptyList()
-                                                activeChapterSkipSegment = null
-                                                buttonChapterSkipSegment = null
-                                                skipEpisodeKey = null
-                                                hasSavedOpEdAnalysis = false
-                                                Toast.makeText(context, "이 회차의 OP/ED 분석을 삭제했습니다.", Toast.LENGTH_SHORT).show()
-                                            },
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Icon(Icons.Default.Delete, contentDescription = null)
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("이 회차 OP/ED 분석 삭제")
-                                        }
-                                    }
-
-                                if (vm.playerSettings.offlineOpEdAnalysisEnabled && OfflineOpEdFingerprintStore.isReady(context, anime.id)) {
-                                    Spacer(Modifier.height(6.dp))
-                                    OutlinedButton(
-                                        onClick = {
-                                            OfflineOpEdFingerprintStore.delete(context, anime.id)
-                                            hasSavedOpEdAnalysis = false
-                                            Toast.makeText(context, "이 애니의 기준 OP/ED fingerprint를 삭제했습니다.", Toast.LENGTH_SHORT).show()
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Icon(Icons.Default.DeleteForever, contentDescription = null)
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("기준 OP/ED fingerprint 삭제")
-                                    }
-                                }
 
                                 Spacer(Modifier.height(18.dp))
 
@@ -2775,13 +2402,25 @@ fun PlayerScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OutlinedButton(onClick = { syncOffsetMs -= 250L }, modifier = Modifier.weight(1f)) {
+                            OutlinedButton(onClick = {
+                                syncOffsetMs -= 250L
+                                syncOffsetText = syncOffsetMs.toString()
+                                vm.updatePlayerSettings(context, vm.playerSettings.copy(syncOffsetMs = syncOffsetMs))
+                            }, modifier = Modifier.weight(1f)) {
                                 Text("-250ms", fontSize = 11.sp)
                             }
-                            OutlinedButton(onClick = { syncOffsetMs = 0L }, modifier = Modifier.weight(1f)) {
+                            OutlinedButton(onClick = {
+                                syncOffsetMs = 0L
+                                syncOffsetText = "0"
+                                vm.updatePlayerSettings(context, vm.playerSettings.copy(syncOffsetMs = 0L))
+                            }, modifier = Modifier.weight(1f)) {
                                 Text("초기화", fontSize = 11.sp)
                             }
-                            OutlinedButton(onClick = { syncOffsetMs += 250L }, modifier = Modifier.weight(1f)) {
+                            OutlinedButton(onClick = {
+                                syncOffsetMs += 250L
+                                syncOffsetText = syncOffsetMs.toString()
+                                vm.updatePlayerSettings(context, vm.playerSettings.copy(syncOffsetMs = syncOffsetMs))
+                            }, modifier = Modifier.weight(1f)) {
                                 Text("+250ms", fontSize = 11.sp)
                             }
                         }
@@ -2797,7 +2436,10 @@ fun PlayerScreen(
                                 value = syncOffsetText,
                                 onValueChange = { value ->
                                     syncOffsetText = value.filter { it.isDigit() || it == '-' }
-                                    syncOffsetText.toLongOrNull()?.let { syncOffsetMs = it }
+                                    syncOffsetText.toLongOrNull()?.let { parsed ->
+                                            syncOffsetMs = parsed
+                                            vm.updatePlayerSettings(context, vm.playerSettings.copy(syncOffsetMs = parsed))
+                                        }
                                 },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
@@ -2829,7 +2471,13 @@ fun PlayerScreen(
                         )
                         Slider(
                             value = subtitleBottomPaddingFraction,
-                            onValueChange = { subtitleBottomPaddingFraction = it },
+                            onValueChange = {
+                                subtitleBottomPaddingFraction = it
+                                vm.updatePlayerSettings(
+                                    context,
+                                    vm.playerSettings.copy(subtitleBottomPaddingFraction = it)
+                                )
+                            },
                             valueRange = 0.03f..0.30f,
                             steps = 26
                         )
@@ -2851,6 +2499,10 @@ fun PlayerScreen(
                                 onValueChange = { valValue ->
                                     subtitleSizePercent = valValue
                                     subtitleSizeText = valValue.toInt().toString()
+                                    vm.updatePlayerSettings(
+                                        context,
+                                        vm.playerSettings.copy(subtitleSize = valValue)
+                                    )
                                 },
                                 valueRange = 50f..300f,
                                 modifier = Modifier.weight(1f)
@@ -2861,7 +2513,12 @@ fun PlayerScreen(
                                 onValueChange = { text ->
                                     subtitleSizeText = text
                                     text.toFloatOrNull()?.let { parsed ->
-                                        subtitleSizePercent = parsed.coerceIn(50f, 300f)
+                                        val clamped = parsed.coerceIn(50f, 300f)
+                                        subtitleSizePercent = clamped
+                                        vm.updatePlayerSettings(
+                                            context,
+                                            vm.playerSettings.copy(subtitleSize = clamped)
+                                        )
                                     }
                                 },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -2986,5 +2643,6 @@ fun PlayerScreen(
             }
         }
     }
+
 
 }
