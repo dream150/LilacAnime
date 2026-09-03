@@ -1583,23 +1583,107 @@ fun PlayerScreen(
                             seekSeconds = vm.playerSettings.doubleTapSeekSeconds
                             requestFocus()
 
-                            // Compose pointerInput으로 PlayerView 위를 덮지 않고 View 레벨에서 더블탭 seek 처리
-                            // ExoPlayer Controller(재생바/버튼)의 터치를 유지한다.
+                            // 비디오 영역의 터치는 PlayerView 기본 단일 탭 처리와 분리한다.
+                            // 기존 방식처럼 이벤트를 PlayerView에도 넘기면 더블탭의 첫 번째 탭이
+                            // 일반 탭으로 처리되어 UI가 잠깐 나타났다가 다시 사라지는 문제가 생긴다.
+                            // 따라서 비디오 영역은 여기서 완전히 소비하고, 단일 탭은 더블탭 판정 후에만
+                            // 직접 controller를 토글한다. 실제 controller 영역의 터치는 그대로 통과시킨다.
+                            var longPressSpeedApplied = false
+                            var touchStartedInController = false
+
                             val gestureDetector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
-                                override fun onDoubleTap(e: MotionEvent): Boolean {
-                                    val seconds = vm.playerSettings.doubleTapSeekSeconds
-                                    val delta = seconds * 1000L
-                                    if (e.x < width / 2f) {
-                                        player?.seekTo((player?.currentPosition ?: 0L) - delta)
+                                override fun onDown(e: MotionEvent): Boolean = true
+
+                                override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                                    if (isPlayerLocked) return true
+                                    if (isControllerFullyVisible) {
+                                        hideController()
+                                        isControlsVisible = false
                                     } else {
-                                        player?.seekTo((player?.currentPosition ?: 0L) + delta)
+                                        showController()
+                                        isControlsVisible = true
                                     }
                                     return true
                                 }
+
+                                override fun onDoubleTap(e: MotionEvent): Boolean {
+                                    val seconds = vm.playerSettings.doubleTapSeekSeconds
+                                    val delta = seconds * 1000L
+                                    val p = player ?: return true
+
+                                    if (e.x < width / 2f) {
+                                        p.seekTo((p.currentPosition - delta).coerceAtLeast(0L))
+                                    } else {
+                                        val target = p.currentPosition + delta
+                                        val duration = p.duration
+                                        p.seekTo(
+                                            if (duration != C.TIME_UNSET && duration > 0L) {
+                                                minOf(target, duration)
+                                            } else {
+                                                target
+                                            }
+                                        )
+                                    }
+
+                                    // 더블탭에서는 단일 탭 callback이 실행되지 않으므로
+                                    // controller가 새로 나타나지 않는다.
+                                    hideController()
+                                    isControlsVisible = false
+                                    return true
+                                }
+
+                                override fun onLongPress(e: MotionEvent) {
+                                    val p = player ?: return
+                                    if (!p.isPlaying) return
+
+                                    // 현재 설정된 배속은 유지하고, 누르고 있는 동안에만 2배속을 적용한다.
+                                    p.setPlaybackSpeed(2.0f)
+                                    longPressSpeedApplied = true
+                                    hideController()
+                                    isControlsVisible = false
+                                }
                             })
-                            setOnTouchListener { _, event ->
+
+                            setOnTouchListener { view, event ->
+                                val controller = view.findViewById<View>(androidx.media3.ui.R.id.exo_controller)
+
+                                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                                    val hitRect = android.graphics.Rect()
+                                    val inController = controller?.let {
+                                        it.getHitRect(hitRect)
+                                        hitRect.contains(event.x.toInt(), event.y.toInt())
+                                    } == true
+                                    touchStartedInController = inController
+
+                                    if (inController) {
+                                        // 재생바/버튼 등 PlayerView controller의 원래 터치 처리 유지
+                                        return@setOnTouchListener false
+                                    }
+
+                                    longPressSpeedApplied = false
+                                }
+
+                                if (touchStartedInController) {
+                                    if (event.actionMasked == MotionEvent.ACTION_UP ||
+                                        event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                                        touchStartedInController = false
+                                    }
+                                    return@setOnTouchListener false
+                                }
+
                                 gestureDetector.onTouchEvent(event)
-                                false
+
+                                if (event.actionMasked == MotionEvent.ACTION_UP ||
+                                    event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                                    if (longPressSpeedApplied) {
+                                        player?.setPlaybackSpeed(playbackSpeed)
+                                        longPressSpeedApplied = false
+                                    }
+                                }
+
+                                // 비디오 영역의 이벤트는 PlayerView로 전달하지 않는다.
+                                // 이로써 더블탭의 첫 탭이 일반 탭으로 인식되지 않는다.
+                                true
                             }
                             setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
                                 // PlayerView의 내부 controller 상태만 Compose에 전달한다.
