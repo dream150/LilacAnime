@@ -10,7 +10,6 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.util.Log
-import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.filled.*
@@ -21,10 +20,6 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.media3.common.C
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.offline.Download
-import androidx.media3.exoplayer.offline.DownloadService
 import com.lilac.anime.data.*
 import com.lilac.anime.data.offline.MpvOfflineStore
 import kotlinx.coroutines.Dispatchers
@@ -93,7 +88,6 @@ class AnimeViewModel : ViewModel() {
         startProgressTracking()
     }
 
-    @OptIn(UnstableApi::class)
     private fun startProgressTracking() {
         viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
@@ -108,22 +102,6 @@ class AnimeViewModel : ViewModel() {
                     }
                 }
 
-                // Keep the old Media3 index readable so existing offline downloads remain
-                // visible and deletable after upgrading. It is not used for new downloads.
-                try {
-                    val cursor = LilacApplication.downloadManager.downloadIndex.getDownloads()
-                    while (cursor.moveToNext()) {
-                        val download = cursor.download
-                        if (download.state == Download.STATE_DOWNLOADING || download.state == Download.STATE_QUEUED) {
-                            hasActiveDownloads = true
-                            val percent = if (download.percentDownloaded != C.PERCENTAGE_UNSET.toFloat())
-                                (download.percentDownloaded / 100f).coerceAtLeast(0f) else 0f
-                            progressMap.putIfAbsent(download.request.id, percent)
-                        }
-                    }
-                    cursor.close()
-                } catch (_: Exception) { }
-
                 _downloadProgressMap.value = progressMap
                 _downloadedIds.value = fetchDownloadedIdsInternal(appContext)
                 delay(if (hasActiveDownloads) 300L else 1000L)
@@ -131,21 +109,12 @@ class AnimeViewModel : ViewModel() {
         }
     }
 
-    @OptIn(UnstableApi::class)
     private fun fetchDownloadedIdsInternal(context: Context): Set<String> {
         val ids = mutableSetOf<String>()
         ids += MpvOfflineStore.listStatuses(context)
             .filter { it.state == "completed" && !it.videoPath.isNullOrBlank() }
             .map { it.id }
 
-        try {
-            val cursor = LilacApplication.downloadManager.downloadIndex.getDownloads()
-            while (cursor.moveToNext()) {
-                val download = cursor.download
-                if (download.state == Download.STATE_COMPLETED) ids += download.request.id
-            }
-            cursor.close()
-        } catch (_: Exception) { }
         return ids
     }
 
@@ -493,7 +462,6 @@ class AnimeViewModel : ViewModel() {
         }
     }
 
-    @OptIn(UnstableApi::class)
     fun deleteDownload(context: Context, anime: Anime, episodeNumber: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             val ep = OfflineStore.getEpisode(context, anime.id, episodeNumber)
@@ -501,25 +469,13 @@ class AnimeViewModel : ViewModel() {
         }
     }
 
-    @OptIn(UnstableApi::class)
     fun deleteDownload(context: Context, anime: Anime, episode: Episode) {
         viewModelScope.launch(Dispatchers.IO) {
             val stored = OfflineStore.getEpisode(context, anime.id, episode)
             deleteDownloadInternal(context, anime, offlineDownloadId(anime.id, episode), stored)
-            DownloadService.sendRemoveDownload(
-                context, LegacyLilacDownloadService::class.java, episode.id, false
-            )
-            if (episode.displayNumber == episode.number.toString()) {
-                // Remove the old download ID too when upgrading from the previous version.
-                DownloadService.sendRemoveDownload(
-                    context, LegacyLilacDownloadService::class.java,
-                    "${anime.id}_${episode.number}", false
-                )
-            }
         }
     }
 
-    @OptIn(UnstableApi::class)
     private suspend fun deleteDownloadInternal(
         context: Context,
         anime: Anime,
@@ -541,13 +497,8 @@ class AnimeViewModel : ViewModel() {
         try {
             context.applicationContext.startService(removeIntent)
         } catch (_: Exception) {
-            // The removal request is best-effort; Media3 cleanup below remains authoritative.
+            // The mpv download service owns the local file cleanup.
         }
-
-        // Legacy Media3 download cleanup. New downloads never enter this index.
-        DownloadService.sendRemoveDownload(
-            context, LegacyLilacDownloadService::class.java, downloadId, false
-        )
 
         if (ep != null) {
             OfflineStore.removeEpisode(context, anime.id, ep)
@@ -626,25 +577,11 @@ class AnimeViewModel : ViewModel() {
     fun cancelDownload(context: Context, anime: Anime, episode: Episode) {
         val downloadKey = offlineDownloadId(anime.id, episode)
 
-        // 1. 진행 중인 Media3 다운로드 취소
-        DownloadService.sendRemoveDownload(
-            context, LegacyLilacDownloadService::class.java, downloadKey, false
-        )
-        DownloadService.sendRemoveDownload(
-            context, LegacyLilacDownloadService::class.java, episode.id, false
-        )
-        if (episode.displayNumber == episode.number.toString()) {
-            // 이전 버전의 숫자형 다운로드도 함께 정리한다.
-            DownloadService.sendRemoveDownload(
-                context, LegacyLilacDownloadService::class.java,
-                "${anime.id}_${episode.number}", false
-            )
-        }
 
-        // 2. ViewModel 진행률 맵에서 제거
+        // ViewModel 진행률 맵에서 제거
         _downloadProgressMap.update { currentMap -> currentMap - downloadKey }
 
-        // 3. 오프라인 메타데이터/자막 파일 정리
+        // 오프라인 메타데이터/자막 파일 정리
         deleteDownload(context, anime, episode)
     }
 }

@@ -1,14 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
-    <style name="Theme.LilacAnime"
-        parent="android:style/Theme.Material.Light.NoActionBar">
-
-        <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#FAF8FF</item>
-        <item name="android:navigationBarColor">#FAF8FF</item>
-
+    <style name="Theme.LilacAnime" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">#FF8B6FC7</item>
+        <item name="colorPrimaryDark">#FF7357AD</item>
+        <item name="colorAccent">#FF8B6FC7</item>
+        <item name="colorControlNormal">#FF8B6FC7</item>
+        <item name="colorControlActivated">#FF8B6FC7</item>
+        <item name="android:colorBackground">#FF000000</item>
+        <item name="android:windowBackground">#FF000000</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 
+    <style name="Theme.LilacAnime_Cast" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">#FF8B6FC7</item>
+        <item name="colorPrimaryDark">#FF7357AD</item>
+        <item name="colorAccent">#FF8B6FC7</item>
+        <item name="colorControlNormal">#FF8B6FC7</item>
+        <item name="colorControlActivated">#FF8B6FC7</item>
+        <item name="android:colorBackground">#FF000000</item>
+        <item name="android:windowBackground">#FF000000</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>

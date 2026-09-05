@@ -12,8 +12,12 @@ android {
         applicationId = "com.lilac.anime"
         minSdk = 26
         targetSdk = 37
-        versionCode = 16
-        versionName = "0.2.6"
+        versionCode = 15
+        versionName = "0.2.5"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildFeatures {
@@ -32,6 +36,8 @@ android {
 
 dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
+    implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
 
     
@@ -53,11 +59,6 @@ implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
     // 2. 뒤에 버전 번호(:1.6.8 등)를 명시해 줍니다. (Replay10, Forward10 등 아이콘 사용 필수)
     implementation("androidx.compose.material:material-icons-extended:1.6.8")
 
-    // Media3 is retained only as a legacy-download compatibility layer. Playback is libmpv.
-    implementation("androidx.media3:media3-common:1.3.1")
-    // Existing offline/download pipeline still uses Media3. Playback itself is now libmpv.
-    implementation("androidx.media3:media3-exoplayer:1.3.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
@@ -73,5 +74,9 @@ implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     
     implementation("dev.jdtech.mpv:libmpv:1.0.0")
+
+    // Google Cast sender SDK
+    implementation("com.google.android.gms:play-services-cast-framework:22.3.1")
+    implementation("androidx.mediarouter:mediarouter:1.8.1")
 
 }

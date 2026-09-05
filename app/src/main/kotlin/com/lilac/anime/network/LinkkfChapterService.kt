@@ -5,14 +5,11 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
-import androidx.annotation.OptIn
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.offline.Download
 import java.io.ByteArrayOutputStream
 import com.lilac.anime.ChapterSkipSegment
 import com.lilac.anime.Episode
-import com.lilac.anime.LilacApplication
 import com.lilac.anime.offlineDownloadId
+import com.lilac.anime.data.offline.MpvOfflineStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -45,8 +42,8 @@ object LinkkfChapterService {
     // position of the other comparison episodes.
     private const val POSITION_OUTLIER_TOLERANCE_SECONDS = 60.0
     private const val MIN_MATCH_SECONDS = 30.0
-    private const val PLAY_REFERER = "https://play.sub3.top/"
-    private const val PLAY_ORIGIN = "https://play.sub3.top"
+    private const val PLAY_REFERER = "https://playv2.sub3.top/"
+    private const val PLAY_ORIGIN = "https://playv2.sub3.top"
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -741,8 +738,7 @@ object LinkkfChapterService {
      * Offline-only OP/ED detector.
      *
      * This path never opens WebView and never performs HTTP requests. It uses the
-     * Media3 DownloadManager index to find completed downloads for the same anime,
-     * reads the cached HLS playlists/segments from LilacApplication.downloadCache,
+     * Uses completed MP4 files produced by the mpv-native downloader.
      * builds front/tail audio fingerprints, and compares the current episode with
      * up to five nearby downloaded episodes.
      */
@@ -758,7 +754,6 @@ object LinkkfChapterService {
      * observations used to distinguish the earlier recurring template (OP) from
      * the later recurring template (ED).
      */
-    @OptIn(UnstableApi::class)
     suspend fun detectSkipSegmentsOffline(
         context: Context,
         animeId: String,
@@ -819,7 +814,7 @@ object LinkkfChapterService {
                 return@runCatching out
             }
 
-            val completed = episodes.filter { ep -> isOfflineEpisodeCompleted(animeId, ep) }
+            val completed = episodes.filter { ep -> isOfflineEpisodeCompleted(context, animeId, ep) }
                 .sortedBy { ep -> kotlin.math.abs(ep.number - currentEpisode.number) }
                 .take(5)
             // Training is deliberately based on up to five complete offline episodes.
@@ -1133,39 +1128,21 @@ object LinkkfChapterService {
         }.getOrDefault(emptyList())
     }
 
-    @OptIn(UnstableApi::class)
-    fun isOfflineEpisodeCompleted(animeId: String, ep: Episode): Boolean {
-        val cursor = LilacApplication.downloadManager.downloadIndex.getDownloads()
-        return try {
-            val ids = HashSet<String>()
-            while (cursor.moveToNext()) if (cursor.download.state == Download.STATE_COMPLETED) ids += cursor.download.request.id
-            val exact = offlineDownloadId(animeId, ep)
-            exact in ids || ep.id in ids || (ep.displayNumber == ep.number.toString() && "${animeId}_${ep.number}" in ids)
-        } finally { cursor.close() }
-    }
+    fun isOfflineEpisodeCompleted(context: Context, animeId: String, ep: Episode): Boolean =
+        MpvOfflineStore.isCompleted(context, animeId, ep.id)
 
-    @OptIn(UnstableApi::class)
     private fun loadCompleteCachedFingerprint(
         context: Context,
         animeId: String,
         episode: Episode,
         status: (String) -> Unit
     ): FloatArray? {
-        val cursor = LilacApplication.downloadManager.downloadIndex.getDownloads()
-        val download = try {
-            var found: Download? = null
-            while (cursor.moveToNext()) {
-                val d = cursor.download
-                if (d.state == Download.STATE_COMPLETED && (d.request.id == offlineDownloadId(animeId, episode) || d.request.id == episode.id || d.request.id == "${animeId}_${episode.number}")) found = d
-            }
-            found
-        } finally { cursor.close() }
-        if (download == null) { status("FINGERPRINT_EPISODE_MISSING episode=${episode.number}"); return null }
-        val media = resolveCachedMediaPlaylist(download.request.uri.toString()) ?: return null
-        val total = media.segments.lastOrNull()?.end ?: return null
-        status("FINGERPRINT_FULL_WINDOW episode=${episode.number} start=0 end=$total segments=${media.segments.size}")
-        val file = materializeCachedSegments(context, media, 0.0, total) ?: return null
-        return decodeFingerprint(file, 0.0, total)?.also { status("FINGERPRINT_CURRENT_FULL_OK episode=${episode.number} samples=${it.size}") }
+        val path = MpvOfflineStore.completedPath(context, animeId, episode.id)
+            ?: run { status("FINGERPRINT_EPISODE_MISSING episode=${episode.number}"); return null }
+        val file = File(path)
+        if (!file.isFile || file.length() == 0L) return null
+        return decodeFingerprint(file, 0.0, Double.MAX_VALUE)
+            ?.also { status("FINGERPRINT_LOCAL_MP4 episode=${episode.number} samples=${it.size}") }
     }
 
     /**
@@ -1414,168 +1391,5 @@ object LinkkfChapterService {
         )
         return Match(start, end, score)
     }
-
-    @OptIn(UnstableApi::class)
-    private fun materializeCachedTailWindow(
-        context: Context,
-        url: String,
-        seconds: Double
-    ): TailWindow? {
-        return runCatching {
-            val media = resolveCachedMediaPlaylist(url) ?: return@runCatching null
-            val total = media.segments.lastOrNull()?.end ?: return@runCatching null
-            val start = max(0.0, total - seconds)
-            Log.d(TAG, "OFFLINE_HLS_ACTUAL_DURATION total=$total tailStart=$start tailEnd=$total")
-            materializeCachedSegments(context, media, start, total)?.let {
-                TailWindow(it, start, total)
-            }
-        }.onFailure {
-            Log.e(TAG, "OFFLINE_TAIL_FAILED ${it.javaClass.simpleName}: ${it.message}", it)
-        }.getOrNull()
-    }
-
-    @OptIn(UnstableApi::class)
-    private fun materializeCachedWindow(
-        context: Context,
-        url: String,
-        start: Double,
-        end: Double
-    ): File? {
-        return runCatching {
-            val media = resolveCachedMediaPlaylist(url) ?: return@runCatching null
-            materializeCachedSegments(context, media, start, end)
-        }.onFailure {
-            Log.e(TAG, "OFFLINE_WINDOW_FAILED ${it.javaClass.simpleName}: ${it.message}", it)
-        }.getOrNull()
-    }
-
-    private data class CachedMedia(
-        val playlistUrl: String,
-        val playlistText: String,
-        val segments: List<HlsSegment>,
-        val initUrl: String?
-    )
-
-    @OptIn(UnstableApi::class)
-    private fun resolveCachedMediaPlaylist(url: String): CachedMedia? {
-        val cache = LilacApplication.downloadCache
-        var mediaUrl = url
-        var playlistText = readCachedText(cache, mediaUrl)
-        if (playlistText == null) {
-            Log.w(TAG, "OFFLINE_PLAYLIST_CACHE_MISS url=$mediaUrl")
-            return null
-        }
-
-        if (playlistText.contains("#EXT-X-STREAM-INF")) {
-            val variants = parseMasterVariants(playlistText, mediaUrl)
-            val cachedVariant = variants
-                .filter { readCachedText(cache, it.url) != null }
-                .maxByOrNull { it.bandwidth }
-            if (cachedVariant == null) {
-                Log.w(TAG, "OFFLINE_VARIANT_CACHE_MISS variants=${variants.size} master=$mediaUrl")
-                return null
-            }
-            mediaUrl = cachedVariant.url
-            playlistText = readCachedText(cache, mediaUrl) ?: return null
-            Log.d(TAG, "OFFLINE_VARIANT_SELECTED url=$mediaUrl")
-        }
-
-        if (playlistText.contains("#EXT-X-KEY") && !playlistText.contains("METHOD=NONE")) {
-            Log.w(TAG, "OFFLINE_HLS_ENCRYPTED_UNSUPPORTED")
-            return null
-        }
-
-        val segments = parseMediaSegments(playlistText, mediaUrl)
-        if (segments.isEmpty()) {
-            Log.w(TAG, "OFFLINE_MEDIA_PLAYLIST_EMPTY url=$mediaUrl")
-            return null
-        }
-
-        val initUrl = parseInitSegmentUrl(playlistText, mediaUrl)
-        Log.d(TAG, "OFFLINE_MEDIA_PLAYLIST segments=${segments.size} url=$mediaUrl")
-        return CachedMedia(mediaUrl, playlistText, segments, initUrl)
-    }
-
-    @OptIn(UnstableApi::class)
-    private fun materializeCachedSegments(
-        context: Context,
-        media: CachedMedia,
-        start: Double,
-        end: Double
-    ): File? {
-        val selected = media.segments.filter { it.end > start && it.start < end }
-        if (selected.isEmpty()) {
-            Log.w(TAG, "OFFLINE_SELECTED_SEGMENTS_EMPTY start=$start end=$end")
-            return null
-        }
-
-        val cache = LilacApplication.downloadCache
-        val firstUrl = selected.first().url.substringBefore('?')
-        val extension = if (firstUrl.endsWith(".ts", true)) ".ts" else ".mp4"
-        val file = File.createTempFile("offline_hls_window_", extension, context.cacheDir)
-
-        file.outputStream().buffered().use { output ->
-            media.initUrl?.let { init ->
-                val bytes = readCachedBytes(cache, init)
-                    ?: throw IllegalStateException("offline init segment cache miss: $init")
-                output.write(bytes)
-            }
-
-            for (segment in selected) {
-                val bytes = readCachedBytes(cache, segment.url)
-                    ?: throw IllegalStateException("offline segment cache miss: ${segment.url}")
-                output.write(bytes)
-            }
-        }
-
-        if (file.length() == 0L) {
-            file.delete()
-            return null
-        }
-        Log.d(
-            TAG,
-            "OFFLINE_HLS_WINDOW_OK start=$start end=$end segments=${selected.size} " +
-                "bytes=${file.length()} first=${selected.first().url} last=${selected.last().url}"
-        )
-        return file
-    }
-
-    @OptIn(UnstableApi::class)
-    private fun readCachedText(cache: androidx.media3.datasource.cache.Cache, key: String): String? {
-        val bytes = readCachedBytes(cache, key) ?: return null
-        return runCatching { bytes.toString(Charsets.UTF_8) }.getOrNull()
-    }
-
-    @OptIn(UnstableApi::class)
-    private fun readCachedBytes(
-        cache: androidx.media3.datasource.cache.Cache,
-        key: String
-    ): ByteArray? {
-        val spans = cache.getCachedSpans(key).sortedBy { it.position }
-        if (spans.isEmpty()) return null
-
-        val output = ByteArrayOutputStream()
-        var expected = 0L
-        for (span in spans) {
-            val file = span.file ?: return null
-            if (span.position != expected) {
-                Log.w(TAG, "OFFLINE_CACHE_HOLE key=$key expected=$expected actual=${span.position}")
-                return null
-            }
-            file.inputStream().use { input ->
-                val buffer = ByteArray(64 * 1024)
-                var remaining = span.length
-                while (remaining > 0L) {
-                    val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-                    if (read <= 0) return null
-                    output.write(buffer, 0, read)
-                    remaining -= read
-                }
-            }
-            expected += span.length
-        }
-        return output.toByteArray()
-    }
-
 
 }

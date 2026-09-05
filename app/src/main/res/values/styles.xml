@@ -1,8 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.LilacAnime" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#FAF8FF</item>
-        <item name="android:navigationBarColor">#FAF8FF</item>
+    <!-- Main app theme. AppCompat colors must be opaque because MediaRouter reads
+         colorPrimary from the host Activity when it creates its chooser dialog. -->
+    <style name="Theme.LilacAnime" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#8B6FC7</item>
+        <item name="colorPrimaryDark">#7357AD</item>
+        <item name="colorAccent">#8B6FC7</item>
+        <item name="colorControlNormal">#8B6FC7</item>
+        <item name="colorControlActivated">#8B6FC7</item>
+        <item name="android:colorBackground">#FFFAF8FF</item>
+        <item name="android:windowBackground">#FFFAF8FF</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+    <!-- Used when constructing the MediaRouteButton itself. Keep every base color opaque. -->
+    <style name="Theme.LilacAnime_Cast" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#FF8B6FC7</item>
+        <item name="colorPrimaryDark">#FF7357AD</item>
+        <item name="colorAccent">#FF8B6FC7</item>
+        <item name="colorControlNormal">#FF8B6FC7</item>
+        <item name="colorControlActivated">#FF8B6FC7</item>
+        <item name="android:colorBackground">#FF000000</item>
+        <item name="android:windowBackground">#FF000000</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 </resources>

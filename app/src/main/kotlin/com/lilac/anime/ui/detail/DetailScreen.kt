@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
+import com.lilac.anime.data.subtitle.downloadSubtitleFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -318,7 +319,8 @@ fun DetailScreen(
                         animeId = currentAnime.id,
                         episodeNumber = ep.number,
                         episodeKey = ep.displayNumber,
-                        vttUrl = extractedVtt
+                        vttUrl = extractedVtt,
+                        referer = "https://playv2.sub3.top/"
                     )
                 }
             }
@@ -440,7 +442,8 @@ fun DetailScreen(
                     val localLinkkfPath = try {
                         downloadSubtitleFile(
                             context = context, animeId = currentAnime.id, episodeNumber = ep.number,
-                            episodeKey = ep.displayNumber, vttUrl = vttUrl
+                            episodeKey = ep.displayNumber, vttUrl = vttUrl,
+                            referer = "https://playv2.sub3.top/"
                         )
                     } catch (e: Exception) {
                         Log.w("OfflineDownload", "LINKKF_SUBTITLE_FAILED episode=${ep.displayNumber}", e)
@@ -531,7 +534,8 @@ fun DetailScreen(
                             val localLinkkfPath = try {
                                 downloadSubtitleFile(
                                     context = context, animeId = currentAnime.id, episodeNumber = ep.number,
-                                    episodeKey = ep.displayNumber, vttUrl = vttUrl
+                                    episodeKey = ep.displayNumber, vttUrl = vttUrl,
+                            referer = "https://playv2.sub3.top/"
                                 )
                             } catch (e: Exception) {
                                 Log.w("OfflineDownload", "LINKKF_SUBTITLE_FAILED episode=${ep.displayNumber}", e)

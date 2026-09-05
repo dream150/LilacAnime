@@ -3,6 +3,7 @@ package com.lilac.anime
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.view.ContextThemeWrapper
 import android.content.pm.ActivityInfo
 import android.graphics.Typeface
 import android.net.Uri
@@ -60,11 +61,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.ViewCompat
-import androidx.media3.common.C
-import androidx.media3.common.Player
 import com.lilac.anime.data.*
 import com.lilac.anime.data.offline.MpvOfflineStore
-import com.lilac.anime.data.offline.LegacyMedia3OfflineBridge
 import com.lilac.anime.network.LinkkfChapterService
 import com.lilac.anime.network.LinkkfEpisodeM3u8Collector
 import com.lilac.anime.player.MpvPlayerEngine
@@ -72,6 +70,13 @@ import com.lilac.anime.player.MpvPlayerSurfaceView
 import com.lilac.anime.network.OfflineOpEdFingerprintStore
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.SubtitleAssetUtil
+import com.lilac.anime.data.subtitle.downloadSubtitleFile
+import com.lilac.anime.cast.CastManager
+import com.google.android.gms.cast.framework.CastContext
+import com.google.android.gms.cast.framework.CastSession
+import com.google.android.gms.cast.framework.SessionManagerListener
+import androidx.mediarouter.app.MediaRouteButton
+import com.google.android.gms.cast.framework.CastButtonFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.delay
@@ -676,23 +681,16 @@ fun PlayerScreen(
     LaunchedEffect(currentEpisode, isDownloaded, offlineEp) {
         isLoading = true
 
-        // Older releases stored HLS data in the Media3 cache. Do not depend on
-        // OfflineStore's old videoUrl here: it can be missing/stale when the
-        // episode id format changed. The Media3 download index is the source of
-        // truth for legacy downloads. Migrate any legacy entry before mpv loads it.
+        // Offline episodes are owned by the mpv-native downloader.
+        // Never consult or migrate the old Media3 cache here.
         if (isDownloaded) {
             val localAlreadyReady = withContext(Dispatchers.IO) {
                 MpvOfflineStore.completedPath(context, anime.id, currentEpisode.id)
             }
-            if (localAlreadyReady == null) {
-                val migrated = withContext(Dispatchers.IO) {
-                    LegacyMedia3OfflineBridge.migrateIfNeeded(context, anime.id, currentEpisode)
-                }
-                if (migrated != null) {
-                    val updated = currentEpisode.copy(videoUrl = migrated.absolutePath)
-                    OfflineStore.saveEpisode(context, anime.id, updated)
-                    offlineEp = updated
-                }
+            if (localAlreadyReady != null) {
+                val updated = currentEpisode.copy(videoUrl = localAlreadyReady)
+                OfflineStore.saveEpisode(context, anime.id, updated)
+                offlineEp = updated
             }
         }
         streamUrl = null
@@ -740,10 +738,23 @@ fun PlayerScreen(
                 streamUrl = targetUrl
 
                 val storedSubtitle = offlineEp?.vttUrl ?: currentEpisode.vttUrl
-                val localStoredSubtitle = storedSubtitle?.takeIf { path -> path.startsWith("/") && File(path).isFile && SubtitleStore.pathMatchesEpisode(path, currentEpisode.number) }
+                val localStoredSubtitle = storedSubtitle?.takeIf { path ->
+                    path.startsWith("/") && File(path).isFile &&
+                        SubtitleStore.pathMatchesEpisode(path, currentEpisode.number)
+                }
+                // Direct Linkkf episodes can arrive as an already-resolved M3U8 plus
+                // a remote K1 VTT, e.g. playv2.sub3.top/...m3u8 + k1.sub1.top/s/...vtt.
+                // Keep that remote VTT instead of requiring it to have been discovered
+                // by the WebView first.
+                val remoteStoredSubtitle = storedSubtitle?.takeIf { path ->
+                    (path.startsWith("http://", true) || path.startsWith("https://", true)) &&
+                        (path.substringBefore('?').substringBefore('#').endsWith(".vtt", true) ||
+                         path.substringBefore('?').substringBefore('#').endsWith(".srt", true))
+                }
                 val localLinkkf = withContext(Dispatchers.IO) {
                     SubtitleStore.get(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, "linkkf")
                 } ?: localStoredSubtitle?.takeIf { it.endsWith(".vtt", true) || it.endsWith(".srt", true) }
+                val effectiveLinkkf = localLinkkf ?: remoteStoredSubtitle
                 val localKairan = withContext(Dispatchers.IO) {
                     SubtitleStore.get(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, "kairan")
                 } ?: findLocalKairanAssSubtitle(context, anime.title, currentEpisode.number, localStoredSubtitle)
@@ -751,14 +762,14 @@ fun PlayerScreen(
                     SubtitleStore.get(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, "csora")
                 }
                 subtitlesUrl = when {
-                    subtitleSourcePreference == "kairan" -> localKairan ?: localCsora ?: localLinkkf
-                    subtitleSourcePreference == "csora" -> localCsora ?: localKairan ?: localLinkkf
-                    else -> localLinkkf ?: localKairan
+                    subtitleSourcePreference == "kairan" -> localKairan ?: localCsora ?: effectiveLinkkf
+                    subtitleSourcePreference == "csora" -> localCsora ?: localKairan ?: effectiveLinkkf
+                    else -> effectiveLinkkf ?: localKairan
                 }
                 subtitleSource = when {
                     subtitlesUrl == localKairan && localKairan != null -> "kairan"
                     subtitlesUrl == localCsora && localCsora != null -> "csora"
-                    subtitlesUrl != null -> "linkkf-vtt"
+                    subtitlesUrl == effectiveLinkkf && effectiveLinkkf != null -> "linkkf-vtt"
                     else -> "none"
                 }
                 kairanSubtitleResolved = true
@@ -928,6 +939,60 @@ fun PlayerScreen(
     }
 
     val mpvEngine = remember(context) { MpvPlayerEngine(context) }
+
+    // Google Cast sender: the existing mpv player remains the local renderer.
+    // Selecting a Cast device moves the current HLS stream to the Default Media Receiver.
+    DisposableEffect(context, mpvEngine) {
+        val castContext = runCatching { CastContext.getSharedInstance(context) }.getOrNull()
+        if (castContext == null) {
+            onDispose { }
+        } else {
+            val listener = object : SessionManagerListener<CastSession> {
+                override fun onSessionStarted(session: CastSession, sessionId: String) {
+                    val url = streamUrl
+                    if (!url.isNullOrBlank()) {
+                        if (CastManager.cast(
+                                context, url,
+                                currentEpisode.title ?: "${currentEpisode.number}화",
+                                anime.title,
+                                mpvEngine.currentPosition
+                            )
+                        ) {
+                            mpvEngine.pause()
+                        }
+                    }
+                }
+                override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) { }
+                override fun onSessionResumeFailed(session: CastSession, error: Int) {
+                    Log.w("LilacCast", "SESSION_RESUME_FAILED error=$error")
+                }
+                override fun onSessionStarting(session: CastSession) { }
+                override fun onSessionStartFailed(session: CastSession, error: Int) {
+                    Log.w("LilacCast", "SESSION_START_FAILED error=$error")
+                }
+                override fun onSessionEnding(session: CastSession) { }
+                override fun onSessionEnded(session: CastSession, error: Int) { }
+                override fun onSessionResuming(session: CastSession, sessionId: String) { }
+                override fun onSessionSuspended(session: CastSession, reason: Int) { }
+            }
+            castContext.sessionManager.addSessionManagerListener(listener, CastSession::class.java)
+            onDispose {
+                castContext.sessionManager.removeSessionManagerListener(listener, CastSession::class.java)
+            }
+        }
+    }
+
+    LaunchedEffect(streamUrl, currentEpisode.id) {
+        val url = streamUrl?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        val session = CastManager.currentSession(context) ?: return@LaunchedEffect
+        CastManager.cast(
+            context, url,
+            currentEpisode.title ?: "${currentEpisode.number}화",
+            anime.title,
+            mpvEngine.currentPosition
+        )
+        mpvEngine.pause()
+    }
     DisposableEffect(mpvEngine) {
         onDispose { mpvEngine.release() }
     }
@@ -959,15 +1024,39 @@ fun PlayerScreen(
     // Linkkf VTT/SRT도 영상과 분리해서 적용한다. 자막 URL이 늦게 발견되어도
     // 현재 회차의 mpv loadfile을 다시 실행하지 않는다.
     LaunchedEffect(mpvEngine, currentEpisode.id, subtitlesUrl, subtitleSource, syncOffsetMs) {
-        val subtitle = subtitlesUrl?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        val subtitle = subtitlesUrl?.takeIf { it.isNotBlank() } ?: run {
+            Log.d("Subtitle", "ATTACH_SKIP reason=no_url episode=${currentEpisode.displayNumber} source=$subtitleSource")
+            return@LaunchedEffect
+        }
+        Log.d("Subtitle", "ATTACH_BEGIN episode=${currentEpisode.displayNumber} source=$subtitleSource url=$subtitle")
         val clean = subtitle.substringBefore('?').substringBefore('#').lowercase(Locale.ROOT)
         val isAss = clean.endsWith(".ass") || clean.endsWith(".ssa")
         if (isAss) return@LaunchedEffect
 
+        // Linkkf VTT is protected and may reject mpv's direct HTTP request even
+        // when the global mpv Referer is configured. Materialize the VTT locally
+        // first with the required player-v2 Referer, then let mpv/libass render
+        // the local file. This also makes subtitle loading deterministic.
         val prepared = if (clean.endsWith(".smi") || clean.contains(".smi?")) {
             withContext(Dispatchers.IO) {
                 prepareSmiAsVttFile(context, subtitle, anime.id, currentEpisode.number, currentEpisode.displayNumber)
             } ?: subtitle
+        } else if (subtitle.startsWith("http://", true) || subtitle.startsWith("https://", true)) {
+            val downloaded = withContext(Dispatchers.IO) {
+                downloadSubtitleFile(
+                    context = context,
+                    animeId = anime.id,
+                    episodeNumber = currentEpisode.number,
+                    episodeKey = currentEpisode.displayNumber,
+                    vttUrl = subtitle,
+                    referer = "https://playv2.sub3.top/"
+                )
+            }
+            // Keep Linkkf as real WebVTT. Do not convert it to ASS: mpv/libmpv
+            // receives the downloaded .vtt file directly and renders it natively.
+            downloaded ?: subtitle.also {
+                Log.w("Subtitle", "DOWNLOAD_FALLBACK_REMOTE url=$subtitle")
+            }
         } else subtitle
 
         // Wait for the current episode's media to be opened before adding the
@@ -976,13 +1065,14 @@ fun PlayerScreen(
         // the user moves to another episode.
         var waitedMs = 0L
         while (isActive && waitedMs < 10_000L &&
-            mpvEngine.playbackState != Player.STATE_READY) {
+            mpvEngine.playbackState != MpvPlayerEngine.STATE_READY) {
             delay(50L)
             waitedMs += 50L
         }
-        if (!isActive || mpvEngine.playbackState != Player.STATE_READY) return@LaunchedEffect
+        if (!isActive || mpvEngine.playbackState != MpvPlayerEngine.STATE_READY) return@LaunchedEffect
 
         withContext(Dispatchers.Main) {
+            Log.d("Subtitle", "MPV_ATTACH_SUBTITLE source=$subtitle prepared=$prepared isAss=$isAss")
             mpvEngine.replaceSubtitleTrack(prepared)
             mpvEngine.setSubtitleDelay(syncOffsetMs)
         }
@@ -1009,12 +1099,16 @@ fun PlayerScreen(
         }
 
         val effective = withContext(Dispatchers.IO) {
+            prepareLibassFontFile(context, File(selectedFont))
             SubtitleAssetUtil.prepareAssWithSelectedFont(subtitle, selectedFont)
         }
         withContext(Dispatchers.Main) {
-            // ASS의 FontSize 등은 prepareAssWithSelectedFont에서 절대 수정하지 않는다.
+            // ASS의 FontSize 등은 prepareAssWithSelectedFont에서 수정하지 않는다.
+            // mpv/libass가 실제로 찾을 수 있는 앱 전용 폰트 디렉터리를 사용한다.
+            mpvEngine.setSubtitleFontsDir(File(context.filesDir, "mpv_fonts").apply { mkdirs() }.absolutePath)
             SubtitleAssetUtil.fontFamilyName(File(selectedFont))?.let(mpvEngine::setSubtitleFontFamily)
             mpvEngine.replaceSubtitleTrack(effective)
+            mpvEngine.setSubtitleDelay(syncOffsetMs)
         }
     }
 
@@ -1054,7 +1148,7 @@ fun PlayerScreen(
         // The next mpv loadfile(..., replace) performs the actual media replacement.
         val oldEpisode = currentEpisode
         val duration = mpvEngine.duration
-        if (duration > 0L && duration != C.TIME_UNSET) {
+        if (duration > 0L && duration > 0L) {
             val progress = (mpvEngine.currentPosition.toFloat() / duration).coerceIn(0f, 1f)
             vm.updateProgress(
                 context = context,
@@ -1122,7 +1216,7 @@ fun PlayerScreen(
         onDispose {
             if (suppressProgressSaveForEpisode == episodeNumberForSave) return@onDispose
             val duration = mpvEngine.duration
-            if (duration > 0 && duration != C.TIME_UNSET) {
+            if (duration > 0 && duration > 0L) {
                 val progress = (mpvEngine.currentPosition.toFloat() / duration).coerceIn(0f, 1f)
                 vm.updateProgress(
                     context = context,
@@ -1173,10 +1267,16 @@ fun PlayerScreen(
                 } else null
             }
         }.getOrNull()
-        val referer = if (vm.playerSettings.videoSourcePreference == "animenosub") {
+        // Linkkf VTT files are protected by the player-v2 host. Keep the video
+        // request tied to its actual host, but use playv2.sub3.top as the common
+        // Referer for subtitle requests as well. mpv applies http-header-fields
+        // to externally loaded subtitle files, which fixes protected VTT loading.
+        val referer = if (vm.playerSettings.videoSourcePreference == "linkkf") {
+            "https://playv2.sub3.top/"
+        } else if (vm.playerSettings.videoSourcePreference == "animenosub") {
             actualUrl
         } else {
-            playbackOrigin?.let { "$it/" } ?: "https://play.sub3.top/"
+            playbackOrigin?.let { "$it/" } ?: "https://playv2.sub3.top/"
         }
         val origin = if (vm.playerSettings.videoSourcePreference == "animenosub") null else playbackOrigin
         val headers = buildList {
@@ -1186,7 +1286,7 @@ fun PlayerScreen(
         android.util.Log.d("LilacMpv", "STREAM_HEADERS hostOrigin=$playbackOrigin referer=$referer origin=$origin url=$actualUrl")
 
         withContext(Dispatchers.Main) {
-            mpvEngine.configureNetworkHeaders(headers)
+            mpvEngine.configureNetworkHeaders(headers, referer)
             mpvEngine.setSubtitleFontsDir(File(context.filesDir, "mpv_fonts").apply { mkdirs() }.absolutePath)
         }
 
@@ -1230,10 +1330,10 @@ fun PlayerScreen(
         // stuck while the old item's state is being torn down.
         var waitedMs = 0L
         var restored = false
-        var playWatchdogUntil = 3_000L
+        val playWatchdogUntil = 5_000L
         while (isActive && waitedMs < 10_000L && !restored) {
             if (mpvEngine.loadedLoadGeneration == loadGeneration &&
-                mpvEngine.playbackState == Player.STATE_READY) {
+                mpvEngine.playbackState == MpvPlayerEngine.STATE_READY) {
                 // Re-assert play for the current generation. Remote HLS can reach
                 // READY with pause=true after a replacement even though load()
                 // requested autoplay. Never use a stale generation here.
@@ -1269,19 +1369,15 @@ fun PlayerScreen(
         pendingSeekPositionMs = -1L
     }
 
-    // Linkkf watch pages sometimes fail to expose the media request when the
-    // hidden extractor is recreated during an autoplay transition. Manual
-    // navigation can still work because the WebView gets more time to settle.
-    // For an episode that has not produced an m3u8 after a short grace period,
-    // resolve that exact episode page with the dedicated collector and feed the
-    // resulting index.m3u8 directly to mpv. This bypasses the fragile UI WebView
-    // path without changing the normal/manual resolution path.
+    // Linkkf's dedicated collector is now the primary stream resolver. It loads
+    // the exact episode watch page and captures the real index.m3u8 request.
+    // This avoids waiting for the hidden UI extractor and is more reliable during
+    // autoplay/episode transitions.
     LaunchedEffect(currentEpisode.id, currentEpisode.videoUrl, isOffline) {
         if (isOffline || vm.playerSettings.videoSourcePreference != "linkkf") return@LaunchedEffect
         val pageUrl = currentEpisode.videoUrl?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         if (pageUrl.contains(".m3u8", ignoreCase = true) || pageUrl.contains(".mp4", ignoreCase = true)) return@LaunchedEffect
 
-        delay(8_000L)
         if (!isActive || currentEpisode.videoUrl != pageUrl || streamUrl != null) return@LaunchedEffect
 
         Log.d("MpvEpisode", "AUTO_STREAM_FALLBACK_START episode=${currentEpisode.displayNumber} page=$pageUrl")
@@ -1343,7 +1439,7 @@ fun PlayerScreen(
 
         while (isActive) {
             val duration = mpvEngine.duration
-            if (mpvEngine.playbackState == Player.STATE_READY && duration > 0L && duration != C.TIME_UNSET) {
+            if (mpvEngine.playbackState == MpvPlayerEngine.STATE_READY && duration > 0L && duration > 0L) {
                 val durationSeconds = (duration / 1000L).toInt().coerceAtLeast(1)
                 Log.d("AniChapters", "START episode=${currentEpisode.number} duration=$durationSeconds source=linkkf")
                 // 분석 과정은 화면에 표시하지 않는다. 상세 진행 로그는 Logcat에만 남긴다.
@@ -1377,7 +1473,7 @@ fun PlayerScreen(
                 val next = nextEpisode
                 var nextResult: List<ChapterSkipSegment> = emptyList()
                 if (next != null && vm.playerSettings.offlineOpEdAnalysisEnabled &&
-                    LinkkfChapterService.isOfflineEpisodeCompleted(anime.id, next)) {
+                    LinkkfChapterService.isOfflineEpisodeCompleted(context, anime.id, next)) {
                     nextResult = LinkkfChapterService.detectSkipSegmentsOffline(
                         context = context,
                         animeId = anime.id,
@@ -1443,7 +1539,7 @@ fun PlayerScreen(
                 // 구간 전체에서 버튼으로 직접 넘길 수 있다.
                 if (key !in skippedChapterSkipKeys && elapsedMs >= 2500L) {
                     val duration = mpvEngine.duration
-                    val targetSeconds = if (duration > 0L && duration != C.TIME_UNSET) {
+                    val targetSeconds = if (duration > 0L && duration > 0L) {
                         minOf(active.endTime, duration / 1000.0 - 0.5)
                     } else {
                         active.endTime
@@ -1559,7 +1655,10 @@ fun PlayerScreen(
             }
             !isOffline && !resolvedVideoPageUrl.isNullOrBlank() -> {
                 val extractorTargetUrl = resolvedVideoPageUrl ?: ""
-                key(extractorTargetUrl) {
+                // Linkkf 회차 URL은 실제 m3u8/VTT가 아니라 플레이어 페이지다.
+                // 따라서 Linkkf에서도 반드시 숨겨진 WebView를 띄워 페이지를 로드하고
+                // 네트워크 요청에서 m3u8/VTT를 추출해야 한다.
+                key(extractorTargetUrl, vm.playerSettings.videoSourcePreference) {
                     StreamUrlExtractor(
                     targetUrl = extractorTargetUrl,
                     onQualitiesFound = { qualities ->
@@ -1589,8 +1688,9 @@ fun PlayerScreen(
                             return@StreamUrlExtractor
                         }
                         if (vm.playerSettings.videoSourcePreference == "linkkf") {
-                            // 발견한 VTT를 항상 보관한다. Kairan을 보고 있는 동안 발견되어도
-                            // 나중에 Linkkf VTT를 선택하면 즉시 다시 사용할 수 있어야 한다.
+                            // WebView가 실제 자막 파일(.vtt)을 요청한 순간의 URL을 그대로 사용한다.
+                            // .vtt 자체가 자막 파일이므로 별도의 URL 변환/재요청을 하지 않는다.
+                            Log.d("Subtitle", "VTT_FOUND url=$foundUrl episode=${currentEpisode.displayNumber}")
                             linkkfSubtitleUrl = foundUrl
                             if (subtitleSourcePreference == "linkkf") {
                                 subtitlesUrl = foundUrl
@@ -1608,10 +1708,16 @@ fun PlayerScreen(
                 // StreamUrlExtractor가 페이지 내부의 HLS 요청을 직접 탐지한다.
             }
             else -> {
-                Text(
-                    text = if (isOffline) "오프라인 상태이며 다운로드된 영상이 없습니다." else "영상을 불러올 수 없습니다.",
-                    color = Color.White
-                )
+                if (isOffline) {
+                    Text(
+                        text = "오프라인 상태이며 다운로드된 영상이 없습니다.",
+                        color = Color.White
+                    )
+                } else {
+                    // Linkkf의 M3U8은 WebView에서 실제 요청을 포착한 뒤에만 알 수 있다.
+                    // 그 동안은 실패 문구를 보여주지 않고 정상적인 스트림 로딩 상태를 유지한다.
+                    CircularProgressIndicator(color = Lilac)
+                }
             }
         }
 
@@ -2558,6 +2664,26 @@ fun PlayerScreen(
                             fontSize = 11.sp
                         )
                     }
+                    AndroidView(
+                        modifier = Modifier.size(44.dp),
+                        factory = { ctx ->
+                            // MediaRouter requires an opaque themed background.
+                            // The player screen itself is transparent, so construct
+                            // the button with the app's opaque Material theme.
+                            val castCtx = ContextThemeWrapper(ctx, R.style.Theme_LilacAnime_Cast)
+                            MediaRouteButton(castCtx).also { button ->
+                                CastButtonFactory.setUpMediaRouteButton(castCtx, button)
+                                // Use MediaRouteButton's own remote-indicator API so the
+                                // Cast icon stays visible without relying on unsupported
+                                // ImageView/ColorFilter APIs.
+                                button.setRemoteIndicatorDrawable(
+                                    androidx.core.content.ContextCompat.getDrawable(castCtx, R.drawable.ic_cast_white)
+                                )
+                                button.alpha = 1f
+                                button.contentDescription = "Chromecast로 전송"
+                            }
+                        }
+                    )
                     IconButton(onClick = { showPlayerSettingsDialog = true }) {
                         Icon(Icons.Default.Settings, "플레이어 설정", tint = Color.White.copy(alpha = 0.92f))
                     }
@@ -2663,7 +2789,7 @@ fun PlayerScreen(
                         .clickable {
                             val positionSeconds = mpvEngine.currentPosition / 1000.0
                             val duration = mpvEngine.duration
-                            val targetSeconds = if (duration > 0L && duration != C.TIME_UNSET) {
+                            val targetSeconds = if (duration > 0L && duration > 0L) {
                                 minOf(segment.endTime, duration / 1000.0 - 0.5)
                             } else segment.endTime
 

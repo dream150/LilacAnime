@@ -25,6 +25,13 @@ import com.lilac.anime.data.subtitle.SubtitleAssetUtil
  * discovery logic remains outside this class.
  */
 class MpvPlayerEngine(private val context: Context) {
+    companion object {
+        const val STATE_IDLE = 1
+        const val STATE_BUFFERING = 2
+        const val STATE_READY = 3
+        const val STATE_ENDED = 4
+        private const val TAG = "LilacMpv"
+    }
     private val fontsDir = File(context.filesDir, "mpv_fonts").apply { mkdirs() }
     private val mpv: MPVLib = requireNotNull(MPVLib.create(context.applicationContext)) {
         "libmpv initialization failed"
@@ -38,7 +45,7 @@ class MpvPlayerEngine(private val context: Context) {
         private set
     @Volatile var subtitleText: String = ""
         private set
-    @Volatile var playbackState: Int = androidx.media3.common.Player.STATE_IDLE
+    @Volatile var playbackState: Int = STATE_IDLE
         private set
     @Volatile var activeLoadGeneration: Long = 0L
         private set
@@ -77,7 +84,7 @@ class MpvPlayerEngine(private val context: Context) {
         currentSubtitleIsAss = false
         playWhenLoaded = false
         runCatching { mpv.setPropertyBoolean("pause", true) }
-        playbackState = androidx.media3.common.Player.STATE_IDLE
+        playbackState = STATE_IDLE
         isPlaying = false
         currentPosition = 0L
         duration = 0L
@@ -106,12 +113,12 @@ class MpvPlayerEngine(private val context: Context) {
                     // while replacing the previous media belongs to the replacement,
                     // not to autoplay for the newly selected episode.
                     suppressEndFileUntilStartFile = false
-                    playbackState = androidx.media3.common.Player.STATE_BUFFERING
+                    playbackState = STATE_BUFFERING
                     isPlaying = false
                 }
                 MpvEvent.MPV_EVENT_FILE_LOADED -> {
                     loadedLoadGeneration = loadGeneration
-                    playbackState = androidx.media3.common.Player.STATE_READY
+                    playbackState = STATE_READY
                     // Start only after libmpv has actually opened the new media.
                     // Calling pause=false immediately after loadfile can be lost while
                     // replacing a remote HLS item, which made next/previous appear to
@@ -135,7 +142,7 @@ class MpvPlayerEngine(private val context: Context) {
                     }
                 }
                 MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> {
-                    playbackState = androidx.media3.common.Player.STATE_READY
+                    playbackState = STATE_READY
                 }
                 MpvEvent.MPV_EVENT_END_FILE -> {
                     if (suppressEndFileUntilStartFile) {
@@ -146,7 +153,7 @@ class MpvPlayerEngine(private val context: Context) {
                             TAG,
                             "END_FILE generation=$endFileEventGeneration loadGeneration=$loadGeneration"
                         )
-                        playbackState = androidx.media3.common.Player.STATE_ENDED
+                        playbackState = STATE_ENDED
                         isPlaying = false
                         _endFileEvents.tryEmit(endFileEventGeneration)
                         signalPlaybackEnded(loadGeneration)
@@ -213,9 +220,22 @@ class MpvPlayerEngine(private val context: Context) {
         }
     }
 
-    fun configureNetworkHeaders(headers: String) {
+    fun configureNetworkHeaders(headers: String, referer: String? = null) {
+        // mpv expects HTTP header fields as a comma-separated list.
+        // A newline-delimited value can be ignored by the native HTTP client,
+        // which is especially visible with protected VTT files.
         if (headers.isNotBlank()) {
-            mpv.setPropertyString("http-header-fields", headers)
+            val normalized = headers
+                .lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .joinToString(",")
+            if (normalized.isNotBlank()) {
+                mpv.setPropertyString("http-header-fields", normalized)
+            }
+        }
+        runCatching {
+            mpv.setPropertyString("http-referrer", referer.orEmpty())
         }
     }
 
@@ -226,7 +246,7 @@ class MpvPlayerEngine(private val context: Context) {
     }
 
     fun setSubtitleFontFamily(family: String) {
-        if (family.isNotBlank()) mpv.setPropertyString("sub-font", family)
+        mpv.setPropertyString("sub-font", family)
     }
 
     /** Restore mpv/libass font selection to the subtitle's own/default font. */
@@ -242,12 +262,27 @@ class MpvPlayerEngine(private val context: Context) {
         } else {
             File(value.removePrefix("file://")).absolutePath
         }
+        // `sub-remove` can legitimately fail when no external subtitle track is
+        // currently loaded. Do NOT put it in the same runCatching as `sub-add`:
+        // otherwise a harmless remove failure prevents the VTT from ever being
+        // added. This was especially easy to hit on the first Linkkf VTT attach.
         runCatching {
             mpv.command(arrayOf("sub-remove"))
+        }.onFailure {
+            Log.d(TAG, "SUB_REMOVE_IGNORED path=$sub reason=${it.message}")
+        }
+
+        runCatching {
+            Log.d(TAG, "SUB_ADD path=$sub exists=${File(sub.removePrefix("file://")).isFile} url=${sub.startsWith("http://", true) || sub.startsWith("https://", true)}")
             mpv.command(arrayOf("sub-add", sub, "select"))
             mpv.setPropertyBoolean("sub-visibility", true)
+            mpv.setPropertyString("sub-auto", "no")
             currentSubtitlePath = sub
-        }.onFailure { Log.w(TAG, "SUB_REPLACE_FAILED path=$sub", it) }
+            currentSubtitleIsAss = sub.isAssLike()
+            Log.d(TAG, "SUB_ADD_OK path=$sub")
+        }.onFailure {
+            Log.e(TAG, "SUB_ADD_FAILED path=$sub", it)
+        }
     }
 
     fun reloadCurrentSubtitle() {
@@ -269,7 +304,7 @@ class MpvPlayerEngine(private val context: Context) {
         runCatching { mpv.setPropertyBoolean("pause", false) }
         runCatching { mpv.command(arrayOf("play")) }
         isPlaying = true
-        playbackState = androidx.media3.common.Player.STATE_READY
+        playbackState = STATE_READY
     }
 
     /**
@@ -279,7 +314,7 @@ class MpvPlayerEngine(private val context: Context) {
      */
     fun forcePlayIfReady(expectedGeneration: Long): Boolean {
         if (loadedLoadGeneration != expectedGeneration ||
-            playbackState != androidx.media3.common.Player.STATE_READY) return false
+            playbackState != STATE_READY) return false
         val paused = mpv.getPropertyBoolean("pause") == true
         if (paused || !isPlaying) {
             play()
@@ -313,7 +348,7 @@ class MpvPlayerEngine(private val context: Context) {
         playWhenLoaded = false
         runCatching { mpv.command(arrayOf("stop")) }
         isPlaying = false
-        playbackState = androidx.media3.common.Player.STATE_IDLE
+        playbackState = STATE_IDLE
         currentPosition = 0L
         duration = 0L
         subtitleText = ""
@@ -383,7 +418,7 @@ class MpvPlayerEngine(private val context: Context) {
         } == true
         playWhenLoaded = true
         isPlaying = false
-        playbackState = androidx.media3.common.Player.STATE_BUFFERING
+        playbackState = STATE_BUFFERING
         // Replacing an already loaded item may emit END_FILE for the old item.
         // Suppress only that pre-START_FILE event; START_FILE clears the guard,
         // so a real EOF from the new episode still reaches autoplay.
@@ -457,9 +492,6 @@ class MpvPlayerEngine(private val context: Context) {
         }
     }
 
-    companion object {
-        private const val TAG = "LilacMpv"
-    }
 }
 
 /**

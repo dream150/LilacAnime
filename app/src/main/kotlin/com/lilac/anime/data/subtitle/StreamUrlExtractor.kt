@@ -53,7 +53,7 @@ fun StreamUrlExtractor(
                     targetHost == "animenosub.to" || targetHost == "www.animenosub.to" ->
                         setOf("animenosub.to", "www.animenosub.to")
                     targetHost == "linkkf.tv" || targetHost == "www.linkkf.tv" || targetHost == "linkkf.tckopke.com" ->
-                        setOf("linkkf.tv", "www.linkkf.tv", "linkkf.tckopke.com", "tckopke.com", "www.tckopke.com")
+                        setOf("linkkf.tv", "www.linkkf.tv", "linkkf.tckopke.com", "tckopke.com", "www.tckopke.com", "play.sub3.top", "playv2.sub3.top", "subk.syk2.top")
                     else -> emptySet()
                 }
                 val safeHosts = (allowedHosts + inferredHosts + listOfNotNull(targetHost)).map { it.lowercase() }.toSet()
@@ -137,6 +137,8 @@ fun StreamUrlExtractor(
                         val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
                         val path = runCatching { android.net.Uri.parse(url).path.orEmpty().lowercase() }.getOrDefault("")
 
+                        // .vtt로 끝나는 요청은 그 자체가 최종 자막 파일이다.
+                        // 쿼리스트링이 붙은 경우에도 path는 .vtt로 끝난다.
                         if (!isSubtitleFound && path.endsWith(".vtt")) {
                             isSubtitleFound = true
                             mainHandler.post { onSubtitleFound(url) }
@@ -191,7 +193,7 @@ fun StreamUrlExtractor(
                 loadUrl(targetUrl)
             }
         },
-        modifier = Modifier.size(0.dp)
+        modifier = Modifier.size(1.dp)
         )
     }
 }
