@@ -580,12 +580,20 @@ object LinkkfChapterService {
         }
     }
 
-    private fun buildHlsRequest(url: String): Request.Builder = Request.Builder()
-        .url(url)
-        .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
-        .header("Referer", PLAY_REFERER)
-        .header("Origin", PLAY_ORIGIN)
-        .header("Accept", "application/vnd.apple.mpegurl, application/x-mpegURL, */*")
+    private fun buildHlsRequest(url: String): Request.Builder {
+        val origin = runCatching { URI(url).let { u ->
+            if (u.scheme.equals("http", true) || u.scheme.equals("https", true))
+                "${u.scheme}://${u.host}${if (u.port > 0) ":${u.port}" else ""}"
+            else null
+        }}.getOrNull()
+        val referer = origin?.let { "$it/" } ?: PLAY_REFERER
+        return Request.Builder()
+            .url(url)
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
+            .header("Referer", referer)
+            .header("Origin", origin ?: PLAY_ORIGIN)
+            .header("Accept", "application/vnd.apple.mpegurl, application/x-mpegURL, */*")
+    }
 
     /**
      * Downloads only the HLS segments overlapping the requested timeline window and
@@ -672,13 +680,7 @@ object LinkkfChapterService {
     }
 
     private fun downloadBytes(url: String, output: java.io.OutputStream) {
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
-            .header("Referer", PLAY_REFERER)
-            .header("Origin", PLAY_ORIGIN)
-            .header("Accept", "*/*")
-            .build()
+        val request = buildHlsRequest(url).header("Accept", "*/*").build()
         http.newCall(request).execute().use { response ->
             Log.d(TAG, "HLS_HTTP code=${response.code} bytes=${response.body?.contentLength()} url=$url")
             if (!response.isSuccessful) throw IllegalStateException("HLS segment HTTP ${response.code} url=$url")
@@ -710,13 +712,7 @@ object LinkkfChapterService {
     private fun resolveUrl(base: String, child: String): String = URI(base).resolve(child).toString()
 
     private fun getText(url: String): String {
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
-            .header("Referer", PLAY_REFERER)
-            .header("Origin", PLAY_ORIGIN)
-            .header("Accept", "*/*")
-            .build()
+        val request = buildHlsRequest(url).header("Accept", "*/*").build()
         http.newCall(request).execute().use { response ->
             Log.d(TAG, "HLS_PLAYLIST_HTTP code=${response.code} url=$url")
             if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code} playlist=$url")

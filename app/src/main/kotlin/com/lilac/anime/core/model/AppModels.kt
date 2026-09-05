@@ -36,6 +36,9 @@ data class PlayerSettings(
     val doubleTapSeekSeconds: Int = 10,
     // 기본 재생 배속
     val playbackSpeed: Float = 1.0f,
+    val autoPlay: Boolean = true,
+    val autoSkip: Boolean = true,
+    val vttStyleEnabled: Boolean = true,
     // VTT 전용 표시 설정
     val vttBold: Boolean = true,
     val vttOutlineWidth: Float = 2.0f

@@ -58,6 +58,7 @@ fun StreamUrlExtractor(
                 }
                 val safeHosts = (allowedHosts + inferredHosts + listOfNotNull(targetHost)).map { it.lowercase() }.toSet()
                 var iframeHosts = emptySet<String>()
+                var playerPageNavigated = false
 
                 fun isAllowedNavigation(url: String): Boolean {
                     val host = runCatching { android.net.Uri.parse(url).host?.lowercase() }.getOrNull() ?: return false
@@ -149,12 +150,38 @@ fun StreamUrlExtractor(
                         // to it ourselves. Ads opened by the player cannot become the
                         // app's main frame because of shouldOverrideUrlLoading above.
                         view?.evaluateJavascript(
-                            """(function(){return Array.from(document.querySelectorAll('iframe[src]')).map(function(x){return x.src;}).join('\\n');})()""",
+                            """(function(){return Array.from(document.querySelectorAll('iframe[src],video[src],source[src],a[href], [data-src]')).map(function(x){return x.src || x.href || x.getAttribute('data-src') || '';}).filter(Boolean).join('\\n');})()""",
                             { raw ->
-                                val decoded = raw.orEmpty().trim('"').replace("\\u003d", "=").replace("\\u0026", "&")
-                                iframeHosts = (iframeHosts + decoded.split('\n').mapNotNull {
+                                val decoded = raw.orEmpty()
+                                    .trim('"')
+                                    .replace("\\u003d", "=")
+                                    .replace("\\u0026", "&")
+                                val candidates = decoded.split('\n').filter { it.isNotBlank() }
+                                iframeHosts = (iframeHosts + candidates.mapNotNull {
                                     runCatching { android.net.Uri.parse(it).host?.lowercase() }.getOrNull()
                                 }.toSet()).toSet()
+
+                                // New Linkkf watch pages expose the actual player as a
+                                // play.php URL instead of the old direct iframe structure.
+                                // Open that player page inside the hidden WebView so its
+                                // media requests are observed immediately, rather than
+                                // waiting for the 8-second fallback collector.
+                                if (!playerPageNavigated) {
+                                    val playerUrl = candidates.firstOrNull { candidate ->
+                                        runCatching {
+                                            val uri = android.net.Uri.parse(candidate)
+                                            val host = uri.host?.lowercase().orEmpty()
+                                            val path = uri.path.orEmpty().lowercase()
+                                            (host == "play.sub3.top" || host == "playv2.sub3.top") &&
+                                                path.contains("play.php")
+                                        }.getOrDefault(false)
+                                    }
+                                    if (playerUrl != null) {
+                                        playerPageNavigated = true
+                                        Log.d("AnimenosubStream", "LINKKF_PLAYER_PAGE $playerUrl")
+                                        view?.loadUrl(playerUrl)
+                                    }
+                                }
                             }
                         )
                         super.onPageFinished(view, url)

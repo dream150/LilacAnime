@@ -68,19 +68,70 @@ object SubtitleAssetUtil {
     }
 
 
-    /** Creates a temporary ASS whose style Fontname fields point at the selected memory font. */
+    /** UU-encodes a TrueType font for the legacy ASS/SSA [Fonts] section. */
+    private fun uuEncodeFont(data: ByteArray): String {
+        val out = StringBuilder()
+        var offset = 0
+        while (offset < data.size) {
+            val count = minOf(45, data.size - offset)
+            out.append((count + 0x20).toChar())
+            var i = 0
+            while (i < count) {
+                val a = data[offset + i].toInt() and 0xff
+                val b = if (i + 1 < count) data[offset + i + 1].toInt() and 0xff else 0
+                val c = if (i + 2 < count) data[offset + i + 2].toInt() and 0xff else 0
+                val c1 = (a shr 2) and 0x3f
+                val c2 = ((a shl 4) or (b shr 4)) and 0x3f
+                val c3 = ((b shl 2) or (c shr 6)) and 0x3f
+                val c4 = c and 0x3f
+                fun enc(v: Int): Char = ((v and 0x3f) + 0x20).toChar()
+                out.append(enc(c1)).append(enc(c2)).append(enc(c3)).append(enc(c4))
+                i += 3
+            }
+            out.append('\n')
+            offset += count
+        }
+        out.append('`').append('\n')
+        return out.toString()
+    }
+
+    private fun appendEmbeddedFontSection(assText: String, font: File): String {
+        // The classic [Fonts] section is parsed by libass and embeds the TTF in
+        // the subtitle itself. This avoids the ass-media 0.5.x ordering problem
+        // where addFont() can reach libass after its font lookup was configured.
+        if (!font.isFile || !font.extension.equals("ttf", true)) return assText
+        return try {
+            val name = "LilacCustom_${font.nameWithoutExtension}.ttf"
+            val encoded = uuEncodeFont(font.readBytes())
+            assText.trimEnd() + "\n\n[Fonts]\nfontname: $name\n" + encoded
+        } catch (e: Exception) {
+            Log.w("Subtitle", "ASS_EMBED_FONT_FAILED font=${font.absolutePath}", e)
+            assText
+        }
+    }
+
+    /** Creates a temporary ASS with the selected font forced onto styles and dialogue overrides. */
     fun prepareAssWithSelectedFont(subtitlePath: String, selectedFontPath: String?): String {
         if (selectedFontPath.isNullOrBlank()) return subtitlePath
         val subtitle = File(subtitlePath)
         val font = File(selectedFontPath)
         if (!subtitle.isFile || !font.isFile || !isAss(subtitle)) return subtitlePath
-        val fontName = font.name
+
         val text = try { subtitle.readText(Charsets.UTF_8) } catch (_: Exception) { return subtitlePath }
-        val out = File(subtitle.parentFile, "${subtitle.nameWithoutExtension}_font_${font.nameWithoutExtension.hashCode().toUInt().toString(16)}.ass")
+        val fontFamily = detectFontFamily(font)
+            ?: font.nameWithoutExtension
+                .replace(Regex("[_-](Regular|Medium|Bold|Semibold|Light|Black|Italic|Oblique)$", RegexOption.IGNORE_CASE), "")
+                .trim()
+                .ifBlank { font.nameWithoutExtension }
+
+        val out = File(
+            subtitle.parentFile,
+            "${subtitle.nameWithoutExtension}_font_${font.nameWithoutExtension.hashCode().toUInt().toString(16)}.ass"
+        )
         try {
             var inStyles = false
             var styleFormat: List<String>? = null
-            val lines = text.lines().map { line ->
+            val result = text.lineSequence().map { line ->
                 val trimmed = line.trim()
                 if (trimmed.equals("[V4+ Styles]", true) || trimmed.equals("[V4 Styles]", true)) {
                     inStyles = true
@@ -95,22 +146,101 @@ object SubtitleAssetUtil {
                 if (inStyles && trimmed.startsWith("Style:", true) && styleFormat != null) {
                     val fields = trimmed.substringAfter(':').split(',').toMutableList()
                     val idx = styleFormat!!.indexOf("fontname")
-                    if (idx >= 0 && idx < fields.size) {
-                        fields[idx] = fontName
-                        val prefix = line.takeWhile { it.isWhitespace() }
-                        return@map prefix + "Style: " + fields.joinToString(",")
-                    }
+                    if (idx >= 0 && idx < fields.size) fields[idx] = fontFamily
+                    val prefix = line.takeWhile { it.isWhitespace() }
+                    return@map prefix + "Style: " + fields.joinToString(",")
+                }
+
+                // Dialogue-level \fn overrides take precedence over Style.Fontname.
+                // Replace them as well so the selected font is actually visible.
+                if (trimmed.startsWith("Dialogue:", true) || trimmed.startsWith("Comment:", true)) {
+                    return@map line.replace(Regex("\\\\fn[^\\\\}]+", RegexOption.IGNORE_CASE), "\\\\fn$fontFamily")
                 }
                 line
-            }
-            out.writeText(lines.joinToString("\n"), Charsets.UTF_8)
-            Log.d("Subtitle", "ASS_FONT_OVERRIDE selected=${font.name} path=${out.absolutePath}")
+            }.toList()
+
+            val rewrittenAss = result.joinToString("\n")
+            out.writeText(appendEmbeddedFontSection(rewrittenAss, font), Charsets.UTF_8)
+            Log.d("Subtitle", "ASS_FONT_OVERRIDE selected=${font.name} family=$fontFamily embeddedTtf=${font.extension.equals("ttf", true)} path=${out.absolutePath}")
             return out.absolutePath
         } catch (e: Exception) {
             Log.w("Subtitle", "ASS_FONT_OVERRIDE_FAILED font=${font.absolutePath}", e)
             return subtitlePath
         }
     }
+
+    /** Returns the OpenType/TrueType family name used by libass/ASS Fontname. */
+    fun fontFamilyName(file: File): String? = detectFontFamily(file)
+
+    /** Reads the OpenType/TrueType family name used by libass for ASS Fontname matching. */
+    private fun detectFontFamily(file: File): String? {
+        return try {
+            val bytes = file.readBytes()
+            fun u16(pos: Int): Int =
+                ((bytes[pos].toInt() and 0xff) shl 8) or (bytes[pos + 1].toInt() and 0xff)
+            fun u32(pos: Int): Long =
+                ((u16(pos).toLong() shl 16) or u16(pos + 2).toLong()) and 0xffffffffL
+
+            fun readSfnt(base: Int): String? {
+                if (base < 0 || base + 12 > bytes.size) return null
+                val count = u16(base + 4)
+                var nameOffset = -1
+                for (i in 0 until count) {
+                    val pos = base + 12 + i * 16
+                    if (pos + 16 > bytes.size) break
+                    val tag = String(byteArrayOf(bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]), Charsets.US_ASCII)
+                    if (tag == "name") {
+                        nameOffset = base + u32(pos + 8).toInt()
+                        break
+                    }
+                }
+                if (nameOffset < 0 || nameOffset + 6 > bytes.size) return null
+
+                val records = u16(nameOffset + 2)
+                val storage = u16(nameOffset + 4)
+                var family: String? = null
+                var typographicFamily: String? = null
+                var fallback: String? = null
+
+                for (i in 0 until records) {
+                    val pos = nameOffset + 6 + i * 12
+                    if (pos + 12 > bytes.size) break
+                    val platform = u16(pos)
+                    val language = u16(pos + 4)
+                    val nameId = u16(pos + 6)
+                    if (nameId != 1 && nameId != 16) continue
+                    val len = u16(pos + 8)
+                    val off = u16(pos + 10)
+                    val dataStart = nameOffset + storage + off
+                    if (dataStart < 0 || dataStart + len > bytes.size) continue
+
+                    val value = if (platform == 3 || platform == 0) {
+                        runCatching { String(bytes, dataStart, len, Charsets.UTF_16BE) }.getOrNull()
+                    } else {
+                        runCatching { String(bytes, dataStart, len, Charsets.ISO_8859_1) }.getOrNull()
+                    }?.trim()?.takeIf { it.isNotBlank() } ?: continue
+
+                    if (fallback == null) fallback = value
+                    if (nameId == 1 && family == null) family = value
+                    if (nameId == 16 && typographicFamily == null) typographicFamily = value
+                    if (nameId == 1 && (language == 0x0412 || language == 0x0409 || platform == 3)) family = value
+                }
+                return family ?: typographicFamily ?: fallback
+            }
+
+            // TrueType Collection: each face has an offset in the TTC header.
+            if (bytes.size >= 12 && String(bytes.copyOfRange(0, 4), Charsets.US_ASCII) == "ttcf") {
+                val numFonts = u32(8).toInt()
+                if (numFonts > 0 && 12 + 4 <= bytes.size) {
+                    return readSfnt(u32(12).toInt())
+                }
+            }
+            readSfnt(0)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun hasCrossCandidateOverlap(items: List<Pair<AssCandidate, List<Dialogue>>>): Boolean {
         for (i in items.indices) for (j in i + 1 until items.size) {
             if (items[i].second.any { a -> items[j].second.any { b -> a.start < b.end && b.start < a.end } }) return true

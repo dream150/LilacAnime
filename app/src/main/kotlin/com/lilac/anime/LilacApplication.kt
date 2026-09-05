@@ -26,6 +26,7 @@ class LilacApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        AppContextHolder.init(this)
 
         // 1. 다운로드 정보 저장을 위한 데이터베이스
         databaseProvider = StandaloneDatabaseProvider(this)

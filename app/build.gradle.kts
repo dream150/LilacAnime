@@ -10,10 +10,10 @@ android {
 
     defaultConfig {
         applicationId = "com.lilac.anime"
-        minSdk = 23
+        minSdk = 26
         targetSdk = 37
-        versionCode = 15
-        versionName = "0.2.5"
+        versionCode = 16
+        versionName = "0.2.6"
     }
 
     buildFeatures {
@@ -53,9 +53,10 @@ implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
     // 2. 뒤에 버전 번호(:1.6.8 등)를 명시해 줍니다. (Replay10, Forward10 등 아이콘 사용 필수)
     implementation("androidx.compose.material:material-icons-extended:1.6.8")
 
-    // 3. (확인용) 지난 단계에 추가했던 Media3 플레이어 라이브러리도 버전이 잘 붙어있는지 확인하세요.
+    // Media3 is retained only as a legacy-download compatibility layer. Playback is libmpv.
+    implementation("androidx.media3:media3-common:1.3.1")
+    // Existing offline/download pipeline still uses Media3. Playback itself is now libmpv.
     implementation("androidx.media3:media3-exoplayer:1.3.1")
-    implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
@@ -71,5 +72,6 @@ implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
     // (선택) 만약 JSON 파싱을 위해 Gson 변환기를 사용하신다면 아래 줄도 추가해 주세요.
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     
-    implementation("io.github.peerless2012:ass-media:0.5.1")
+    implementation("dev.jdtech.mpv:libmpv:1.0.0")
+
 }

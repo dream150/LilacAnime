@@ -1,0 +1,11 @@
+Offline MP4 conversion
+======================
+New offline downloads use Media3 Transformer to convert the fully downloaded
+local HLS playlist into episode.mp4.
+
+FFmpegKit is intentionally not included. libmpv already ships its own native
+FFmpeg libraries, and combining another FFmpegKit native stack caused an
+ABI/SONAME collision (for example av_set_saf_open).
+
+Legacy Media3 downloads remain supported and are migrated/read through the
+existing offline bridge.

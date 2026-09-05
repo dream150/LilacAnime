@@ -26,6 +26,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadService
 import com.lilac.anime.data.*
+import com.lilac.anime.data.offline.MpvOfflineStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,6 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 class AnimeViewModel : ViewModel() {
+    private val appContext: Context by lazy { AppContextHolder.context }
     private val repository = AnimeRepository()
 
     private val _isOffline = MutableStateFlow(false)
@@ -98,47 +100,52 @@ class AnimeViewModel : ViewModel() {
                 val progressMap = mutableMapOf<String, Float>()
                 var hasActiveDownloads = false
 
+                // New downloads are owned by the mpv-native downloader.
+                MpvOfflineStore.listStatuses(appContext).forEach { status ->
+                    if (status.state == "downloading" || status.state == "queued") {
+                        hasActiveDownloads = true
+                        progressMap[status.id] = status.progress
+                    }
+                }
+
+                // Keep the old Media3 index readable so existing offline downloads remain
+                // visible and deletable after upgrading. It is not used for new downloads.
                 try {
                     val cursor = LilacApplication.downloadManager.downloadIndex.getDownloads()
                     while (cursor.moveToNext()) {
                         val download = cursor.download
                         if (download.state == Download.STATE_DOWNLOADING || download.state == Download.STATE_QUEUED) {
                             hasActiveDownloads = true
-                            val percent = if (download.percentDownloaded != C.PERCENTAGE_UNSET.toFloat()) {
-                                (download.percentDownloaded / 100f).coerceAtLeast(0f)
-                            } else 0f
-                            
-                            progressMap[download.request.id] = percent
+                            val percent = if (download.percentDownloaded != C.PERCENTAGE_UNSET.toFloat())
+                                (download.percentDownloaded / 100f).coerceAtLeast(0f) else 0f
+                            progressMap.putIfAbsent(download.request.id, percent)
                         }
                     }
                     cursor.close()
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                } catch (_: Exception) { }
 
                 _downloadProgressMap.value = progressMap
-                _downloadedIds.value = fetchDownloadedIdsInternal()
-
+                _downloadedIds.value = fetchDownloadedIdsInternal(appContext)
                 delay(if (hasActiveDownloads) 300L else 1000L)
             }
         }
     }
 
     @OptIn(UnstableApi::class)
-    private fun fetchDownloadedIdsInternal(): Set<String> {
+    private fun fetchDownloadedIdsInternal(context: Context): Set<String> {
         val ids = mutableSetOf<String>()
+        ids += MpvOfflineStore.listStatuses(context)
+            .filter { it.state == "completed" && !it.videoPath.isNullOrBlank() }
+            .map { it.id }
+
         try {
             val cursor = LilacApplication.downloadManager.downloadIndex.getDownloads()
             while (cursor.moveToNext()) {
                 val download = cursor.download
-                if (download.state == Download.STATE_COMPLETED) {
-                    ids.add(download.request.id)
-                }
+                if (download.state == Download.STATE_COMPLETED) ids += download.request.id
             }
             cursor.close()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (_: Exception) { }
         return ids
     }
 
@@ -173,19 +180,19 @@ class AnimeViewModel : ViewModel() {
 
     fun refreshDownloads() {
         viewModelScope.launch(Dispatchers.IO) {
-            _downloadedIds.value = fetchDownloadedIdsInternal()
+            _downloadedIds.value = fetchDownloadedIdsInternal(appContext)
         }
     }
 
     fun isEpisodeDownloaded(animeId: String, episodeNumber: Int): Boolean {
-        // Legacy numeric lookup kept for old callers/data.
-        return _downloadedIds.value.contains("${animeId}_${episodeNumber}")
+        return _downloadedIds.value.contains("${animeId}_${episodeNumber}") ||
+            MpvOfflineStore.listStatuses(appContext).any { it.id == "${animeId}::${animeId}_ep_${episodeNumber}" && it.state == "completed" }
     }
 
     fun isEpisodeDownloaded(animeId: String, episode: Episode): Boolean {
-        // New downloads use the exact Episode.id. Numeric legacy downloads are
-        // still recognized for normal episodes without making 4 and 4a collide.
-        return _downloadedIds.value.contains(offlineDownloadId(animeId, episode)) ||
+        val local = MpvOfflineStore.isCompleted(appContext, animeId, episode.id)
+        return local ||
+            _downloadedIds.value.contains(offlineDownloadId(animeId, episode)) ||
             _downloadedIds.value.contains(episode.id) ||
             (episode.displayNumber == episode.number.toString() &&
                 _downloadedIds.value.contains("${animeId}_${episode.number}"))
@@ -500,12 +507,12 @@ class AnimeViewModel : ViewModel() {
             val stored = OfflineStore.getEpisode(context, anime.id, episode)
             deleteDownloadInternal(context, anime, offlineDownloadId(anime.id, episode), stored)
             DownloadService.sendRemoveDownload(
-                context, LilacDownloadService::class.java, episode.id, false
+                context, LegacyLilacDownloadService::class.java, episode.id, false
             )
             if (episode.displayNumber == episode.number.toString()) {
                 // Remove the old download ID too when upgrading from the previous version.
                 DownloadService.sendRemoveDownload(
-                    context, LilacDownloadService::class.java,
+                    context, LegacyLilacDownloadService::class.java,
                     "${anime.id}_${episode.number}", false
                 )
             }
@@ -526,11 +533,20 @@ class AnimeViewModel : ViewModel() {
             episode.vttUrl?.let { path -> if (path.startsWith("/")) File(path).takeIf(File::isFile)?.delete() }
         }
 
+        val removeIntent = android.content.Intent(context.applicationContext, LilacDownloadService::class.java).apply {
+            action = LilacDownloadService.ACTION_REMOVE
+            putExtra(LilacDownloadService.EXTRA_ANIME_ID, anime.id)
+            putExtra(LilacDownloadService.EXTRA_EPISODE_ID, ep?.id ?: downloadId.substringAfter("::"))
+        }
+        try {
+            context.applicationContext.startService(removeIntent)
+        } catch (_: Exception) {
+            // The removal request is best-effort; Media3 cleanup below remains authoritative.
+        }
+
+        // Legacy Media3 download cleanup. New downloads never enter this index.
         DownloadService.sendRemoveDownload(
-            context,
-            LilacDownloadService::class.java,
-            downloadId,
-            false
+            context, LegacyLilacDownloadService::class.java, downloadId, false
         )
 
         if (ep != null) {
@@ -571,7 +587,12 @@ class AnimeViewModel : ViewModel() {
     fun getLatestProgress(animeId: String): WatchProgress? = watchHistory.firstOrNull { it.animeId == animeId }
 
     fun getProgress(animeId: String, episodeKey: String, episodeNumber: Int): WatchProgress? =
-        watchHistory.firstOrNull { it.animeId == animeId && (it.episodeKey.equals(episodeKey, ignoreCase = true) || (it.episodeKey == it.episodeNumber.toString() && it.episodeNumber == episodeNumber && episodeKey == episodeNumber.toString())) }
+        watchHistory.firstOrNull {
+            it.animeId == animeId &&
+                it.episodeNumber == episodeNumber &&
+                (it.episodeKey.equals(episodeKey, ignoreCase = true) ||
+                    (it.episodeKey == it.episodeNumber.toString() && episodeKey == episodeNumber.toString()))
+        }
 
     fun getProgress(animeId: String, episodeNumber: Int): WatchProgress? =
         watchHistory.firstOrNull { it.animeId == animeId && it.episodeNumber == episodeNumber && it.episodeKey == episodeNumber.toString() }
@@ -607,15 +628,15 @@ class AnimeViewModel : ViewModel() {
 
         // 1. 진행 중인 Media3 다운로드 취소
         DownloadService.sendRemoveDownload(
-            context, LilacDownloadService::class.java, downloadKey, false
+            context, LegacyLilacDownloadService::class.java, downloadKey, false
         )
         DownloadService.sendRemoveDownload(
-            context, LilacDownloadService::class.java, episode.id, false
+            context, LegacyLilacDownloadService::class.java, episode.id, false
         )
         if (episode.displayNumber == episode.number.toString()) {
             // 이전 버전의 숫자형 다운로드도 함께 정리한다.
             DownloadService.sendRemoveDownload(
-                context, LilacDownloadService::class.java,
+                context, LegacyLilacDownloadService::class.java,
                 "${anime.id}_${episode.number}", false
             )
         }

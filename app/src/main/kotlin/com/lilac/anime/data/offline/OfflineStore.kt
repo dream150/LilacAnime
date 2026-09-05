@@ -38,6 +38,9 @@ object OfflineStore {
             putBoolean("pref_offline_oped_analysis_enabled", settings.offlineOpEdAnalysisEnabled)
             putInt("pref_double_tap_seek_seconds", settings.doubleTapSeekSeconds)
             putFloat("pref_playback_speed", settings.playbackSpeed)
+            putBoolean("pref_auto_play", settings.autoPlay)
+            putBoolean("pref_auto_skip", settings.autoSkip)
+            putBoolean("pref_vtt_style_enabled", settings.vttStyleEnabled)
             putBoolean("pref_vtt_bold", settings.vttBold)
             putFloat("pref_vtt_outline_width", settings.vttOutlineWidth)
             apply()
@@ -91,6 +94,9 @@ object OfflineStore {
                 val options = floatArrayOf(0.1f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
                 options.minByOrNull { kotlin.math.abs(it - saved) } ?: 1.0f
             },
+            autoPlay = prefs.getBoolean("pref_auto_play", true),
+            autoSkip = prefs.getBoolean("pref_auto_skip", true),
+            vttStyleEnabled = prefs.getBoolean("pref_vtt_style_enabled", true),
             vttBold = prefs.getBoolean("pref_vtt_bold", true),
             vttOutlineWidth = prefs.getFloat("pref_vtt_outline_width", 2.0f).coerceIn(0.5f, 6.0f)
         )

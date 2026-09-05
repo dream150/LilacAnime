@@ -37,9 +37,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-        <!-- 다운로드 백그라운드 서비스 등록 -->
+        <!-- New downloads: native HLS -> MP4 for libmpv playback -->
         <service
             android:name=".LilacDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Compatibility service for Media3 downloads created by older app versions. -->
+        <service
+            android:name=".LegacyLilacDownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync">
             <intent-filter>

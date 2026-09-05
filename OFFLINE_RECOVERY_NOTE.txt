@@ -1,0 +1,18 @@
+LilacAnime v44 - offline recovery
+
+- Actual playback remains libmpv.
+- Existing Media3 downloads are no longer remuxed to MP4.
+- Existing Media3 HLS cache is reconstructed as a local HLS playlist and original TS/fMP4 segments.
+- Cache-key matching was made scored/path-aware instead of first-match.
+- Interrupted/stale fallback.m3u8 files are rejected unless every local media file exists.
+- New downloads remain mpv-native local HLS; MP4 is only used for simple MPEG-TS optimization.
+- Existing Media3 DownloadManager/SimpleCache is retained strictly for legacy download compatibility.
+
+
+v45 HLS MP4 pipeline:
+- New downloads resolve VOD HLS master/media playlists and download TS or fMP4 segments locally.
+- Separate HLS AUDIO renditions are downloaded and mapped explicitly when present.
+- FFmpegKit remuxes the local HLS playlists into episode.mp4 without re-encoding.
+- MediaExtractor validates that the final MP4 contains both video and audio tracks before completion.
+- Partial/failed MP4 files are deleted and never marked completed.
+- Existing Media3 legacy downloads remain on the v44 compatibility path.

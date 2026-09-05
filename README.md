@@ -453,3 +453,9 @@ Linkkf episode-to-episode OP/ED 분석에는 단계별 상태 로그가 추가�
 - Logcat tag: `AniChapters` — 플레이어에서 분석 시작/완료 및 스킵 구간 진입/자동 스킵
 - 재생 화면 좌측 상단에 현재 분석 단계가 표시됩니다.
 - 분석 실패 시 HTTP/디코딩/비교 단계의 실패 상태를 구분해서 확인할 수 있습니다.
+
+
+## v43.1 compile fix
+- Fixed `LilacDownloadService` startId lifetime by passing the service startId into the download worker.
+- Fixed `Episode` imports to use `com.lilac.anime.Episode`, matching the project model.
+- Media3 remains compatibility-only for legacy offline cache migration; libmpv is the playback engine and new downloads use `MpvHlsDownloader`.

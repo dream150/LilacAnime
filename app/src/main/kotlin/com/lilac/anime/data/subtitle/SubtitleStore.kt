@@ -160,8 +160,44 @@ object SubtitleStore {
         }
     }
 
+    /** User-imported subtitles are stored separately from downloaded/remote subtitle sources. */
+    suspend fun listUser(
+        context: Context, animeId: String, episodeKey: String, episodeNumber: Int
+    ): List<SavedSubtitle> = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val source = "user"
+        val primary = prefs.getString(key(animeId, episodeKey, source), null)
+        val stored = prefs.getStringSet(allPathsKey(animeId, episodeKey, source), emptySet()).orEmpty()
+        val paths = (stored + listOfNotNull(primary)).distinct()
+        val ignored = prefs.getBoolean(ignoredKey(animeId, episodeKey, source), false)
+        paths.mapNotNull { path ->
+            if (!File(path).isFile) null
+            else SavedSubtitle(source, path, ignored, subtitleMatchesEpisode(path, episodeKey, episodeNumber))
+        }
+    }
+
+    suspend fun getUser(context: Context, animeId: String, episodeKey: String, episodeNumber: Int): String? =
+        get(context, animeId, episodeKey, episodeNumber, "user")
+
     suspend fun setIgnored(context: Context, animeId: String, episodeKey: String, episodeNumber: Int, source: String, ignored: Boolean) = withContext(Dispatchers.IO) {
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit().putBoolean(ignoredKey(animeId, episodeKey, source), ignored).apply()
+    }
+
+    suspend fun deleteOne(
+        context: Context, animeId: String, episodeKey: String, episodeNumber: Int, source: String, path: String
+    ) = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val primaryKey = key(animeId, episodeKey, source)
+        val allKey = allPathsKey(animeId, episodeKey, source)
+        val stored = prefs.getStringSet(allKey, emptySet()).orEmpty().toMutableSet()
+        stored.remove(path)
+        val primary = prefs.getString(primaryKey, null)
+        val nextPrimary = if (primary == path) stored.firstOrNull() else primary
+        prefs.edit().apply {
+            if (nextPrimary.isNullOrBlank()) remove(primaryKey) else putString(primaryKey, nextPrimary)
+            if (stored.isEmpty()) remove(allKey) else putStringSet(allKey, stored)
+        }.apply()
+        File(path).takeIf(File::isFile)?.delete()
     }
 
     suspend fun delete(context: Context, animeId: String, episodeKey: String, episodeNumber: Int, source: String) = withContext(Dispatchers.IO) {

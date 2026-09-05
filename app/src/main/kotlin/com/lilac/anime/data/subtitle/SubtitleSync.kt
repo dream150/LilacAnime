@@ -9,10 +9,73 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
+
+/** Converts SMI/SAMI subtitles to WebVTT. Each <SYNC Start=...> cue ends at the next SYNC. */
+suspend fun prepareSmiAsVttFile(
+    context: Context,
+    subtitlePath: String,
+    animeId: String,
+    episodeNumber: Int,
+    episodeKey: String = episodeNumber.toString()
+): String? = withContext(Dispatchers.IO) {
+    try {
+        val source = readSubtitleText(subtitlePath) ?: return@withContext null
+        val syncRegex = Regex("(?is)<sync\\s+start\\s*=\\s*[\"']?(\\d+)[\"']?[^>]*>(.*?)(?=<sync\\s+start\\s*=|$)")
+        val matches = syncRegex.findAll(source).toList()
+        if (matches.isEmpty()) return@withContext null
+
+        fun cleanHtml(raw: String): String {
+            var text = raw
+                .replace(Regex("(?is)<br\\s*/?>"), "\\n")
+                .replace(Regex("(?is)</p\\s*>"), "\\n")
+                .replace(Regex("(?is)<[^>]+>"), "")
+                .replace("&nbsp;", " ", true)
+                .replace("&amp;", "&", true)
+                .replace("&lt;", "<", true)
+                .replace("&gt;", ">", true)
+                .replace("&quot;", "\"", true)
+                .replace("&#39;", "'", true)
+            return text.lines().joinToString("\n") { it.trim() }.trim()
+        }
+
+        val cues = matches.mapIndexedNotNull { index, match ->
+            val start = match.groupValues[1].toLongOrNull() ?: return@mapIndexedNotNull null
+            val end = matches.getOrNull(index + 1)?.groupValues?.get(1)?.toLongOrNull()
+                ?: (start + 5000L)
+            if (end <= start) return@mapIndexedNotNull null
+            val text = cleanHtml(match.groupValues[2])
+            if (text.isBlank()) return@mapIndexedNotNull null
+            start to (end to text)
+        }
+
+        val vtt = buildString {
+            append("WEBVTT\n\n")
+            cues.forEachIndexed { index, cue ->
+                append(index + 1).append('\n')
+                append(formatClock(cue.first, '.', 3)).append(" --> ")
+                append(formatClock(cue.second.first, '.', 3)).append('\n')
+                append(cue.second.second).append("\n\n")
+            }
+        }
+
+        val dir = File(context.filesDir, "converted_subtitles").apply { mkdirs() }
+        val safeAnimeId = animeId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val safeEpisodeKey = episodeKey.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val sourceKey = subtitlePath.hashCode().toUInt().toString(16)
+        val target = File(dir, "${safeAnimeId}_${episodeNumber}_${safeEpisodeKey}_${sourceKey}_smi.vtt")
+        target.writeText(vtt, Charsets.UTF_8)
+        Log.d("Subtitle", "SMI_CONVERTED path=${target.absolutePath} cues=${cues.size}")
+        target.absolutePath
+    } catch (e: Exception) {
+        Log.e("Subtitle", "SMI_CONVERT_FAILED path=$subtitlePath", e)
+        null
+    }
+}
+
 /**
  * Creates a temporary subtitle file with all cue/event times shifted by [offsetMs].
- * Supports WebVTT, SRT and ASS/SSA so the PlayerScreen's existing sync controls
- * work identically for Linkkf VTT and Kairan/Csora ASS subtitles.
+ * Supports WebVTT, SRT and ASS/SSA. SMI/SAMI is normalized to WebVTT before this
+ * function is called, so the PlayerScreen's existing sync controls work identically.
  */
 suspend fun prepareSyncedSubtitleFile(
     context: Context,

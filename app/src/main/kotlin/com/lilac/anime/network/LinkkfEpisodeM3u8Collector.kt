@@ -121,7 +121,7 @@ object LinkkfEpisodeM3u8Collector {
                                     Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_FOUND episode=${episode.number} display=${episode.displayNumber} page=$pageUrl m3u8=$url")
                                     onStatus("M3U8_WEBVIEW_${index + 1}_FOUND episode=${episode.number} page=$pageUrl m3u8=$url")
                                     completed.incrementAndGet()
-                                    finishIfDone()
+                                    mainHandler.post { finishIfDone() }
                                 }
                             }
                         }

@@ -25,7 +25,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.media3.exoplayer.offline.Download
 import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
@@ -420,7 +419,7 @@ fun DetailScreen(
                     qualities.first()
                 }
 
-                // 영상 다운로드는 자막 서버보다 먼저 Media3 큐에 등록한다.
+                // 영상 다운로드는 자막 서버보다 먼저 mpv-native HLS -> MP4 큐에 등록한다.
                 startEpisodeDownload(context, currentAnime.id, currentAnime.title, ep, selectedQuality.url)
                 Toast.makeText(context, "${ep.displayNumber}화 (${selectedQuality.label}) 다운로드를 시작합니다.", Toast.LENGTH_SHORT).show()
 
@@ -514,7 +513,7 @@ fun DetailScreen(
                             qualities.first()
                         }
 
-                        // 자막 처리 전에 영상 다운로드를 먼저 큐에 등록한다.
+                        // 자막 처리 전에 영상 다운로드를 먼저 mpv-native 큐에 등록한다.
                         startEpisodeDownload(context, currentAnime.id, currentAnime.title, ep, selectedQuality.url)
 
                         withContext(Dispatchers.IO) {
