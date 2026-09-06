@@ -25,6 +25,8 @@ fun StreamUrlExtractor(
     targetUrl: String,
     onQualitiesFound: (List<StreamQuality>) -> Unit,
     onSubtitleFound: (String) -> Unit,
+    onSubtitleRefererFound: (String, String) -> Unit = { _, _ -> },
+    onRefererFound: (String) -> Unit = {},
     onAuthRequired: () -> Unit = {},
     allowedHosts: Set<String> = emptySet(),
     restartKey: Any? = null
@@ -56,9 +58,23 @@ fun StreamUrlExtractor(
                         setOf("linkkf.tv", "www.linkkf.tv", "linkkf.tckopke.com", "tckopke.com", "www.tckopke.com")
                     else -> emptySet()
                 }
-                val safeHosts = (allowedHosts + inferredHosts + listOfNotNull(targetHost)).map { it.lowercase() }.toSet()
+                val safeHosts = (allowedHosts + inferredHosts + listOfNotNull(targetHost) +
+                    if (targetHost == "linkkf.tckopke.com" || targetHost == "linkkf.tv" || targetHost == "www.linkkf.tv")
+                        setOf("play.sub3.top", "playv2.sub3.top", "k1.sub1.top") else emptySet()
+                    ).map { it.lowercase() }.toSet()
                 var iframeHosts = emptySet<String>()
                 var playerPageNavigated = false
+                var lastPlayHdReferer: String? = null
+                var lastRequestReferer: String? = null
+
+                fun observePlayHd(url: String?) {
+                    val value = url?.trim().orEmpty()
+                    if (value.contains("/r2/playhd3.php", ignoreCase = true)) {
+                        lastPlayHdReferer = value
+                        Log.d("AnimenosubStream", "LINKKF_PLAYHD_REFERER_CAPTURED $value")
+                        mainHandler.post { onRefererFound(value) }
+                    }
+                }
 
                 fun isAllowedNavigation(url: String): Boolean {
                     val host = runCatching { android.net.Uri.parse(url).host?.lowercase() }.getOrNull() ?: return false
@@ -88,7 +104,7 @@ fun StreamUrlExtractor(
                                 path.contains("master") -> "Auto"
                                 else -> "Stream ${index + 1}"
                             }
-                            StreamQuality(label, u)
+                            StreamQuality(label, u, lastPlayHdReferer)
                         }.distinctBy { it.url }
                         onQualitiesFound(qualities)
                     }
@@ -96,6 +112,7 @@ fun StreamUrlExtractor(
 
                 webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                        observePlayHd(url)
                         val host = runCatching { android.net.Uri.parse(url.orEmpty()).host?.lowercase() }.getOrNull()
                         if (!host.isNullOrBlank()) {
                             // Linkkf's watch URL currently redirects to linkkf.tckopke.com.
@@ -136,16 +153,33 @@ fun StreamUrlExtractor(
                     override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                         val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
                         val path = runCatching { android.net.Uri.parse(url).path.orEmpty().lowercase() }.getOrDefault("")
+                        val requestReferer = request?.requestHeaders?.entries?.firstOrNull { it.key.equals("Referer", true) }?.value
+                        if (!requestReferer.isNullOrBlank()) lastRequestReferer = requestReferer.trim()
+                        if (url.contains("/r2/playhd3.php", true)) {
+                            lastPlayHdReferer = url
+                            mainHandler.post { onRefererFound(url) }
+                        }
+                        if (!requestReferer.isNullOrBlank() && requestReferer.contains("/r2/playhd3.php", true)) {
+                            lastPlayHdReferer = requestReferer.trim()
+                            mainHandler.post { onRefererFound(lastPlayHdReferer!!) }
+                        }
 
                         if (!isSubtitleFound && path.endsWith(".vtt")) {
                             isSubtitleFound = true
-                            mainHandler.post { onSubtitleFound(url) }
+                            val subtitleRef = requestReferer?.trim()?.takeIf { it.isNotBlank() }
+                                ?: lastPlayHdReferer?.trim()?.takeIf { it.isNotBlank() }
+
+                            mainHandler.post {
+                                onSubtitleFound(url)
+                                subtitleRef?.let { onSubtitleRefererFound(url, it) }
+                            }
                         }
                         reportM3u8(url)
                         return super.shouldInterceptRequest(view, request)
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
+                        observePlayHd(url)
                         // Discover the actual embedded player host without navigating
                         // to it ourselves. Ads opened by the player cannot become the
                         // app's main frame because of shouldOverrideUrlLoading above.
@@ -173,7 +207,7 @@ fun StreamUrlExtractor(
                                             val host = uri.host?.lowercase().orEmpty()
                                             val path = uri.path.orEmpty().lowercase()
                                             (host == "play.sub3.top" || host == "playv2.sub3.top") &&
-                                                path.contains("play.php")
+                                                (path.contains("play.php") || path.contains("playhd3.php"))
                                         }.getOrDefault(false)
                                     }
                                     if (playerUrl != null) {

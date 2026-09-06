@@ -43,12 +43,17 @@ object LinkkfEpisodeM3u8Collector {
         // This is preferable to hard-coding https://playv2.sub3.top/ because
         // Linkkf may generate a per-episode playhd3.php URL.
         val referers: Map<String, String>,
-        val failedEpisodeIds: Set<String>
+        // Exact Referer observed on the subtitle resource request.
+        val subtitleUrls: Map<String, String> = emptyMap(),
+        val subtitleReferers: Map<String, String> = emptyMap(),
+        val failedEpisodeIds: Set<String> = emptySet()
     )
 
     suspend fun collect(
         context: Context,
         episodes: List<Episode>,
+        waitForSubtitle: Boolean = false,
+        onSubtitleFound: (episodeId: String, url: String, referer: String?) -> Unit = { _, _, _ -> },
         onStatus: (String) -> Unit = {}
     ): Result = suspendCancellableCoroutine { continuation ->
         val targets = episodes
@@ -56,13 +61,15 @@ object LinkkfEpisodeM3u8Collector {
             .take(MAX_WEBVIEWS)
 
         if (targets.isEmpty()) {
-            continuation.resume(Result(emptyMap(), emptyMap(), emptySet()))
+            continuation.resume(Result(emptyMap(), emptyMap(), emptyMap(), emptyMap(), emptySet()))
             return@suspendCancellableCoroutine
         }
 
         val urls = LinkedHashMap<String, String>()
         val referers = LinkedHashMap<String, String>()
         val failed = LinkedHashSet<String>()
+        val subtitleUrls = LinkedHashMap<String, String>()
+        val subtitleReferers = LinkedHashMap<String, String>()
         val completed = AtomicInteger(0)
         val webViews = ArrayList<WebView>(targets.size)
         var finished = false
@@ -72,9 +79,21 @@ object LinkkfEpisodeM3u8Collector {
             if (completed.get() < targets.size) return
             finished = true
             Log.d(TAG, "M3U8_COLLECTION_COMPLETE success=${urls.size} referers=${referers.size} failed=${failed.size}")
-            webViews.forEach { it.stopLoading(); it.destroy() }
-            webViews.clear()
-            if (continuation.isActive) continuation.resume(Result(urls.toMap(), referers.toMap(), failed.toSet()))
+            val resultSnapshot = Result(urls.toMap(), referers.toMap(), subtitleUrls.toMap(), subtitleReferers.toMap(), failed.toSet())
+            if (waitForSubtitle) {
+                webViews.forEach { it.stopLoading(); it.destroy() }
+                webViews.clear()
+            } else {
+                // Do not destroy immediately: the subtitle request is frequently emitted
+                // just after index.m3u8. This is not a playback delay because the continuation
+                // is resumed first; cleanup only happens in the background.
+                val cleanupViews = webViews.toList()
+                mainHandler.postDelayed({
+                    cleanupViews.forEach { runCatching { it.stopLoading(); it.destroy() } }
+                    webViews.removeAll(cleanupViews.toSet())
+                }, 5_000L)
+            }
+            if (continuation.isActive) continuation.resume(resultSnapshot)
         }
 
         fun finishWithTimeout() {
@@ -86,7 +105,7 @@ object LinkkfEpisodeM3u8Collector {
             Log.d(TAG, "M3U8_COLLECTION_TIMEOUT success=${urls.size} referers=${referers.size} failed=${failed.size}")
             webViews.forEach { it.stopLoading(); it.destroy() }
             webViews.clear()
-            if (continuation.isActive) continuation.resume(Result(urls.toMap(), referers.toMap(), failed.toSet()))
+            if (continuation.isActive) continuation.resume(Result(urls.toMap(), referers.toMap(), subtitleUrls.toMap(), subtitleReferers.toMap(), failed.toSet()))
         }
 
         mainHandler.postDelayed({ finishWithTimeout() }, TIMEOUT_MS)
@@ -123,6 +142,7 @@ object LinkkfEpisodeM3u8Collector {
                         // WebResourceRequest.requestHeaders. Keep the most recently
                         // observed playhd3.php URL as a per-WebView fallback.
                         private var lastPlayHdUrl: String? = null
+                        private var playerPageNavigated = false
 
                         private fun observePlayerUrl(url: String?) {
                             val value = url?.trim().orEmpty()
@@ -135,6 +155,29 @@ object LinkkfEpisodeM3u8Collector {
 
                         private fun report(url: String, requestReferer: String? = null) {
                             val path = runCatching { Uri.parse(url).path.orEmpty().lowercase() }.getOrDefault("")
+
+                            // Keep subtitle discovery independent from the video Referer.
+                            // The Referer attached to the actual VTT request is the only
+                            // value stored as subtitleReferer. Never substitute the video
+                            // playhd3.php URL here.
+                            if (path.endsWith(".vtt") || path.endsWith(".srt")) {
+                                synchronized(urls) {
+                                    if (!subtitleUrls.containsKey(episode.id)) {
+                                        subtitleUrls[episode.id] = url
+                                        // Match the streaming extractor: Chromium may omit
+                                        // Referer from WebResourceRequest.requestHeaders, but
+                                        // the same WebView has already observed the playhd3.php
+                                        // page that caused the subtitle request.
+                                        val subtitleRef = requestReferer?.trim()?.takeIf { it.isNotBlank() }
+                                            ?: lastPlayHdUrl?.trim()?.takeIf { it.isNotBlank() }
+                                        subtitleRef?.let { subtitleReferers[episode.id] = it }
+                                        onSubtitleFound(episode.id, url, subtitleRef)
+                                        Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_SUBTITLE_FOUND episode=${episode.number} url=$url subtitleReferer=${subtitleRef ?: "<none>"}")
+                                        onStatus("M3U8_WEBVIEW_${index + 1}_SUBTITLE_FOUND episode=${episode.number} url=$url subtitleReferer=${subtitleRef ?: "<none>"}")
+                                    }
+                                }
+                            }
+
                             if (!path.endsWith("/index.m3u8") && !path.endsWith("index.m3u8")) return
                             synchronized(urls) {
                                 if (!urls.containsKey(episode.id)) {
@@ -157,7 +200,17 @@ object LinkkfEpisodeM3u8Collector {
                                     Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_FOUND episode=${episode.number} display=${episode.displayNumber} page=$pageUrl m3u8=$url referer=${observedReferer ?: "<none>"}")
                                     onStatus("M3U8_WEBVIEW_${index + 1}_FOUND episode=${episode.number} page=$pageUrl m3u8=$url referer=${observedReferer ?: "<none>"}")
                                     completed.incrementAndGet()
-                                    mainHandler.post { finishIfDone() }
+                                    if (waitForSubtitle) {
+                                        // Download resolution may need the VTT URL in the same
+                                        // Result. Give the player a short grace period, but do not
+                                        // make normal streaming pay this cost.
+                                        mainHandler.postDelayed({ finishIfDone() }, 1_500L)
+                                    } else {
+                                        // Streaming must start as soon as the media URL is known.
+                                        // The WebView remains alive briefly in the background so a
+                                        // VTT request that follows the m3u8 can still be captured.
+                                        finishIfDone()
+                                    }
                                 }
                             }
                         }
@@ -173,10 +226,47 @@ object LinkkfEpisodeM3u8Collector {
                             observePlayerUrl(url)
                             Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_PAGE_FINISHED episode=${episode.number} url=$url")
                             onStatus("M3U8_WEBVIEW_${index + 1}_PAGE_FINISHED episode=${episode.number} url=$url")
-                            // Do not navigate to the iframe ourselves. Loading the watch page
-                            // is enough for the embedded player to issue its media request.
+                            // Some Linkkf pages inject the player after onPageFinished.
+                            // Poll the DOM, performance resource list, and HTML for a short
+                            // period so we don't miss the generated playhd3.php URL.
+                            fun pollPlayerResources(attempt: Int) {
+                                if (finished || attempt > 12) return
+                                view?.evaluateJavascript(
+                                    """(function(){var a=[];try{a=a.concat(Array.from(document.querySelectorAll('iframe[src],video[src],source[src],a[href],[data-src]')).map(function(x){return x.src||x.href||x.getAttribute('data-src')||'';}));}catch(e){} try{a=a.concat(performance.getEntriesByType('resource').map(function(x){return x.name||'';}));}catch(e){} try{var h=document.documentElement.innerHTML;var m=h.match(/https?:\\/\\/[^\"' ]+\\/r2\\/playhd3\\.php[^\"' <]*/i);if(m)a.push(m[0]);}catch(e){} return a.filter(Boolean).join('\\n');})()""",
+                                    { raw ->
+                                        val decoded = raw.orEmpty().trim('"')
+                                            .replace("\\u003d", "=")
+                                            .replace("\\u0026", "&")
+                                            .replace("\\/", "/")
+                                        val candidates = decoded.split('\n').filter { it.isNotBlank() }
+                                        val playerUrl = candidates.firstOrNull { candidate ->
+                                            runCatching {
+                                                val uri = Uri.parse(candidate)
+                                                val host = uri.host?.lowercase().orEmpty()
+                                                val path = uri.path.orEmpty().lowercase()
+                                                (host == "play.sub3.top" || host == "playv2.sub3.top") &&
+                                                    path.contains("playhd3.php")
+                                            }.getOrDefault(false)
+                                        }
+                                        if (playerUrl != null && !playerPageNavigated) {
+                                            playerPageNavigated = true
+                                            lastPlayHdUrl = playerUrl
+                                            Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_PLAYHD_POLLED episode=${episode.number} url=$playerUrl")
+                                            onStatus("M3U8_WEBVIEW_${index + 1}_PLAYHD_POLLED episode=${episode.number} url=$playerUrl")
+                                            view?.loadUrl(playerUrl)
+                                        }
+                                    }
+                                )
+                                mainHandler.postDelayed({ pollPlayerResources(attempt + 1) }, 500L)
+                            }
+                            pollPlayerResources(0)
+
+                            // Some Linkkf pages expose a generated play.php/playhd3.php
+                            // URL instead of immediately issuing the media request. Open that
+                            // player URL in this hidden WebView so the actual index.m3u8 request
+                            // (and its Referer) can be observed.
                             view?.evaluateJavascript(
-                                """(function(){return Array.from(document.querySelectorAll('iframe[src],video[src],source[src]')).map(function(x){return x.src;}).join('\\n');})()""",
+                                """(function(){return Array.from(document.querySelectorAll('iframe[src],video[src],source[src],a[href],[data-src]')).map(function(x){return x.src || x.href || x.getAttribute('data-src') || '';}).filter(Boolean).join('\\n');})()""",
                                 { raw ->
                                     val decoded = raw.orEmpty()
                                         .trim('"')
@@ -184,7 +274,25 @@ object LinkkfEpisodeM3u8Collector {
                                         .replace("\\u0026", "&")
                                     decoded.split('\n').filter { it.isNotBlank() }.forEach { candidate ->
                                         Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_MEDIA_ELEMENT episode=${episode.number} page=$pageUrl media=$candidate")
-                                    onStatus("M3U8_WEBVIEW_${index + 1}_MEDIA_ELEMENT episode=${episode.number} url=$candidate")
+                                        onStatus("M3U8_WEBVIEW_${index + 1}_MEDIA_ELEMENT episode=${episode.number} url=$candidate")
+                                    }
+
+                                    if (!playerPageNavigated) {
+                                        val playerUrl = decoded.split('\n').firstOrNull { candidate ->
+                                            runCatching {
+                                                val uri = Uri.parse(candidate)
+                                                val host = uri.host?.lowercase().orEmpty()
+                                                val path = uri.path.orEmpty().lowercase()
+                                                (host == "play.sub3.top" || host == "playv2.sub3.top") &&
+                                                    (path.contains("play.php") || path.contains("playhd3.php"))
+                                            }.getOrDefault(false)
+                                        }
+                                        if (playerUrl != null) {
+                                            playerPageNavigated = true
+                                            Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_PLAYER_PAGE episode=${episode.number} url=$playerUrl")
+                                            onStatus("M3U8_WEBVIEW_${index + 1}_PLAYER_PAGE episode=${episode.number} url=$playerUrl")
+                                            view?.loadUrl(playerUrl)
+                                        }
                                     }
                                 }
                             )
@@ -219,7 +327,10 @@ object LinkkfEpisodeM3u8Collector {
 
                         @Suppress("DEPRECATION")
                         override fun shouldInterceptRequest(view: WebView?, url: String?): WebResourceResponse? {
-                            url?.let { report(it, null) }
+                            url?.let {
+                                if (it.contains("/r2/playhd3.php", ignoreCase = true)) lastPlayHdUrl = it
+                                report(it, null)
+                            }
                             return super.shouldInterceptRequest(view, url)
                         }
                     }

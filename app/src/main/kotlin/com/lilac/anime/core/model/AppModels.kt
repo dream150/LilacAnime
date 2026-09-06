@@ -8,7 +8,8 @@ import androidx.compose.ui.graphics.Color
 import com.lilac.anime.data.*
 data class StreamQuality(
     val label: String,
-    val url: String
+    val url: String,
+    val referer: String? = null
 )
 
 data class PlayerSettings(

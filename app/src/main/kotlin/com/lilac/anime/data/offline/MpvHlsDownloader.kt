@@ -69,6 +69,7 @@ class MpvHlsDownloader(
         animeId: String,
         episodeId: String,
         sourceUrl: String,
+        referer: String? = null,
         onProgress: suspend (Progress) -> Unit
     ): File = withContext(Dispatchers.IO) {
         val dir = MpvOfflineStore.episodeDir(context, animeId, episodeId).apply {
@@ -86,7 +87,7 @@ class MpvHlsDownloader(
         // final audio/video-track validation before becoming "completed".
         if (!sourceUrl.contains(".m3u8", ignoreCase = true)) {
             tempOutput.delete()
-            downloadToFile(sourceUrl, tempOutput)
+            downloadToFile(sourceUrl, tempOutput, referer = referer)
             validatePlayableMp4(tempOutput)
             atomicReplace(tempOutput, output)
             onProgress(Progress(1L, 1L))
@@ -94,12 +95,12 @@ class MpvHlsDownloader(
         }
 
         try {
-            val playlistInfo = resolvePlaylists(sourceUrl)
+            val playlistInfo = resolvePlaylists(sourceUrl, referer)
 
-            val videoText = getText(playlistInfo.mediaUrl)
+            val videoText = getText(playlistInfo.mediaUrl, referer)
             rejectEncryptedHls(videoText)
 
-            val audioText = playlistInfo.audioUrl?.let { getText(it) }
+            val audioText = playlistInfo.audioUrl?.let { getText(it, referer) }
             audioText?.let(::rejectEncryptedHls)
 
             val videoSegments = parseSegments(playlistInfo.mediaUrl, videoText)
@@ -128,6 +129,7 @@ class MpvHlsDownloader(
                 baseUrl = playlistInfo.mediaUrl,
                 outputDir = File(localRoot, "video").apply { mkdirs() },
                 segments = videoSegments,
+                referer = referer,
                 onSegment = { segmentProgress() }
             )
 
@@ -137,6 +139,7 @@ class MpvHlsDownloader(
                     baseUrl = playlistInfo.audioUrl!!,
                     outputDir = File(localRoot, "audio").apply { mkdirs() },
                     segments = audioSegments,
+                    referer = referer,
                     onSegment = { segmentProgress() }
                 )
             } else {
@@ -185,8 +188,8 @@ class MpvHlsDownloader(
      *   - highest-bandwidth video variant
      *   - its AUDIO rendition, when audio is declared separately.
      */
-    private fun resolvePlaylists(url: String): PlaylistInfo {
-        val master = getText(url)
+    private fun resolvePlaylists(url: String, referer: String? = null): PlaylistInfo {
+        val master = getText(url, referer)
         if (!master.contains("#EXT-X-STREAM-INF", ignoreCase = false)) {
             return PlaylistInfo(mediaUrl = url, audioUrl = null)
         }
@@ -247,6 +250,7 @@ class MpvHlsDownloader(
         baseUrl: String,
         outputDir: File,
         segments: List<Segment>,
+        referer: String? = null,
         onSegment: suspend () -> Unit
     ): LocalPlaylist = coroutineScope {
         outputDir.mkdirs()
@@ -275,7 +279,8 @@ class MpvHlsDownloader(
                         downloadToFile(
                             url = segment.url,
                             target = target,
-                            range = segment.range
+                            range = segment.range,
+                            referer = referer
                         )
                     }
 
@@ -303,7 +308,7 @@ class MpvHlsDownloader(
 
             initFile = File(outputDir, "init.mp4")
             if (!initFile.isFile || initFile.length() == 0L) {
-                downloadToFile(mapUrl, initFile, mapRange)
+                downloadToFile(mapUrl, initFile, mapRange, referer)
             }
 
             check(initFile.isFile && initFile.length() > 0L) {
@@ -1024,13 +1029,14 @@ class MpvHlsDownloader(
     private fun downloadToFile(
         url: String,
         target: File,
-        range: ByteRange? = null
+        range: ByteRange? = null,
+        referer: String? = null
     ) {
         val builder = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
-            .header("Referer", REFERER)
-            .header("Origin", ORIGIN)
+            .header("Referer", referer?.takeIf { it.isNotBlank() } ?: REFERER)
+            .header("Origin", originFor(referer))
 
         if (range != null) {
             val end = range.offset?.let { it + range.length - 1L }
@@ -1068,12 +1074,12 @@ class MpvHlsDownloader(
         }
     }
 
-    private fun getText(url: String): String {
+    private fun getText(url: String, referer: String? = null): String {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
-            .header("Referer", REFERER)
-            .header("Origin", ORIGIN)
+            .header("Referer", referer?.takeIf { it.isNotBlank() } ?: REFERER)
+            .header("Origin", originFor(referer))
             .build()
 
         client.newCall(request).execute().use { response ->
@@ -1084,6 +1090,13 @@ class MpvHlsDownloader(
             return response.body?.string()
                 ?: error("empty playlist: $url")
         }
+    }
+
+    private fun originFor(referer: String?): String {
+        return runCatching {
+            val uri = java.net.URI(referer?.takeIf { it.isNotBlank() } ?: REFERER)
+            "${uri.scheme}://${uri.host}${if (uri.port > 0) ":${uri.port}" else ""}"
+        }.getOrDefault(ORIGIN)
     }
 
     private fun parseAttributes(value: String): Map<String, String> {

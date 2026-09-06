@@ -183,6 +183,9 @@ class MpvPlayerEngine(private val context: Context) {
         observe("time-pos", MPV_FORMAT_DOUBLE)
         observe("duration", MPV_FORMAT_DOUBLE)
         observe("pause", MPV_FORMAT_FLAG)
+        // 일부 HLS/로컬 MP4에서 END_FILE이 늦거나 누락되는 경우를 위한
+        // 자동재생 완료 신호 fallback.
+        observe("eof-reached", MPV_FORMAT_FLAG)
         observe("sub-text", MPVLib.MpvFormat.MPV_FORMAT_STRING)
     }
 
@@ -203,6 +206,13 @@ class MpvPlayerEngine(private val context: Context) {
             }
             "pause" -> {
                 isPlaying = mpv.getPropertyBoolean("pause") != true
+            }
+            "eof-reached" -> {
+                if (mpv.getPropertyBoolean("eof-reached") == true) {
+                    // END_FILE이 뒤따라와도 generation dedup으로 같은 회차를
+                    // 두 번 자동재생하지 않는다.
+                    signalPlaybackEnded(loadedLoadGeneration)
+                }
             }
             "sub-text" -> subtitleText = mpv.getPropertyString("sub-text") ?: ""
         }
@@ -376,7 +386,7 @@ class MpvPlayerEngine(private val context: Context) {
         setMpvColor("sub-border-color", borderColor)
         // The old Compose/Media3 VTT renderer used 18sp as its 100% baseline.
         val scale = if (pip) 0.48f else 1f
-        val fontSize = (18f * (sizePercent / 100f) * scale).coerceIn(8f, 54f)
+        val fontSize = (36f * (sizePercent / 100f) * scale).coerceIn(10f, 72f)
         mpv.setPropertyDouble("sub-font-size", fontSize.toDouble())
         mpv.setPropertyBoolean("sub-bold", bold)
         mpv.setPropertyDouble("sub-border-size", outlineWidth.coerceIn(0f, 8f).toDouble())
@@ -520,12 +530,18 @@ class MpvPlayerSurfaceView(
             override fun onDown(e: MotionEvent): Boolean = true
 
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                // TextureView can receive the touch before a Compose overlay. Keep
-                // the unlock hit target inside the native player as a fallback, so
-                // the lock button remains usable even when the overlay does not win
-                // AndroidView input dispatch.
-                // 잠금 상태에서는 어느 위치를 탭해도 Compose 쪽에 알린다.
-                // 특정 좌표를 고정하면 버튼 위치를 바꿨을 때 잠금 해제가 다시 나타나지 않는다.
+                // TextureView가 Compose overlay보다 먼저 터치를 소비할 수 있으므로,
+                // 잠금 상태에서는 화면 왼쪽 중앙의 잠금 버튼을 native 쪽에서도 직접 처리한다.
+                if (gesturesLocked) {
+                    val density = resources.displayMetrics.density
+                    val hitWidth = 80f * density
+                    val centerY = height / 2f
+                    val hitHeight = 70f * density
+                    if (e.x <= hitWidth && kotlin.math.abs(e.y - centerY) <= hitHeight) {
+                        onUnlockTap?.invoke()
+                        return true
+                    }
+                }
                 onSingleTap?.invoke()
                 return true
             }

@@ -120,7 +120,7 @@ object LinkkfChapterService {
             }
 
             status("M3U8_COLLECTION_START workers=${min(5, candidates.size)}")
-            val collected = LinkkfEpisodeM3u8Collector.collect(context, candidates) { status(it) }
+            val collected = LinkkfEpisodeM3u8Collector.collect(context, candidates, onStatus = { status(it) })
             status("M3U8_COLLECTION_COMPLETE success=${collected.urls.size} failed=${collected.failedEpisodeIds.size}")
 
             val opVotes = ArrayList<Match>()

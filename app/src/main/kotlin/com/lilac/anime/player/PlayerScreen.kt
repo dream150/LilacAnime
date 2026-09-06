@@ -65,6 +65,7 @@ import com.lilac.anime.data.*
 import com.lilac.anime.data.offline.MpvOfflineStore
 import com.lilac.anime.network.LinkkfChapterService
 import com.lilac.anime.network.LinkkfEpisodeM3u8Collector
+import com.lilac.anime.network.LinkkfRequestContextStore
 import com.lilac.anime.player.MpvPlayerEngine
 import com.lilac.anime.player.MpvPlayerSurfaceView
 import com.lilac.anime.network.OfflineOpEdFingerprintStore
@@ -366,6 +367,10 @@ fun PlayerScreen(
     var streamReferer by remember { mutableStateOf<String?>(null) }
     var resolvedVideoPageUrl by remember { mutableStateOf<String?>(null) }
     var subtitlesUrl by remember { mutableStateOf<String?>(null) }
+    // Exact Referer captured from the VTT resource request. This is intentionally
+    // separate from the video's playhd3.php Referer so a late VTT capture can
+    // trigger a second, correctly authenticated local subtitle download.
+    var subtitleReferer by remember { mutableStateOf<String?>(null) }
     // Linkkf VTT 주소는 한 번 발견되면 자막 소스를 Kairan으로 바꿔도 유지한다.
     // 그래야 다시 Linkkf VTT를 선택했을 때 재탐색 없이 즉시 전환할 수 있다.
     var linkkfSubtitleUrl by remember(anime.id, currentEpisode.number) { mutableStateOf<String?>(currentEpisode.vttUrl) }
@@ -697,6 +702,7 @@ fun PlayerScreen(
         }
         streamUrl = null
         streamReferer = null
+        subtitleReferer = null
         subtitlesUrl = null
         linkkfSubtitleUrl = currentEpisode.vttUrl
         subtitleSource = "none"
@@ -1026,7 +1032,7 @@ fun PlayerScreen(
 
     // Linkkf VTT/SRT도 영상과 분리해서 적용한다. 자막 URL이 늦게 발견되어도
     // 현재 회차의 mpv loadfile을 다시 실행하지 않는다.
-    LaunchedEffect(mpvEngine, currentEpisode.id, subtitlesUrl, subtitleSource, syncOffsetMs) {
+    LaunchedEffect(mpvEngine, currentEpisode.id, subtitlesUrl, subtitleSource, subtitleReferer, syncOffsetMs) {
         val subtitle = subtitlesUrl?.takeIf { it.isNotBlank() } ?: run {
             Log.d("Subtitle", "ATTACH_SKIP reason=no_url episode=${currentEpisode.displayNumber} source=$subtitleSource")
             return@LaunchedEffect
@@ -1052,7 +1058,8 @@ fun PlayerScreen(
                     episodeNumber = currentEpisode.number,
                     episodeKey = currentEpisode.displayNumber,
                     vttUrl = subtitle,
-                    referer = "https://playv2.sub3.top/"
+                    referer = subtitleReferer
+                        ?: LinkkfRequestContextStore.getSubtitle(context, anime.id, currentEpisode.id)
                 )
             }
             // Keep Linkkf as real WebVTT. Do not convert it to ASS: mpv/libmpv
@@ -1389,7 +1396,21 @@ fun PlayerScreen(
         val result = withContext(Dispatchers.IO) {
             LinkkfEpisodeM3u8Collector.collect(
                 context = context,
-                episodes = listOf(currentEpisode)
+                episodes = listOf(currentEpisode),
+                waitForSubtitle = false,
+                onSubtitleFound = { episodeId, subtitleUrl, capturedSubtitleReferer ->
+                    if (episodeId == currentEpisode.id && currentEpisode.videoUrl == pageUrl) {
+                        linkkfSubtitleUrl = subtitleUrl
+                        subtitlesUrl = subtitleUrl
+                        subtitleSource = "linkkf-vtt"
+                        LinkkfRequestContextStore.saveSubtitleUrl(context, anime.id, episodeId, subtitleUrl)
+                        capturedSubtitleReferer?.let {
+                            subtitleReferer = it
+                            LinkkfRequestContextStore.saveSubtitle(context, anime.id, episodeId, it)
+                        }
+                        Log.d("Subtitle", "FAST_STREAM_SUBTITLE_CAPTURED episode=${currentEpisode.displayNumber} url=$subtitleUrl referer=${capturedSubtitleReferer ?: "<none>"}")
+                    }
+                }
             )
         }
         val resolved = result.urls[currentEpisode.id]
@@ -1401,16 +1422,32 @@ fun PlayerScreen(
         val capturedReferer = result.referers[currentEpisode.id]
         if (!capturedReferer.isNullOrBlank()) {
             streamReferer = capturedReferer
+            LinkkfRequestContextStore.save(context, anime.id, currentEpisode.id, capturedReferer)
             Log.d("MpvEpisode", "AUTO_STREAM_REFERER_CAPTURED episode=${currentEpisode.displayNumber} referer=$capturedReferer")
         }
-        Log.d("MpvEpisode", "AUTO_STREAM_FALLBACK_FOUND episode=${currentEpisode.displayNumber} m3u8=$resolved referer=${capturedReferer ?: "<fallback>"}")
+        result.subtitleUrls[currentEpisode.id]?.let { subtitleUrl ->
+            linkkfSubtitleUrl = subtitleUrl
+            result.subtitleUrls[currentEpisode.id]?.let { capturedSubtitleUrl ->
+                LinkkfRequestContextStore.saveSubtitleUrl(context, anime.id, currentEpisode.id, capturedSubtitleUrl)
+            }
+            result.subtitleReferers[currentEpisode.id]?.let { capturedSubtitleReferer ->
+                subtitleReferer = capturedSubtitleReferer
+                LinkkfRequestContextStore.saveSubtitle(context, anime.id, currentEpisode.id, capturedSubtitleReferer)
+                Log.d("Subtitle", "AUTO_SUBTITLE_REFERER_CAPTURED episode=${currentEpisode.displayNumber} url=$subtitleUrl referer=$subtitleReferer")
+            }
+            if (subtitleSourcePreference == "linkkf") {
+                subtitlesUrl = subtitleUrl
+                subtitleSource = "linkkf-vtt"
+            }
+        }
+        Log.d("MpvEpisode", "AUTO_STREAM_FALLBACK_FOUND episode=${currentEpisode.displayNumber} m3u8=$resolved referer=${capturedReferer ?: "<fallback>"} subtitle=${result.subtitleUrls[currentEpisode.id] ?: "<none>"}")
         selectedStreamingQuality = null
         parsedStreamingQualities = listOf(StreamQuality("Auto", resolved))
         streamUrl = resolved
         isLoading = false
     }
 
-    LaunchedEffect(streamUrl, currentEpisode.number) {
+    LaunchedEffect(streamUrl, currentEpisode.id, currentEpisode.number, isDownloaded, vm.playerSettings.offlineOpEdAnalysisEnabled) {
         val currentStreamUrl = streamUrl ?: return@LaunchedEffect
 
         chapterSkipSegments = emptyList()
@@ -1421,28 +1458,21 @@ fun PlayerScreen(
         chapterAnalysisStatus = null
         chapterAnalysisVisible = false
 
-        // 이미 분석해서 저장된 OP/ED 결과는 스트리밍 재생에서도 바로 사용한다.
-        // 별도의 네트워크 분석을 새로 시작하지 않으므로 재생 시작을 방해하지 않는다.
-        val cachedSegments = OfflineOpEdFingerprintStore.loadAnalysis(
-            context = context,
-            animeId = anime.id,
-            episodeId = currentEpisode.id
-        )
-        if (cachedSegments != null) {
-            val duration = mpvEngine.duration.takeIf { it > 0L }?.div(1000.0) ?: 0.0
-            chapterSkipSegments = cachedSegments.map { segment ->
-                if (duration > 0.0) segment.copy(episodeLength = duration) else segment
-            }.sortedBy { it.startTime }
-            skipEpisodeKey = "${anime.id}_${currentEpisode.displayNumber}"
-            Log.d("AniChapters", "CACHE_USED episode=${currentEpisode.number} count=${chapterSkipSegments.size}")
-            // Cached results are deliberately silent so an already-analyzed
-            // episode does not show the same notification every time it starts.
+        // OP/ED 분석은 반드시 오프라인 저장이 완료된 회차에서만 수행한다.
+        // 스트리밍 재생에서는 과거에 저장된 분석 결과조차 여기서 불러오지 않는다.
+        // 따라서 스트리밍 시작 시 OP/ED 분석 때문에 발생하는 디스크/네트워크 작업이 없다.
+        if (!isDownloaded || !vm.playerSettings.offlineOpEdAnalysisEnabled) {
+            skipEpisodeKey = null
             return@LaunchedEffect
         }
 
-        // 새 OP/ED 분석은 기존 정책대로 다운로드 완료 회차에서만 수행한다.
-        // 스트리밍에서는 분석 API/다운로드를 호출하지 않는다.
-        if (!isDownloaded || !vm.playerSettings.offlineOpEdAnalysisEnabled) {
+        // 다운로드 상태가 먼저 갱신되고 실제 완료 MP4가 뒤늦게 생성되는 경우를
+        // 방지한다. OP/ED 분석은 실제 로컬 완료 파일이 있을 때만 시작한다.
+        val completedOfflinePath = withContext(Dispatchers.IO) {
+            MpvOfflineStore.completedPath(context, anime.id, currentEpisode.id)
+        }
+        if (completedOfflinePath.isNullOrBlank() || !File(completedOfflinePath).isFile) {
+            Log.d("AniChapters", "OFFLINE_ANALYSIS_WAIT_FILE episode=${currentEpisode.number}")
             skipEpisodeKey = null
             return@LaunchedEffect
         }
@@ -1668,6 +1698,15 @@ fun PlayerScreen(
                 if (vm.playerSettings.videoSourcePreference != "linkkf") key(extractorTargetUrl) {
                     StreamUrlExtractor(
                     targetUrl = extractorTargetUrl,
+                    onRefererFound = { referer ->
+                        if (vm.playerSettings.videoSourcePreference == "linkkf" &&
+                            resolvedVideoPageUrl == extractorTargetUrl &&
+                            currentEpisode.videoUrl == extractorTargetUrl) {
+                            streamReferer = referer
+                            LinkkfRequestContextStore.save(context, anime.id, currentEpisode.id, referer)
+                            Log.d("MpvEpisode", "STREAM_WEBVIEW_REFERER_CAPTURED episode=${currentEpisode.displayNumber} referer=$referer")
+                        }
+                    },
                     onQualitiesFound = { qualities ->
                         // StreamUrlExtractor can finish asynchronously after the user has
                         // already moved to another episode. Never let a stale WebView callback
@@ -1685,6 +1724,15 @@ fun PlayerScreen(
                             selectedStreamingQuality = selected
                             streamUrl = selected.url
                             isLoading = false
+                        }
+                    },
+                    onSubtitleRefererFound = { foundUrl, referer ->
+                        if (resolvedVideoPageUrl == extractorTargetUrl && currentEpisode.videoUrl == extractorTargetUrl &&
+                            vm.playerSettings.videoSourcePreference == "linkkf") {
+                            subtitleReferer = referer
+                            LinkkfRequestContextStore.saveSubtitle(context, anime.id, currentEpisode.id, referer)
+                            LinkkfRequestContextStore.saveSubtitleUrl(context, anime.id, currentEpisode.id, foundUrl)
+                            Log.d("Subtitle", "LINKKF_SUBTITLE_REFERER_CAPTURED episode=${currentEpisode.displayNumber} url=$foundUrl referer=$referer")
                         }
                     },
                     onSubtitleFound = { foundUrl ->
@@ -2497,20 +2545,28 @@ fun PlayerScreen(
 
                         Spacer(Modifier.height(10.dp))
 
+                        val subtitlePositionPercent = (subtitleBottomPaddingFraction * 100f)
+                            .roundToInt()
+                            .coerceIn(3, 30)
                         Text(
-                            "VTT 자막 위치 (${(subtitleBottomPaddingFraction * 100).toInt()}%)",
+                            "VTT 자막 위치 (${subtitlePositionPercent}%)",
                             fontSize = 13.sp
                         )
                         Slider(
-                            value = subtitleBottomPaddingFraction,
-                            onValueChange = {
-                                subtitleBottomPaddingFraction = it
+                            value = subtitlePositionPercent.toFloat(),
+                            onValueChange = { raw ->
+                                // Keep the control on exact 1% integer positions.
+                                // This makes 5% an actual selectable value instead of
+                                // relying on Float rounding while dragging.
+                                val percent = raw.roundToInt().coerceIn(3, 30)
+                                val fraction = percent / 100f
+                                subtitleBottomPaddingFraction = fraction
                                 vm.updatePlayerSettings(
                                     context,
-                                    vm.playerSettings.copy(subtitleBottomPaddingFraction = it)
+                                    vm.playerSettings.copy(subtitleBottomPaddingFraction = fraction)
                                 )
                             },
-                            valueRange = 0.03f..0.30f,
+                            valueRange = 3f..30f,
                             steps = 26
                         )
                         Text(

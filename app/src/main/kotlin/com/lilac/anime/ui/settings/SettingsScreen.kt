@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Alignment
+import kotlin.math.roundToInt
 import com.lilac.anime.network.OfflineOpEdFingerprintStore
 
 @Composable
@@ -164,21 +165,25 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
 
+            val subtitlePositionPercent = (settings.subtitleBottomPaddingFraction * 100f)
+                .roundToInt()
+                .coerceIn(3, 30)
             Text(
-                "기본 VTT 자막 위치 (${(settings.subtitleBottomPaddingFraction * 100).toInt()}%)",
+                "기본 VTT 자막 위치 (${subtitlePositionPercent}%)",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onBackground
             )
             Slider(
-                value = settings.subtitleBottomPaddingFraction,
-                onValueChange = {
+                value = subtitlePositionPercent.toFloat(),
+                onValueChange = { raw ->
+                    val percent = raw.roundToInt().coerceIn(3, 30)
                     vm.updatePlayerSettings(
                         context,
-                        settings.copy(subtitleBottomPaddingFraction = it)
+                        settings.copy(subtitleBottomPaddingFraction = percent / 100f)
                     )
                 },
-                valueRange = 0.03f..0.30f,
+                valueRange = 3f..30f,
                 steps = 26
             )
 
