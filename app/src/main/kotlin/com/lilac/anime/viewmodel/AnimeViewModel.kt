@@ -111,9 +111,36 @@ class AnimeViewModel : ViewModel() {
 
     private fun fetchDownloadedIdsInternal(context: Context): Set<String> {
         val ids = mutableSetOf<String>()
-        ids += MpvOfflineStore.listStatuses(context)
-            .filter { it.state == "completed" && !it.videoPath.isNullOrBlank() }
-            .map { it.id }
+
+        // The native mpv downloader owns the actual offline files. Do not rely
+        // solely on metadata.json: older/in-progress migrations can leave a
+        // perfectly valid MP4 behind even when the status record is stale.
+        MpvOfflineStore.listStatuses(context)
+            .filter { it.state == "completed" }
+            .forEach { status ->
+                if (MpvOfflineStore.isCompleted(context, status.id.substringBefore("::"), status.episodeId)) {
+                    ids += status.id
+                }
+            }
+
+        // Also discover completed files directly. This makes the UI recover
+        // immediately after process death or a status-write race.
+        MpvOfflineStore.root(context).listFiles()?.forEach { dir ->
+            val meta = File(dir, "metadata.json")
+            if (!meta.isFile) return@forEach
+            runCatching {
+                val obj = org.json.JSONObject(meta.readText())
+                val id = obj.optString("id")
+                val episodeId = obj.optString("episodeId")
+                val animeId = id.substringBefore("::").takeIf { it.isNotBlank() }
+                    ?: return@runCatching
+                if (id.isNotBlank() && episodeId.isNotBlank() &&
+                    MpvOfflineStore.isCompleted(context, animeId, episodeId)
+                ) {
+                    ids += id
+                }
+            }
+        }
 
         return ids
     }

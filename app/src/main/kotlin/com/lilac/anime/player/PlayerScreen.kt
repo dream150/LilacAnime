@@ -69,6 +69,7 @@ import com.lilac.anime.network.LinkkfRequestContextStore
 import com.lilac.anime.player.MpvPlayerEngine
 import com.lilac.anime.player.MpvPlayerSurfaceView
 import com.lilac.anime.network.OfflineOpEdFingerprintStore
+import com.lilac.anime.network.OpEdAnalysisForegroundService
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.SubtitleAssetUtil
 import com.lilac.anime.data.subtitle.downloadSubtitleFile
@@ -1178,39 +1179,37 @@ fun PlayerScreen(
         currentEpisode = target
     }
 
-    // Autoplay is driven by a single de-duplicated completion signal from mpv.
-    // MPV_EVENT_END_FILE is the normal path, while eof-reached is a fallback for
-    // HLS streams that do not reliably deliver END_FILE. MpvPlayerEngine emits
-    // playbackEndedEvents only once per loaded generation, so both signals cannot
-    // advance two episodes. Replacement events are suppressed until START_FILE.
-    LaunchedEffect(mpvEngine) {
-        mpvEngine.playbackEndedEvents.collect { eventGeneration ->
-            // Read the current values from rememberUpdatedState at event time.
-            // Do not capture nextEpisode/currentEpisode/autoPlay from the first
-            // composition: that made autoplay keep an obsolete next-episode value
-            // even though the manual Next button had the correct one.
-            val completedEpisode = currentEpisodeState.value
-            val target = currentNextEpisodeState.value
+    // 다음화 자동재생은 mpv의 END_FILE/eof 이벤트를 사용하지 않는다.
+    // 실제 재생 위치가 영상 끝까지 도달했을 때, 화면의 "다음 화" 버튼을
+    // 누른 것과 동일하게 switchEpisode(nextEpisode)를 호출한다.
+    // 이렇게 하면 END_FILE 발생 시점/순서에 의존하지 않고 현재 재생시간과
+    // 영상 길이만으로 다음화를 전환할 수 있다.
+    LaunchedEffect(mpvEngine, currentEpisode.id, currentEpisode.displayNumber) {
+        while (isActive) {
             val autoPlay = currentAutoPlayState.value
+            val target = currentNextEpisodeState.value
+            val duration = mpvEngine.duration
+            val position = mpvEngine.currentPosition
 
-            Log.d(
-                "MpvEpisode",
-                "PLAYBACK_ENDED current=${completedEpisode.displayNumber} " +
-                    "target=${target?.displayNumber} auto=${autoPlay} generation=$eventGeneration"
-            )
+            // duration이 충분히 확보된 상태에서 마지막 0.5초 이내에 들어오면
+            // 완료로 판단한다. position이 duration을 조금 넘는 경우도 허용한다.
+            val reachedEnd = duration > 1_000L &&
+                position >= (duration - 500L).coerceAtLeast(0L)
 
-            vm.updateProgress(
-                context = context,
-                animeId = anime.id,
-                episodeNumber = completedEpisode.number,
-                episodeKey = completedEpisode.displayNumber,
-                progress = 0f
-            )
+            if (autoPlay && target != null && reachedEnd) {
+                Log.d(
+                    "MpvEpisode",
+                    "AUTO_NEXT_BY_POSITION current=${currentEpisode.displayNumber} " +
+                        "target=${target.displayNumber} position=$position duration=$duration"
+                )
 
-            if (autoPlay && target != null) {
-                pendingSeekPositionMs = -1L
+                // 수동 "다음 화" 버튼과 완전히 같은 경로를 사용한다.
+                // switchEpisode() 내부에서 현재 위치 저장, mpv 교체, 새 회차 로드를 처리한다.
                 switchEpisode(target)
+                break
             }
+
+            delay(100L)
         }
     }
 
@@ -1447,9 +1446,11 @@ fun PlayerScreen(
         isLoading = false
     }
 
-    LaunchedEffect(streamUrl, currentEpisode.id, currentEpisode.number, isDownloaded, vm.playerSettings.offlineOpEdAnalysisEnabled) {
-        val currentStreamUrl = streamUrl ?: return@LaunchedEffect
-
+    // Offline OP/ED analysis is tied to the completed local file, not to the
+    // resolved streaming URL. The mpv-native player can load a local MP4 without
+    // ever producing the old streamUrl lifecycle, so using streamUrl as the
+    // trigger could prevent analysis from starting entirely.
+    LaunchedEffect(currentEpisode.id, currentEpisode.number, isDownloaded, vm.playerSettings.offlineOpEdAnalysisEnabled) {
         chapterSkipSegments = emptyList()
         activeChapterSkipSegment = null
         buttonChapterSkipSegment = null
@@ -1458,16 +1459,11 @@ fun PlayerScreen(
         chapterAnalysisStatus = null
         chapterAnalysisVisible = false
 
-        // OP/ED 분석은 반드시 오프라인 저장이 완료된 회차에서만 수행한다.
-        // 스트리밍 재생에서는 과거에 저장된 분석 결과조차 여기서 불러오지 않는다.
-        // 따라서 스트리밍 시작 시 OP/ED 분석 때문에 발생하는 디스크/네트워크 작업이 없다.
         if (!isDownloaded || !vm.playerSettings.offlineOpEdAnalysisEnabled) {
             skipEpisodeKey = null
             return@LaunchedEffect
         }
 
-        // 다운로드 상태가 먼저 갱신되고 실제 완료 MP4가 뒤늦게 생성되는 경우를
-        // 방지한다. OP/ED 분석은 실제 로컬 완료 파일이 있을 때만 시작한다.
         val completedOfflinePath = withContext(Dispatchers.IO) {
             MpvOfflineStore.completedPath(context, anime.id, currentEpisode.id)
         }
@@ -1477,44 +1473,45 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
 
+        // Wait for mpv to expose the local file duration. This is deliberately
+        // independent of streamUrl so local playback and analysis share the same
+        // source of truth.
         while (isActive) {
-            val duration = mpvEngine.duration
-            if (mpvEngine.playbackState == MpvPlayerEngine.STATE_READY && duration > 0L && duration > 0L) {
-                val durationSeconds = (duration / 1000L).toInt().coerceAtLeast(1)
-                Log.d("AniChapters", "START episode=${currentEpisode.number} duration=$durationSeconds source=linkkf")
-                // 분석 과정은 화면에 표시하지 않는다. 상세 진행 로그는 Logcat에만 남긴다.
+            if (mpvEngine.playbackState == MpvPlayerEngine.STATE_READY && mpvEngine.duration > 0L) {
+                val durationSeconds = (mpvEngine.duration / 1000L).toInt().coerceAtLeast(1)
+                Log.d(
+                    "AniChapters",
+                    "START episode=${currentEpisode.number} duration=$durationSeconds source=offline path=$completedOfflinePath"
+                )
+
+                OpEdAnalysisForegroundService.start(context)
                 val chapterStatus: (String) -> Unit = { raw ->
                     Log.d("AniChapters", "STATUS $raw")
+                    OpEdAnalysisForegroundService.update(context, raw)
                 }
 
-                // Downloaded episodes are analyzed entirely from the Media3 cache.
-                // This avoids WebView/network collection during the offline test.
-                chapterSkipSegments = if (isDownloaded && vm.playerSettings.offlineOpEdAnalysisEnabled) {
-                    Log.d("AniChapters", "OFFLINE_MODE episode=${currentEpisode.number}")
-                    LinkkfChapterService.detectSkipSegmentsOffline(
-                        context = context,
-                        animeId = anime.id,
-                        currentEpisode = currentEpisode,
-                        episodes = episodeList,
-                        episodeDurationSeconds = durationSeconds,
-                        onStatus = chapterStatus
+                try {
+                    chapterSkipSegments = LinkkfChapterService.detectSkipSegmentsOffline(
+                    context = context,
+                    animeId = anime.id,
+                    currentEpisode = currentEpisode,
+                    episodes = episodeList,
+                    episodeDurationSeconds = durationSeconds,
+                    onStatus = chapterStatus
+                )
+                    skipEpisodeKey = "${anime.id}_${currentEpisode.displayNumber}"
+
+                    Log.d(
+                        "AniChapters",
+                        "LOADED episode=${currentEpisode.number} count=${chapterSkipSegments.size}"
                     )
-                } else {
-                    // 방어 코드: 위에서 스트리밍은 이미 return 되었으므로
-                    // 네트워크/스트림 기반 OP/ED 분석은 절대로 호출하지 않는다.
-                    emptyList()
-                }
-                skipEpisodeKey = "${anime.id}_${currentEpisode.displayNumber}"
-                Log.d("AniChapters", "LOADED episode=${currentEpisode.number} count=${chapterSkipSegments.size}")
 
-                // 현재 회차 분석이 끝난 뒤, 바로 다음 회차도 다운로드가 완료되어
-                // 있다면 같은 백그라운드 흐름에서 한 번 더 분석한다. 스트리밍에는
-                // 이 LaunchedEffect 자체가 진입하지 않으므로 네트워크 분석은 없다.
+                // If the next episode is already downloaded, pre-analyze it too.
                 val next = nextEpisode
-                var nextResult: List<ChapterSkipSegment> = emptyList()
                 if (next != null && vm.playerSettings.offlineOpEdAnalysisEnabled &&
-                    LinkkfChapterService.isOfflineEpisodeCompleted(context, anime.id, next)) {
-                    nextResult = LinkkfChapterService.detectSkipSegmentsOffline(
+                    LinkkfChapterService.isOfflineEpisodeCompleted(context, anime.id, next)
+                ) {
+                    val nextResult = LinkkfChapterService.detectSkipSegmentsOffline(
                         context = context,
                         animeId = anime.id,
                         currentEpisode = next,
@@ -1522,14 +1519,15 @@ fun PlayerScreen(
                         episodeDurationSeconds = 0,
                         onStatus = chapterStatus
                     )
-                    Log.d("AniChapters", "NEXT_LOADED episode=${next.number} count=${nextResult.size}")
+                        Log.d("AniChapters", "NEXT_LOADED episode=${next.number} count=${nextResult.size}")
+                    }
+                } finally {
+                    OpEdAnalysisForegroundService.stop(context)
                 }
+
                 chapterAnalysisStatus = null
                 chapterAnalysisVisible = false
-
-                // 모든 분석이 끝난 뒤에만 사용자에게 한 번 알린다.
-                // 캐시된 결과를 불러온 경우에도 실제 분석 과정을 표시하지 않는다.
-                if (chapterSkipSegments.isNotEmpty() || nextResult.isNotEmpty()) {
+                if (chapterSkipSegments.isNotEmpty()) {
                     Toast.makeText(context, "OP/ED를 발견했습니다.", Toast.LENGTH_SHORT).show()
                 }
                 break

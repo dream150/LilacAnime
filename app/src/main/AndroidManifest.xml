@@ -48,6 +48,11 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <service
+            android:name=".network.OpEdAnalysisForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
 
     </application>
 </manifest>

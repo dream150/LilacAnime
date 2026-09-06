@@ -22,7 +22,7 @@ object OfflineOpEdFingerprintStore {
     private const val PREFS = "linkkf_oped_fingerprints"
     private const val KEY_PREFIX = "anime_"
     private const val RESULT_PREFIX = "result_"
-    private const val VERSION = 10
+    private const val VERSION = 13
 
     data class Template(
         val op: FloatArray?,
@@ -40,7 +40,7 @@ object OfflineOpEdFingerprintStore {
         if (root.optInt("version", -1) != VERSION) return null
         val op = decode(root.optString("op", ""))
         val ed = decode(root.optString("ed", ""))
-        if (op == null && ed == null) null else Template(op, ed)
+        Template(op, ed)
     }.getOrNull()
 
     fun save(
@@ -49,8 +49,7 @@ object OfflineOpEdFingerprintStore {
         opFingerprint: FloatArray?,
         edFingerprint: FloatArray?
     ): Boolean {
-        if (opFingerprint == null && edFingerprint == null) return false
-        val root = JSONObject()
+                val root = JSONObject()
             .put("version", VERSION)
             .put("format", "audio-fingerprint")
         opFingerprint?.let { root.put("op", encode(it)) }

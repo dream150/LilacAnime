@@ -149,6 +149,9 @@ class LilacDownloadService : Service() {
                         )
                     )
                 }
+                // Persist completion only after the final MP4 has passed the
+                // downloader's validation. Player/ViewModel can then recognize
+                // this episode as offline without waiting for the old store.
                 MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, 1f, "completed", title, episodeId, file.absolutePath))
                 updateNotification("$title - ${episodeId}", 1f, completed = true)
             } catch (t: Throwable) {
