@@ -42,8 +42,8 @@ object LinkkfChapterService {
     // position of the other comparison episodes.
     private const val POSITION_OUTLIER_TOLERANCE_SECONDS = 60.0
     private const val MIN_MATCH_SECONDS = 30.0
-    private const val PLAY_REFERER = "https://playv2.sub3.top/"
-    private const val PLAY_ORIGIN = "https://playv2.sub3.top"
+    private const val PLAY_REFERER = "https://play.sub3.top/"
+    private const val PLAY_ORIGIN = "https://play.sub3.top"
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -66,7 +66,7 @@ object LinkkfChapterService {
             status("ANALYSIS_START episode=${currentEpisode.number} duration=${episodeDurationSeconds}s")
 
             status("CURRENT_FRONT_DOWNLOAD start=0s end=${min(WINDOW_SECONDS, duration).toInt()}s")
-            val currentFrontFile = materializeWindow(context, streamUrl, 0.0, min(WINDOW_SECONDS, duration))
+            val currentFrontFile = materializeWindow(context, streamUrl, 0.0, min(WINDOW_SECONDS, duration), null)
             status(if (currentFrontFile != null) "CURRENT_FRONT_DOWNLOAD_OK bytes=${currentFrontFile.length()}" else "CURRENT_FRONT_DOWNLOAD_FAILED")
 
             // Do not derive the tail range from the player duration.
@@ -74,7 +74,7 @@ object LinkkfChapterService {
             // slightly, especially around the final segment. Resolve the media
             // playlist first and calculate the tail window from its real end.
             status("CURRENT_BACK_RANGE_RESOLVE_START playerDuration=${duration}s window=${WINDOW_SECONDS}s")
-            val currentBackWindow = materializeTailWindow(context, streamUrl, WINDOW_SECONDS)
+            val currentBackWindow = materializeTailWindow(context, streamUrl, WINDOW_SECONDS, null)
             val currentBackFile = currentBackWindow?.file
             val currentBackStart = currentBackWindow?.startSeconds ?: max(0.0, duration - WINDOW_SECONDS)
             status(if (currentBackFile != null) "CURRENT_BACK_DOWNLOAD_OK bytes=${currentBackFile.length()} start=${currentBackWindow?.startSeconds} end=${currentBackWindow?.endSeconds}" else "CURRENT_BACK_DOWNLOAD_FAILED")
@@ -128,17 +128,18 @@ object LinkkfChapterService {
 
             for ((index, candidate) in candidates.withIndex()) {
                 val url = collected.urls[candidate.id]
+                val referer = collected.referers[candidate.id]
                 if (url.isNullOrBlank()) {
                     status("CANDIDATE_${index + 1}_SKIP episode=${candidate.number} reason=no_index_m3u8")
                     continue
                 }
-                status("CANDIDATE_${index + 1}_M3U8 episode=${candidate.number} url=$url")
+                status("CANDIDATE_${index + 1}_M3U8 episode=${candidate.number} url=$url referer=${referer ?: "<fallback>"}")
                 status("CANDIDATE_${index + 1}_START episode=${candidate.number}")
 
                 // Candidate duration is not known before playback. Analyze the first window for OP.
                 currentFront?.let { front ->
                     status("CANDIDATE_${index + 1}_OP_DOWNLOAD episode=${candidate.number}")
-                    val file = materializeWindow(context, url, 0.0, WINDOW_SECONDS)
+                    val file = materializeWindow(context, url, 0.0, WINDOW_SECONDS, referer)
                     status(if (file != null) "CANDIDATE_${index + 1}_OP_DOWNLOAD_OK bytes=${file.length()}" else "CANDIDATE_${index + 1}_OP_DOWNLOAD_FAILED")
                     status("CANDIDATE_${index + 1}_OP_FINGERPRINT_START")
                     val fp = file?.let { decodeFingerprint(it, 0.0, WINDOW_SECONDS) }
@@ -151,7 +152,7 @@ object LinkkfChapterService {
                 // For ED, HLS playlists can provide a tail window directly from their segment timeline.
                 currentBack?.let { back ->
                     status("CANDIDATE_${index + 1}_ED_DOWNLOAD episode=${candidate.number}")
-                    val tailWindow = materializeTailWindow(context, url, WINDOW_SECONDS)
+                    val tailWindow = materializeTailWindow(context, url, WINDOW_SECONDS, referer)
                     val tail = tailWindow?.file
                     status(if (tail != null) "CANDIDATE_${index + 1}_ED_DOWNLOAD_OK bytes=${tail.length()} start=${tailWindow?.startSeconds} end=${tailWindow?.endSeconds}" else "CANDIDATE_${index + 1}_ED_DOWNLOAD_FAILED")
                     status("CANDIDATE_${index + 1}_ED_FINGERPRINT_START")
@@ -496,10 +497,15 @@ object LinkkfChapterService {
 
     private data class TailWindow(val file: File, val startSeconds: Double, val endSeconds: Double)
 
-    private fun materializeTailWindow(context: Context, url: String, seconds: Double): TailWindow? {
-        Log.d(TAG, "MATERIALIZE_TAIL_WINDOW_START url=$url seconds=$seconds")
+    private fun materializeTailWindow(
+        context: Context,
+        url: String,
+        seconds: Double,
+        referer: String? = null
+    ): TailWindow? {
+        Log.d(TAG, "MATERIALIZE_TAIL_WINDOW_START url=$url seconds=$seconds referer=$referer")
         return runCatching {
-            val playlistResult = fetchPlaylistIfHls(url)
+            val playlistResult = fetchPlaylistIfHls(url, referer)
             if (playlistResult == null) {
                 Log.w(TAG, "MATERIALIZE_TAIL_NOT_HLS url=$url")
                 return@runCatching null
@@ -510,14 +516,14 @@ object LinkkfChapterService {
                 val variants = parseMasterVariants(playlist, mediaUrl)
                 Log.d(TAG, "HLS_MASTER_VARIANTS count=${variants.size} url=$mediaUrl")
                 mediaUrl = variants.maxByOrNull { it.bandwidth }?.url ?: return@runCatching null
-                playlist = getText(mediaUrl)
+                playlist = getText(mediaUrl, referer)
             }
             val segments = parseMediaSegments(playlist, mediaUrl)
             Log.d(TAG, "HLS_MEDIA_PLAYLIST segments=${segments.size} url=$mediaUrl")
             val total = segments.lastOrNull()?.end ?: return@runCatching null
             val actualStart = max(0.0, total - seconds)
             Log.d(TAG, "HLS_ACTUAL_DURATION playlist=${total}s requestedWindow=${seconds}s tailStart=${actualStart}s tailEnd=${total}s")
-            materializeHlsWindow(context, mediaUrl, actualStart, total, playlist)?.let { file ->
+            materializeHlsWindow(context, mediaUrl, actualStart, total, playlist, referer)?.let { file ->
                 TailWindow(file, actualStart, total)
             }
         }.onFailure {
@@ -525,10 +531,10 @@ object LinkkfChapterService {
         }.getOrNull()
     }
 
-    private fun materializeWindow(context: Context, url: String, start: Double, end: Double): File? {
+    private fun materializeWindow(context: Context, url: String, start: Double, end: Double, referer: String? = null): File? {
         Log.d(TAG, "MATERIALIZE_WINDOW_START url=$url start=$start end=$end")
         return runCatching {
-            val playlistResult = fetchPlaylistIfHls(url)
+            val playlistResult = fetchPlaylistIfHls(url, referer)
             if (playlistResult != null) {
                 Log.d(TAG, "MATERIALIZE_HLS_DETECTED url=${playlistResult.url} contentType=${playlistResult.contentType}")
                 var mediaUrl = playlistResult.url
@@ -538,10 +544,10 @@ object LinkkfChapterService {
                     Log.d(TAG, "HLS_MASTER_VARIANTS count=${variants.size} url=$mediaUrl")
                     mediaUrl = variants.maxByOrNull { it.bandwidth }?.url
                         ?: throw IllegalStateException("HLS master has no variants")
-                    playlist = getText(mediaUrl)
+                    playlist = getText(mediaUrl, referer)
                     Log.d(TAG, "HLS_VARIANT_SELECTED url=$mediaUrl")
                 }
-                return@runCatching materializeHlsWindow(context, mediaUrl, start, end, playlist)
+                return@runCatching materializeHlsWindow(context, mediaUrl, start, end, playlist, referer)
             }
             Log.d(TAG, "MATERIALIZE_NOT_HLS_DIRECT_DOWNLOAD url=$url")
             download(context, url, "episode")
@@ -557,8 +563,8 @@ object LinkkfChapterService {
      * redirects or do not contain the literal `.m3u8`, so URL-only detection is
      * insufficient and silently sent the playlist through the binary downloader.
      */
-    private fun fetchPlaylistIfHls(url: String): PlaylistResult? {
-        val request = buildHlsRequest(url).build()
+    private fun fetchPlaylistIfHls(url: String, refererOverride: String? = null): PlaylistResult? {
+        val request = buildHlsRequest(url, refererOverride).build()
         http.newCall(request).execute().use { response ->
             val contentType = response.header("Content-Type")
             val finalUrl = response.request.url.toString()
@@ -577,13 +583,15 @@ object LinkkfChapterService {
         }
     }
 
-    private fun buildHlsRequest(url: String): Request.Builder {
+    private fun buildHlsRequest(url: String, refererOverride: String? = null): Request.Builder {
         val origin = runCatching { URI(url).let { u ->
             if (u.scheme.equals("http", true) || u.scheme.equals("https", true))
                 "${u.scheme}://${u.host}${if (u.port > 0) ":${u.port}" else ""}"
             else null
         }}.getOrNull()
-        val referer = origin?.let { "$it/" } ?: PLAY_REFERER
+        val referer = refererOverride?.takeIf { it.isNotBlank() }
+            ?: origin?.let { "$it/" }
+            ?: PLAY_REFERER
         return Request.Builder()
             .url(url)
             .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
@@ -602,14 +610,15 @@ object LinkkfChapterService {
         playlistUrl: String,
         start: Double,
         end: Double,
-        suppliedPlaylist: String? = null
+        suppliedPlaylist: String? = null,
+        refererOverride: String? = null
     ): File? = runCatching {
         var mediaUrl = playlistUrl
-        var playlist = suppliedPlaylist ?: getText(mediaUrl)
+        var playlist = suppliedPlaylist ?: getText(mediaUrl, refererOverride)
         if (playlist.contains("#EXT-X-STREAM-INF")) {
             val variants = parseMasterVariants(playlist, mediaUrl)
             mediaUrl = variants.maxByOrNull { it.bandwidth }?.url ?: return null
-            playlist = getText(mediaUrl)
+            playlist = getText(mediaUrl, refererOverride)
         }
 
         // Encrypted HLS cannot be concatenated safely without implementing key/decrypt
@@ -634,10 +643,10 @@ object LinkkfChapterService {
         file.outputStream().buffered().use { output ->
             if (initUrl != null) {
                 statusLog("HLS_INIT_SEGMENT url=$initUrl")
-                downloadBytes(initUrl, output)
+                downloadBytes(initUrl, output, refererOverride)
             }
             for (segment in selected) {
-                downloadBytes(segment.url, output)
+                downloadBytes(segment.url, output, refererOverride)
             }
         }
         Log.d(TAG, "HLS_WINDOW start=$start end=$end segments=${selected.size} first=${selected.first().url} last=${selected.last().url} file=${file.length()}")
@@ -676,8 +685,8 @@ object LinkkfChapterService {
         Log.d(TAG, message)
     }
 
-    private fun downloadBytes(url: String, output: java.io.OutputStream) {
-        val request = buildHlsRequest(url).header("Accept", "*/*").build()
+    private fun downloadBytes(url: String, output: java.io.OutputStream, refererOverride: String? = null) {
+        val request = buildHlsRequest(url, refererOverride).header("Accept", "*/*").build()
         http.newCall(request).execute().use { response ->
             Log.d(TAG, "HLS_HTTP code=${response.code} bytes=${response.body?.contentLength()} url=$url")
             if (!response.isSuccessful) throw IllegalStateException("HLS segment HTTP ${response.code} url=$url")
@@ -708,8 +717,8 @@ object LinkkfChapterService {
 
     private fun resolveUrl(base: String, child: String): String = URI(base).resolve(child).toString()
 
-    private fun getText(url: String): String {
-        val request = buildHlsRequest(url).header("Accept", "*/*").build()
+    private fun getText(url: String, refererOverride: String? = null): String {
+        val request = buildHlsRequest(url, refererOverride).header("Accept", "*/*").build()
         http.newCall(request).execute().use { response ->
             Log.d(TAG, "HLS_PLAYLIST_HTTP code=${response.code} url=$url")
             if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code} playlist=$url")

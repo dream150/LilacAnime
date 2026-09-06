@@ -12,8 +12,8 @@ android {
         applicationId = "com.lilac.anime"
         minSdk = 26
         targetSdk = 37
-        versionCode = 15
-        versionName = "0.2.5"
+        versionCode = 18
+        versionName = "0.2.8"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")

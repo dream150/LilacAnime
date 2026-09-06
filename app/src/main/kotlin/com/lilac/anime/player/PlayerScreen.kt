@@ -362,6 +362,8 @@ fun PlayerScreen(
     
     var isFullScreen by rememberSaveable { mutableStateOf(true) }
     var streamUrl by remember { mutableStateOf<String?>(null) }
+    // Referer captured from the actual Linkkf WebView M3U8 request.
+    var streamReferer by remember { mutableStateOf<String?>(null) }
     var resolvedVideoPageUrl by remember { mutableStateOf<String?>(null) }
     var subtitlesUrl by remember { mutableStateOf<String?>(null) }
     // Linkkf VTT 주소는 한 번 발견되면 자막 소스를 Kairan으로 바꿔도 유지한다.
@@ -694,6 +696,7 @@ fun PlayerScreen(
             }
         }
         streamUrl = null
+        streamReferer = null
         subtitlesUrl = null
         linkkfSubtitleUrl = currentEpisode.vttUrl
         subtitleSource = "none"
@@ -1272,7 +1275,9 @@ fun PlayerScreen(
         // Referer for subtitle requests as well. mpv applies http-header-fields
         // to externally loaded subtitle files, which fixes protected VTT loading.
         val referer = if (vm.playerSettings.videoSourcePreference == "linkkf") {
-            "https://playv2.sub3.top/"
+            // Prefer the exact Referer observed by WebView for this episode.
+            // Fall back to the player host only when the browser did not expose it.
+            streamReferer?.takeIf { it.isNotBlank() } ?: "https://playv2.sub3.top/"
         } else if (vm.playerSettings.videoSourcePreference == "animenosub") {
             actualUrl
         } else {
@@ -1393,7 +1398,12 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
         if (currentEpisode.videoUrl != pageUrl || streamUrl != null) return@LaunchedEffect
-        Log.d("MpvEpisode", "AUTO_STREAM_FALLBACK_FOUND episode=${currentEpisode.displayNumber} m3u8=$resolved")
+        val capturedReferer = result.referers[currentEpisode.id]
+        if (!capturedReferer.isNullOrBlank()) {
+            streamReferer = capturedReferer
+            Log.d("MpvEpisode", "AUTO_STREAM_REFERER_CAPTURED episode=${currentEpisode.displayNumber} referer=$capturedReferer")
+        }
+        Log.d("MpvEpisode", "AUTO_STREAM_FALLBACK_FOUND episode=${currentEpisode.displayNumber} m3u8=$resolved referer=${capturedReferer ?: "<fallback>"}")
         selectedStreamingQuality = null
         parsedStreamingQualities = listOf(StreamQuality("Auto", resolved))
         streamUrl = resolved
@@ -1655,10 +1665,7 @@ fun PlayerScreen(
             }
             !isOffline && !resolvedVideoPageUrl.isNullOrBlank() -> {
                 val extractorTargetUrl = resolvedVideoPageUrl ?: ""
-                // Linkkf 회차 URL은 실제 m3u8/VTT가 아니라 플레이어 페이지다.
-                // 따라서 Linkkf에서도 반드시 숨겨진 WebView를 띄워 페이지를 로드하고
-                // 네트워크 요청에서 m3u8/VTT를 추출해야 한다.
-                key(extractorTargetUrl, vm.playerSettings.videoSourcePreference) {
+                if (vm.playerSettings.videoSourcePreference != "linkkf") key(extractorTargetUrl) {
                     StreamUrlExtractor(
                     targetUrl = extractorTargetUrl,
                     onQualitiesFound = { qualities ->
@@ -1688,8 +1695,8 @@ fun PlayerScreen(
                             return@StreamUrlExtractor
                         }
                         if (vm.playerSettings.videoSourcePreference == "linkkf") {
-                            // WebView가 실제 자막 파일(.vtt)을 요청한 순간의 URL을 그대로 사용한다.
-                            // .vtt 자체가 자막 파일이므로 별도의 URL 변환/재요청을 하지 않는다.
+                            // 발견한 VTT를 항상 보관한다. Kairan을 보고 있는 동안 발견되어도
+                            // 나중에 Linkkf VTT를 선택하면 즉시 다시 사용할 수 있어야 한다.
                             Log.d("Subtitle", "VTT_FOUND url=$foundUrl episode=${currentEpisode.displayNumber}")
                             linkkfSubtitleUrl = foundUrl
                             if (subtitleSourcePreference == "linkkf") {

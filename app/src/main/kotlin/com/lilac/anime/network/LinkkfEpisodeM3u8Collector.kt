@@ -39,6 +39,10 @@ object LinkkfEpisodeM3u8Collector {
 
     data class Result(
         val urls: Map<String, String>,
+        // Referer actually observed on the browser request that fetched the M3U8.
+        // This is preferable to hard-coding https://playv2.sub3.top/ because
+        // Linkkf may generate a per-episode playhd3.php URL.
+        val referers: Map<String, String>,
         val failedEpisodeIds: Set<String>
     )
 
@@ -52,11 +56,12 @@ object LinkkfEpisodeM3u8Collector {
             .take(MAX_WEBVIEWS)
 
         if (targets.isEmpty()) {
-            continuation.resume(Result(emptyMap(), emptySet()))
+            continuation.resume(Result(emptyMap(), emptyMap(), emptySet()))
             return@suspendCancellableCoroutine
         }
 
         val urls = LinkedHashMap<String, String>()
+        val referers = LinkedHashMap<String, String>()
         val failed = LinkedHashSet<String>()
         val completed = AtomicInteger(0)
         val webViews = ArrayList<WebView>(targets.size)
@@ -66,10 +71,10 @@ object LinkkfEpisodeM3u8Collector {
             if (finished) return
             if (completed.get() < targets.size) return
             finished = true
-            Log.d(TAG, "M3U8_COLLECTION_COMPLETE success=${urls.size} failed=${failed.size}")
+            Log.d(TAG, "M3U8_COLLECTION_COMPLETE success=${urls.size} referers=${referers.size} failed=${failed.size}")
             webViews.forEach { it.stopLoading(); it.destroy() }
             webViews.clear()
-            if (continuation.isActive) continuation.resume(Result(urls.toMap(), failed.toSet()))
+            if (continuation.isActive) continuation.resume(Result(urls.toMap(), referers.toMap(), failed.toSet()))
         }
 
         fun finishWithTimeout() {
@@ -78,10 +83,10 @@ object LinkkfEpisodeM3u8Collector {
             targets.forEach { target ->
                 if (!urls.containsKey(target.id)) failed += target.id
             }
-            Log.d(TAG, "M3U8_COLLECTION_TIMEOUT success=${urls.size} failed=${failed.size}")
+            Log.d(TAG, "M3U8_COLLECTION_TIMEOUT success=${urls.size} referers=${referers.size} failed=${failed.size}")
             webViews.forEach { it.stopLoading(); it.destroy() }
             webViews.clear()
-            if (continuation.isActive) continuation.resume(Result(urls.toMap(), failed.toSet()))
+            if (continuation.isActive) continuation.resume(Result(urls.toMap(), referers.toMap(), failed.toSet()))
         }
 
         mainHandler.postDelayed({ finishWithTimeout() }, TIMEOUT_MS)
@@ -112,14 +117,45 @@ object LinkkfEpisodeM3u8Collector {
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
                     webViewClient = object : WebViewClient() {
-                        private fun report(url: String) {
+                        // Linkkf's player is opened through a generated playhd3.php URL.
+                        // Depending on the WebView/Chromium version, the Referer header of
+                        // the subsequent m3u8 request is not always exposed through
+                        // WebResourceRequest.requestHeaders. Keep the most recently
+                        // observed playhd3.php URL as a per-WebView fallback.
+                        private var lastPlayHdUrl: String? = null
+
+                        private fun observePlayerUrl(url: String?) {
+                            val value = url?.trim().orEmpty()
+                            if (value.contains("/r2/playhd3.php", ignoreCase = true)) {
+                                lastPlayHdUrl = value
+                                Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_PLAYHD_OBSERVED episode=${episode.number} url=$value")
+                                onStatus("M3U8_WEBVIEW_${index + 1}_PLAYHD_OBSERVED episode=${episode.number} url=$value")
+                            }
+                        }
+
+                        private fun report(url: String, requestReferer: String? = null) {
                             val path = runCatching { Uri.parse(url).path.orEmpty().lowercase() }.getOrDefault("")
                             if (!path.endsWith("/index.m3u8") && !path.endsWith("index.m3u8")) return
                             synchronized(urls) {
                                 if (!urls.containsKey(episode.id)) {
                                     urls[episode.id] = url
-                                    Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_FOUND episode=${episode.number} display=${episode.displayNumber} page=$pageUrl m3u8=$url")
-                                    onStatus("M3U8_WEBVIEW_${index + 1}_FOUND episode=${episode.number} page=$pageUrl m3u8=$url")
+
+                                    // WebView exposes the headers of the actual resource request.
+                                    // For Linkkf this is commonly the generated playhd3.php URL,
+                                    // e.g. https://playv2.sub3.top/r2/playhd3.php?... . Preserve
+                                    // it exactly instead of replacing it with the host root.
+                                    val observedReferer = requestReferer
+                                        ?.trim()
+                                        ?.takeIf { it.isNotBlank() }
+                                        ?: lastPlayHdUrl
+                                            ?.trim()
+                                            ?.takeIf { it.isNotBlank() }
+                                    if (observedReferer != null) {
+                                        referers[episode.id] = observedReferer
+                                    }
+
+                                    Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_FOUND episode=${episode.number} display=${episode.displayNumber} page=$pageUrl m3u8=$url referer=${observedReferer ?: "<none>"}")
+                                    onStatus("M3U8_WEBVIEW_${index + 1}_FOUND episode=${episode.number} page=$pageUrl m3u8=$url referer=${observedReferer ?: "<none>"}")
                                     completed.incrementAndGet()
                                     mainHandler.post { finishIfDone() }
                                 }
@@ -127,12 +163,14 @@ object LinkkfEpisodeM3u8Collector {
                         }
 
                         override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                            observePlayerUrl(url)
                             Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_PAGE_START episode=${episode.number} url=$url")
                             onStatus("M3U8_WEBVIEW_${index + 1}_PAGE_START episode=${episode.number} url=$url")
                             super.onPageStarted(view, url, favicon)
                         }
 
                         override fun onPageFinished(view: WebView?, url: String?) {
+                            observePlayerUrl(url)
                             Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_PAGE_FINISHED episode=${episode.number} url=$url")
                             onStatus("M3U8_WEBVIEW_${index + 1}_PAGE_FINISHED episode=${episode.number} url=$url")
                             // Do not navigate to the iframe ourselves. Loading the watch page
@@ -168,13 +206,20 @@ object LinkkfEpisodeM3u8Collector {
                         }
 
                         override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                            request?.url?.toString()?.let(::report)
+                            request?.let {
+                                val url = it.url?.toString() ?: return@let
+                                observePlayerUrl(url)
+                                val requestReferer = it.requestHeaders.entries.firstOrNull { entry ->
+                                    entry.key.equals("Referer", ignoreCase = true)
+                                }?.value
+                                report(url, requestReferer)
+                            }
                             return super.shouldInterceptRequest(view, request)
                         }
 
                         @Suppress("DEPRECATION")
                         override fun shouldInterceptRequest(view: WebView?, url: String?): WebResourceResponse? {
-                            url?.let(::report)
+                            url?.let { report(it, null) }
                             return super.shouldInterceptRequest(view, url)
                         }
                     }
