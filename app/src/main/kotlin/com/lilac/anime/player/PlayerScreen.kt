@@ -702,8 +702,12 @@ fun PlayerScreen(
             }
         }
         streamUrl = null
-        streamReferer = null
-        subtitleReferer = null
+        streamReferer = withContext(Dispatchers.IO) {
+            LinkkfRequestContextStore.get(context, anime.id, currentEpisode.id)
+        }
+        subtitleReferer = withContext(Dispatchers.IO) {
+            LinkkfRequestContextStore.getSubtitle(context, anime.id, currentEpisode.id)
+        }
         subtitlesUrl = null
         linkkfSubtitleUrl = currentEpisode.vttUrl
         subtitleSource = "none"
@@ -1267,8 +1271,9 @@ fun PlayerScreen(
         val actualUrl = if (isLocalFile && !url.startsWith("file://")) "file://${url}" else url
 
         // The playback host can change (for example play.sub3.top -> playv2.sub3.top).
-        // Keep the request headers aligned with the actual playback host instead of
-        // sending a stale hard-coded Referer/Origin from the previous host.
+        // The authoritative value is the Referer observed on the actual M3U8 request.
+        // Never replace play.sub3.top with playv2.sub3.top just because the M3U8 host
+        // happens to be playv2.sub3.top.
         val playbackOrigin = runCatching {
             java.net.URI(actualUrl).let { uri ->
                 if (uri.scheme.equals("http", true) || uri.scheme.equals("https", true)) {
@@ -1276,22 +1281,30 @@ fun PlayerScreen(
                 } else null
             }
         }.getOrNull()
-        // Linkkf VTT files are protected by the player-v2 host. Keep the video
-        // request tied to its actual host, but use playv2.sub3.top as the common
-        // Referer for subtitle requests as well. mpv applies http-header-fields
-        // to externally loaded subtitle files, which fixes protected VTT loading.
         val referer = if (vm.playerSettings.videoSourcePreference == "linkkf") {
-            // Prefer the exact Referer observed by WebView for this episode.
-            // Fall back to the player host only when the browser did not expose it.
-            streamReferer?.takeIf { it.isNotBlank() } ?: "https://playv2.sub3.top/"
+            streamReferer?.takeIf { it.isNotBlank() }
+                ?: LinkkfRequestContextStore.get(context, anime.id, currentEpisode.id)
         } else if (vm.playerSettings.videoSourcePreference == "animenosub") {
             actualUrl
         } else {
-            playbackOrigin?.let { "$it/" } ?: "https://playv2.sub3.top/"
+            playbackOrigin?.let { "$it/" }
         }
-        val origin = if (vm.playerSettings.videoSourcePreference == "animenosub") null else playbackOrigin
+        // Origin must follow the Referer's origin for protected Linkkf streams.
+        // Using the M3U8 host here can be wrong when play.sub3.top generated a
+        // playv2.sub3.top media URL (or vice versa).
+        val origin = when {
+            vm.playerSettings.videoSourcePreference == "animenosub" -> null
+            !referer.isNullOrBlank() -> runCatching {
+                java.net.URI(referer).let { uri ->
+                    if (uri.scheme.equals("http", true) || uri.scheme.equals("https", true)) {
+                        "${uri.scheme}://${uri.host}${if (uri.port > 0) ":${uri.port}" else ""}"
+                    } else null
+                }
+            }.getOrNull()
+            else -> playbackOrigin
+        }
         val headers = buildList {
-            add("Referer: $referer")
+            referer?.takeIf { it.isNotBlank() }?.let { add("Referer: $it") }
             origin?.let { add("Origin: $it") }
         }.joinToString("\n")
         android.util.Log.d("LilacMpv", "STREAM_HEADERS hostOrigin=$playbackOrigin referer=$referer origin=$origin url=$actualUrl")
@@ -1441,7 +1454,7 @@ fun PlayerScreen(
         }
         Log.d("MpvEpisode", "AUTO_STREAM_FALLBACK_FOUND episode=${currentEpisode.displayNumber} m3u8=$resolved referer=${capturedReferer ?: "<fallback>"} subtitle=${result.subtitleUrls[currentEpisode.id] ?: "<none>"}")
         selectedStreamingQuality = null
-        parsedStreamingQualities = listOf(StreamQuality("Auto", resolved))
+        parsedStreamingQualities = listOf(StreamQuality("Auto", resolved, capturedReferer))
         streamUrl = resolved
         isLoading = false
     }
@@ -1720,6 +1733,12 @@ fun PlayerScreen(
                             }
                             val selected = qualities.first()
                             selectedStreamingQuality = selected
+                            selected.referer?.let { referer ->
+                                streamReferer = referer
+                                if (vm.playerSettings.videoSourcePreference == "linkkf") {
+                                    LinkkfRequestContextStore.save(context, anime.id, currentEpisode.id, referer)
+                                }
+                            }
                             streamUrl = selected.url
                             isLoading = false
                         }

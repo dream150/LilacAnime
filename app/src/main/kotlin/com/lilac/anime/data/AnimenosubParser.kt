@@ -56,11 +56,15 @@ object AnimenosubParser {
 
             val detailUrl = if (isSeries) href else episodeToAnimeUrl(href)
             val id = ID_PREFIX + extractSlug(detailUrl)
+            val genres = extractListGenres(container ?: link)
             if (result.containsKey(id)) {
                 // Prefer an entry that has a real poster/title from the card.
                 val existing = result.getValue(id)
                 if (existing.poster.isBlank() && poster.isNotBlank()) {
                     result[id] = existing.copy(poster = poster, backdrop = poster)
+                }
+                if (existing.genres.isEmpty() && genres.isNotEmpty()) {
+                    result[id] = result.getValue(id).copy(genres = genres)
                 }
                 return@forEach
             }
@@ -70,13 +74,21 @@ object AnimenosubParser {
                 title = title,
                 poster = poster,
                 backdrop = poster,
-                genres = emptyList(),
+                genres = genres,
                 description = "",
                 detailUrl = detailUrl
             )
         }
 
         return result.values.toList()
+    }
+
+    fun extractDetailGenres(document: Document): List<String> {
+        return document.select("a[href], .genres a, .genre a, [class*='genre'] a")
+            .filter { it.attr("href").contains("/genre/", true) || it.parents().any { p -> p.classNames().any { c -> c.contains("genre", true) } } }
+            .map { it.text().trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
     }
 
     fun parseAnimeDetail(document: Document, original: Anime): Anime {
@@ -98,11 +110,7 @@ object AnimenosubParser {
                 ?.takeIf { it.isNotBlank() }
             ?: original.description
 
-        val genres = document.select("a[href], .genres a, .genre a, [class*='genre'] a")
-            .filter { it.attr("href").contains("/genre/", true) || it.parents().any { p -> p.classNames().any { c -> c.contains("genre", true) } } }
-            .map { it.text().trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
+        val genres = extractDetailGenres(document)
 
         // 상세 페이지의 큰 대표 이미지는 실제 페이지 구조인
         // <div class="bigcover"><img src="..."></div> 를 사용한다.
@@ -185,6 +193,26 @@ object AnimenosubParser {
         return result.values.sortedWith(
             compareBy<Episode> { it.number }.thenBy { it.displayNumber }
         )
+    }
+
+    private fun extractListGenres(element: Element): List<String> {
+        val selectors = listOf(
+            ".genres a",
+            ".genre a",
+            ".tags a",
+            ".tag a",
+            "[class*='genre'] a",
+            "[class*='tag'] a",
+            "a[href*='/genre/']"
+        )
+
+        return selectors
+            .asSequence()
+            .flatMap { selector -> element.select(selector).asSequence() }
+            .map { it.text().trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
     }
 
     private fun isAnimenosubUrl(url: String): Boolean =

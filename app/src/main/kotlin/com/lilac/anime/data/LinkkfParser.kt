@@ -65,18 +65,58 @@ object LinkkfParser {
                 val backdrop =
                     extractOriginalImageUrl(imageUrl)
 
+                // 목록 카드에 함께 노출되는 장르/태그를 바로 읽는다.
+                // 상세 페이지를 작품마다 다시 요청하지 않아도 목록 단계에서
+                // genres를 채울 수 있도록 여러 Linkkf 마크업 형태를 허용한다.
+                val genres = extractListGenres(item)
+
                 Anime(
                     id = extractAnimeId(detailUrl),
                     title = title,
                     description = "",
                     poster = poster,
                     backdrop = backdrop,
-                    genres = emptyList(),
+                    genres = genres,
                     episodes = emptyList(),
                     detailUrl = detailUrl
                 )
             }
             .distinctBy { it.id }
+    }
+
+    // =========================================================
+    // 목록 카드의 장르/태그
+    // =========================================================
+
+    private fun extractListGenres(
+        item: org.jsoup.nodes.Element
+    ): List<String> {
+        val selectors = listOf(
+            ".genres a",
+            ".genre a",
+            ".tags a",
+            ".tag a",
+            ".vod-item-genre a",
+            ".vod-item-genres a",
+            ".vod-item-tag a",
+            ".vod-item-tags a",
+            "[class*='genre'] a",
+            "[class*='tag'] a",
+            "a[href*='/genre/']"
+        )
+
+        return selectors
+            .asSequence()
+            .flatMap { selector -> item.select(selector).asSequence() }
+            .map { it.text().trim() }
+            .filter { it.isNotBlank() }
+            .filterNot {
+                it.equals("Watch Now", ignoreCase = true) ||
+                    it.equals("더보기", ignoreCase = true) ||
+                    it.equals("보기", ignoreCase = true)
+            }
+            .distinct()
+            .toList()
     }
 
     // =========================================================
@@ -182,27 +222,31 @@ object LinkkfParser {
                 ?.trim()
                 ?: original.description
 
-        val genres =
-            document
-                .select(".detail-info-desc li")
-                .firstOrNull {
-                    it.text().contains("장르")
-                }
-                ?.select("a")
-                ?.map {
-                    it.text().trim()
-                }
-                ?.filter {
-                    it.isNotBlank()
-                }
-                ?.distinct()
-                ?: emptyList()
+        val genres = extractDetailGenres(document)
 
         return original.copy(
             title = title,
             description = description,
             genres = genres
         )
+    }
+
+    /**
+     * Linkkf 목록 카드에는 장르가 없는 경우가 많아서 상세 문서에서
+     * 장르/태그를 추출할 때도 이 함수를 공용으로 사용한다.
+     */
+    fun extractDetailGenres(document: Document): List<String> {
+        return document
+            .select(".detail-info-desc li")
+            .firstOrNull { it.text().contains("장르") }
+            ?.select("a")
+            ?.map { it.text().trim() }
+            ?.filter { it.isNotBlank() }
+            ?.distinct()
+            ?: document.select("a[href*='/genre/'], .genres a, .genre a, [class*='genre'] a")
+                .map { it.text().trim() }
+                .filter { it.isNotBlank() }
+                .distinct()
     }
 
     // =========================================================
