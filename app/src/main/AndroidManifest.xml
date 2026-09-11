@@ -9,6 +9,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- DNS 전용 VPN(포그라운드 서비스). Android 14+ 에서 VPN 앱의 정식 타입 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     
     <application
     android:name=".LilacApplication"
@@ -52,6 +55,17 @@
             android:name=".network.OpEdAnalysisForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- DNS proxy 전용 VpnService. 전체 트래픽이 아니라 DNS 주소만 라우팅한다. -->
+        <service
+            android:name=".dns.vpn.DnsVpnService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="systemExempted">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
 
 
     </application>

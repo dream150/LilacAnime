@@ -24,6 +24,17 @@ android {
         compose = true
     }
 
+    buildTypes {
+        release {
+            // R8 난독화/축소. 규칙은 루트의 proguard-rules.pro 를 사용한다.
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                rootProject.file("proguard-rules.pro"),
+            )
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -78,5 +89,8 @@ implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
     // Google Cast sender SDK
     implementation("com.google.android.gms:play-services-cast-framework:22.3.1")
     implementation("androidx.mediarouter:mediarouter:1.8.1")
+
+    // DNS 코어(DNS 메시지 파서, 캐시, 패킷 파서, 검증) 단위 테스트
+    testImplementation("junit:junit:4.13.2")
 
 }
