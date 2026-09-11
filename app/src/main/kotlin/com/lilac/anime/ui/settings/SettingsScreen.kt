@@ -302,6 +302,9 @@ fun SettingsScreen(
             HorizontalDivider()
             Spacer(Modifier.height(20.dp))
 
+            // DNS 설정 (VPN 기반 로컬 DNS proxy)
+            DnsSettingsSection()
+
             Text("Lilac Anime", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
             val appVersion = context.packageManager
                 .getPackageInfo(context.packageName, 0)

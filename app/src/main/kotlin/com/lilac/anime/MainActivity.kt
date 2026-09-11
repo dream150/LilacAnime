@@ -94,6 +94,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
+import com.lilac.anime.dns.DnsController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -210,6 +211,10 @@ class MainActivity : FragmentActivity() {
             LaunchedEffect(Unit) {
                 viewModel.monitorNetwork(context)
                 viewModel.loadAnime(context)
+
+                // DNS 설정을 복구한다. 저장된 설정 / VPN 권한 / 서비스 상태를
+                // 모두 확인한 뒤에만 시작한다. (무조건 켜지 않는다)
+                DnsController.ensureStartedIfEnabled(context)
 
                 val release = GithubReleaseChecker.check(context)
 

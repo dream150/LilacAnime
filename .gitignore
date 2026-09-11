@@ -1,4 +1,26 @@
+# BUILD
 /build/
 /app/build/
 *.apk
 *.aab
+
+# Gradle
+.gradle/
+build/
+
+# Gradle Wrapper
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# IntelliJ IDEA
+.idea/
+*.iml
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
