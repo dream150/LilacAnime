@@ -22,7 +22,8 @@ object MpvOfflineStore {
         val title: String = "",
         val episodeId: String = "",
         val videoPath: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        val sourceUrl: String? = null
     )
 
     fun root(context: Context): File = File(context.filesDir, ROOT)
@@ -97,7 +98,14 @@ object MpvOfflineStore {
             .put("episodeId", status.episodeId)
         status.videoPath?.let { obj.put("videoPath", it) }
         status.error?.let { obj.put("error", it) }
-        File(dir, META).writeText(obj.toString())
+        status.sourceUrl?.let { obj.put("sourceUrl", it) }
+
+        // Never expose a partially-written JSON file to the progress reader.
+        // A process death during write must leave either the old metadata or the
+        // complete new metadata on disk.
+        val tmp = File(dir, "$META.tmp")
+        tmp.writeText(obj.toString(), Charsets.UTF_8)
+        check(tmp.renameTo(File(dir, META))) { "다운로드 상태 저장에 실패했습니다." }
     }
 
     fun findStatus(context: Context, id: String): Status? {
@@ -115,7 +123,8 @@ object MpvOfflineStore {
                 title = obj.optString("title"),
                 episodeId = obj.optString("episodeId"),
                 videoPath = obj.optString("videoPath").takeIf { it.isNotBlank() },
-                error = obj.optString("error").takeIf { it.isNotBlank() }
+                error = obj.optString("error").takeIf { it.isNotBlank() },
+                sourceUrl = obj.optString("sourceUrl").takeIf { it.isNotBlank() }
             )
         }.getOrNull()
     }
@@ -131,7 +140,8 @@ object MpvOfflineStore {
                     title = obj.optString("title"),
                     episodeId = obj.optString("episodeId"),
                     videoPath = obj.optString("videoPath").takeIf { it.isNotBlank() },
-                    error = obj.optString("error").takeIf { it.isNotBlank() }
+                    error = obj.optString("error").takeIf { it.isNotBlank() },
+                    sourceUrl = obj.optString("sourceUrl").takeIf { it.isNotBlank() }
                 )
             }.getOrNull()
         } ?: emptyList()

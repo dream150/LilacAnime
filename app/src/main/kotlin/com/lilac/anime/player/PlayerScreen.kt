@@ -1008,7 +1008,13 @@ fun PlayerScreen(
         mpvEngine.pause()
     }
     DisposableEffect(mpvEngine) {
-        onDispose { mpvEngine.release() }
+        // PIP is enabled only while the playback destination is actually visible.
+        MainActivity.isPlayerScreenActive = true
+        onDispose {
+            MainActivity.isPlayerScreenActive = false
+            MainActivity.isVideoPlaying = false
+            mpvEngine.release()
+        }
     }
 
     LaunchedEffect(mpvEngine, playbackSpeed) {

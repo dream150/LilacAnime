@@ -125,6 +125,7 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         var isVideoPlaying: Boolean = false
+        var isPlayerScreenActive: Boolean = false
         var isInPictureInPicture: Boolean by mutableStateOf(false)
     }
 
@@ -135,7 +136,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (isVideoPlaying && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (isPlayerScreenActive && isVideoPlaying && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             enterPictureInPictureMode(
                 PictureInPictureParams.Builder()
                     .setAspectRatio(Rational(16, 9))

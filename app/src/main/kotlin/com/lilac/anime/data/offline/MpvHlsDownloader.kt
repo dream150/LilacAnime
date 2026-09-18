@@ -78,10 +78,19 @@ class MpvHlsDownloader(
 
         val output = MpvOfflineStore.videoFile(context, animeId, episodeId)
         val tempOutput = File(dir, "episode.mp4.part")
-        val localRoot = File(dir, "hls").apply {
-            deleteRecursively()
-            mkdirs()
+        val localRoot = File(dir, "hls").apply { mkdirs() }
+
+        // Keep downloaded HLS segments across transient failures/service restarts.
+        // A new signed URL is treated as a new download so segments from another
+        // stream can never be mixed into this one.
+        val sourceMarker = File(localRoot, ".source")
+        val sourceFingerprint = sha256(sourceUrl)
+        val oldFingerprint = sourceMarker.takeIf { it.isFile }?.readText()?.trim()
+        if (oldFingerprint != null && oldFingerprint != sourceFingerprint) {
+            localRoot.deleteRecursively()
+            localRoot.mkdirs()
         }
+        sourceMarker.writeText(sourceFingerprint, Charsets.UTF_8)
 
         // A direct MP4 URL is also accepted. It still goes through the same
         // final audio/video-track validation before becoming "completed".
@@ -174,14 +183,20 @@ class MpvHlsDownloader(
             onProgress(Progress(totalSegments, totalSegments))
             output
         } catch (t: Throwable) {
+            // Keep the HLS segment cache so a transient network/service failure can
+            // continue instead of restarting the entire episode from zero.
             tempOutput.delete()
-            // Never leave a partial MP4 that could be mistaken for a complete
-            // offline video.
-            output.delete()
-            Log.e(TAG, "HLS download failed", t)
+            // Never delete an already completed MP4 because a later retry failed.
+            // The old file is still a valid offline copy.
+            Log.e(TAG, "HLS download failed; partial HLS cache preserved", t)
             throw t
         }
     }
+
+    private fun sha256(value: String): String =
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 
     /**
      * Resolves a master playlist into:

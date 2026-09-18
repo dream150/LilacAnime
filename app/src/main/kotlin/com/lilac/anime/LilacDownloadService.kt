@@ -44,7 +44,9 @@ class LilacDownloadService : Service() {
                 stopSelf()
             }
         }
-        return START_NOT_STICKY
+        // A foreground download must be redelivered after an Android process kill.
+        // The downloader itself is resumable, so the last intent is enough to continue.
+        return START_REDELIVER_INTENT
     }
 
     private fun startDownload(intent: Intent, startId: Int) {
@@ -63,9 +65,25 @@ class LilacDownloadService : Service() {
         val key = "${animeId}::${episodeId}"
         if (jobs[key]?.isActive == true) return
 
+        val previous = MpvOfflineStore.findStatus(applicationContext, key)
+        val previousProgress = previous?.progress?.coerceIn(0f, 1f) ?: 0f
+        val previousSource = previous?.sourceUrl
+        // If the URL really changed, the old HLS fragments cannot safely be reused.
+        // Otherwise keep the hls/ directory so an interrupted download can resume.
+        val sameSource = previousSource.isNullOrBlank() ||
+            sourceIdentity(previousSource) == sourceIdentity(sourceUrl)
+        if (!sameSource) {
+            // A genuinely different stream (for example a different quality/path)
+            // must not reuse fragments from the old stream. Query-string-only
+            // changes are intentionally ignored because HLS URLs commonly rotate
+            // tokens between retries while pointing at the same VOD.
+            MpvOfflineStore.episodeDir(applicationContext, animeId, episodeId)
+                .resolve("hls").deleteRecursively()
+        }
+
         // startForegroundService() has a strict startup deadline.  Promote the
         // service synchronously before launching any coroutine/network work.
-        val initialNotification = notification("$title - ${episodeId}", 0)
+        val initialNotification = notification("$title - ${episodeId}", (if (sameSource) previousProgress else 0f).times(100).toInt())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -75,7 +93,17 @@ class LilacDownloadService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, initialNotification)
         }
-        MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, 0f, "downloading", title, episodeId))
+        MpvOfflineStore.saveStatus(
+            applicationContext,
+            MpvOfflineStore.Status(
+                id = key,
+                progress = if (sameSource) previousProgress else 0f,
+                state = "downloading",
+                title = title,
+                episodeId = episodeId,
+                sourceUrl = sourceUrl
+            )
+        )
         jobs[key] = scope.launch {
             try {
                 // Linkkf VTT is independent of the video download. Save it first so
@@ -126,7 +154,7 @@ class LilacDownloadService : Service() {
 
                 val file = MpvHlsDownloader().download(applicationContext, animeId, episodeId, sourceUrl, referer) { progress ->
                     val fraction = if (progress.total > 0) progress.downloaded.toFloat() / progress.total else 0f
-                    MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, fraction, "downloading", title, episodeId))
+                    MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, fraction, "downloading", title, episodeId, sourceUrl = sourceUrl))
                     updateNotification("$title - ${episodeId}", fraction)
                 }
 
@@ -152,11 +180,11 @@ class LilacDownloadService : Service() {
                 // Persist completion only after the final MP4 has passed the
                 // downloader's validation. Player/ViewModel can then recognize
                 // this episode as offline without waiting for the old store.
-                MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, 1f, "completed", title, episodeId, file.absolutePath))
+                MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, 1f, "completed", title, episodeId, file.absolutePath, sourceUrl = sourceUrl))
                 updateNotification("$title - ${episodeId}", 1f, completed = true)
             } catch (t: Throwable) {
-                MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, 0f, "failed", title, episodeId, error = t.message))
-                updateNotification("$title - ${episodeId}", 0f, failed = true)
+                MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, previousProgress, "failed", title, episodeId, error = t.message, sourceUrl = sourceUrl))
+                updateNotification("$title - ${episodeId}", previousProgress, failed = true)
             } finally {
                 jobs.remove(key)
                 if (jobs.isEmpty()) stopForeground(STOP_FOREGROUND_REMOVE)
@@ -164,6 +192,11 @@ class LilacDownloadService : Service() {
             }
         }
     }
+
+    private fun sourceIdentity(url: String): String = runCatching {
+        val u = java.net.URI(url)
+        "${u.scheme}://${u.host}${if (u.port > 0) ":${u.port}" else ""}${u.path}"
+    }.getOrElse { url.substringBefore('#').substringBefore('?') }
 
     private fun removeDownload(intent: Intent) {
         val animeId = intent.getStringExtra(EXTRA_ANIME_ID) ?: return
