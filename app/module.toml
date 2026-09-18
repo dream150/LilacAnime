@@ -1,0 +1,50 @@
+version = 2
+
+[module]
+type = "android-app"
+name = "app"
+languageLevel = "JAVA_17"
+output = "build/classes"
+
+[sourceSets.debug]
+scope = "IMPLEMENTATION"
+aidl = ["src/debug/aidl"]
+assets = ["src/debug/assets"]
+java = ["src/debug/java", "src/debug/kotlin"]
+jniLibs = ["src/debug/jniLibs"]
+res = ["src/debug/res"]
+resources = ["src/debug/resources"]
+
+[sourceSets.main]
+scope = "IMPLEMENTATION"
+aidl = ["src/main/aidl"]
+assets = ["src/main/assets"]
+java = ["src/main/java", "src/main/kotlin"]
+jniLibs = ["src/main/jniLibs"]
+res = ["src/main/res"]
+resources = ["src/main/resources"]
+
+[sourceSets.release]
+scope = "IMPLEMENTATION"
+aidl = ["src/release/aidl"]
+assets = ["src/release/assets"]
+java = ["src/release/java", "src/release/kotlin"]
+jniLibs = ["src/release/jniLibs"]
+res = ["src/release/res"]
+resources = ["src/release/resources"]
+
+[dependencies]
+implementation = ["androidx.activity:activity-compose:1.13.0", "androidx.fragment:fragment-ktx:1.8.9", "androidx.appcompat:appcompat:1.7.1", "androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0", "androidx.compose.foundation:foundation:1.6.8", "androidx.navigation:navigation-compose:2.9.4", "io.coil-kt.coil3:coil-compose:3.3.0", "io.coil-kt.coil3:coil-network-okhttp:3.3.0", "androidx.compose.foundation:foundation:1.7.0", "androidx.compose.material3:material3:1.3.0", "androidx.compose.material:material-ripple:1.7.0", "androidx.compose.material:material-icons-extended:1.6.8", "com.squareup.okhttp3:okhttp:4.12.0", "org.jsoup:jsoup:1.23.1", "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2", "androidx.datastore:datastore-preferences:1.1.1", "com.squareup.retrofit2:retrofit:2.11.0", "com.squareup.retrofit2:converter-gson:2.11.0", "dev.jdtech.mpv:libmpv:1.0.0", "com.google.android.gms:play-services-cast-framework:22.3.1", "androidx.mediarouter:mediarouter:1.8.1", "kotlin-stdlib"]
+
+[android]
+namespace = "com.lilac.anime"
+compileSdk = 37
+minSdk = 26
+targetSdk = 37
+manifest = "src/main/AndroidManifest.xml"
+versionCode = 21
+versionName = "0.3.1"
+isApplication = true
+manifestPlaceholders = []
+buildTypes = [{ name = "debug", debuggable = true, minifyEnabled = false, shrinkResources = false }, { name = "release", debuggable = false, minifyEnabled = false, shrinkResources = false, proguardFiles = ["proguard-android-optimize.txt", "proguard-rules.pro"] }]
+compose = true

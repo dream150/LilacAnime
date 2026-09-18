@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "id": "LilacAnime",
+      "name": "LilacAnime",
+      "root": "",
+      "buildSystem": "gradle-compat",
+      "settings": {},
+      "modules": [
+        {
+          "id": "app",
+          "name": "app",
+          "dir": "app"
+        },
+        {
+          "id": "desktopApp",
+          "name": "desktopApp",
+          "dir": "desktopApp"
+        }
+      ],
+      "libraries": []
+    }
+  ]
+}

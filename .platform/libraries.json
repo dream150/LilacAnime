@@ -1,0 +1,496 @@
+{
+  "version": 1,
+  "libraries": [
+    {
+      "name": "androidx.activity:activity-compose:1.13.0",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/androidx/activity/activity-compose/1.13.0/activity-compose-1.13.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/activity/activity/1.13.0/activity-1.13.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/runtime/runtime-android/1.9.2/runtime-android-1.9.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/runtime/runtime-saveable-android/1.9.2/runtime-saveable-android-1.9.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-android/1.9.2/ui-android-1.9.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/core/core-ktx/1.18.0/core-ktx-1.18.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-viewmodel-android/2.10.0/lifecycle-viewmodel-android-2.10.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/navigationevent/navigationevent-compose-android/1.0.0/navigationevent-compose-android-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib/2.2.10/kotlin-stdlib-2.2.10.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-common-jvm/2.10.0/lifecycle-common-jvm-2.10.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-runtime-android/2.10.0/lifecycle-runtime-android-2.10.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-runtime-compose-android/2.10.0/lifecycle-runtime-compose-android-2.10.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/savedstate/savedstate-android/1.4.0/savedstate-android-1.4.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2.jar",
+        "../../.platform/caches/resolved-deps/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1.jar",
+        "../../.platform/caches/resolved-deps/androidx/core/core-viewtree/1.0.0/core-viewtree-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-viewmodel-savedstate-android/2.10.0/lifecycle-viewmodel-savedstate-android-2.10.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/navigationevent/navigationevent-android/1.0.0/navigationevent-android-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/profileinstaller/profileinstaller/1.4.1/profileinstaller-1.4.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/tracing/tracing/1.2.0/tracing-1.2.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/annotation/annotation-experimental/1.4.1/annotation-experimental-1.4.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/runtime/runtime-annotation-android/1.9.2/runtime-annotation-android-1.9.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-coroutines-android/1.10.2/kotlinx-coroutines-android-1.10.2.jar",
+        "../../.platform/caches/resolved-deps/androidx/collection/collection-jvm/1.5.0/collection-jvm-1.5.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/savedstate/savedstate-compose-android/1.4.0/savedstate-compose-android-1.4.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-geometry-android/1.9.2/ui-geometry-android-1.9.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-graphics-android/1.9.2/ui-graphics-android-1.9.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-text-android/1.9.2/ui-text-android-1.9.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-unit-android/1.9.2/ui-unit-android-1.9.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-util-android/1.9.2/ui-util-android-1.9.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/org/jspecify/jspecify/1.0.0/jspecify-1.0.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/activity/activity-ktx/1.13.0/activity-ktx-1.13.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/autofill/autofill/1.0.0/autofill-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/core/core/1.18.0/core-1.18.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/customview/customview-poolingcontainer/1.0.0/customview-poolingcontainer-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/emoji2/emoji2/1.4.0/emoji2-1.4.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-viewmodel-ktx/2.10.0/lifecycle-viewmodel-ktx-2.10.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/savedstate/savedstate-ktx/1.4.0/savedstate-ktx-1.4.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/annotations/23.0.0/annotations-23.0.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/arch/core/core-common/2.2.0/core-common-2.2.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/arch/core/core-runtime/2.2.0/core-runtime-2.2.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-runtime-ktx-android/2.10.0/lifecycle-runtime-ktx-android-2.10.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.7.3/kotlinx-serialization-core-jvm-1.7.3.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-livedata-core/2.10.0/lifecycle-livedata-core-2.10.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/startup/startup-runtime/1.1.1/startup-runtime-1.1.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/guava/listenablefuture/1.0/listenablefuture-1.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/concurrent/concurrent-futures/1.1.0/concurrent-futures-1.1.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/graphics/graphics-path/1.0.1/graphics-path-1.0.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/collection/collection-ktx/1.5.0/collection-ktx-1.5.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/versionedparcelable/versionedparcelable/1.1.1/versionedparcelable-1.1.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/interpolator/interpolator/1.0.0/interpolator-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-process/2.10.0/lifecycle-process-2.10.0-exploded/classes.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/activity/activity-compose/1.13.0/activity-compose-1.13.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/activity/activity/1.13.0/activity-1.13.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/runtime/runtime-android/1.9.2/runtime-android-1.9.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/runtime/runtime-saveable-android/1.9.2/runtime-saveable-android-1.9.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-android/1.9.2/ui-android-1.9.2-samples-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/core/core-ktx/1.18.0/core-ktx-1.18.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-viewmodel-android/2.10.0/lifecycle-viewmodel-android-2.10.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/navigationevent/navigationevent-compose-android/1.0.0/navigationevent-compose-android-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib/2.2.10/kotlin-stdlib-2.2.10-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-common-jvm/2.10.0/lifecycle-common-jvm-2.10.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-runtime/2.10.0/lifecycle-runtime-2.10.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-runtime-compose/2.10.0/lifecycle-runtime-compose-2.10.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/savedstate/savedstate-android/1.4.0/savedstate-android-1.4.0-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/annotation/annotation-jvm/1.9.1/annotation-jvm-1.9.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/core/core-viewtree/1.0.0/core-viewtree-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-viewmodel-savedstate-android/2.10.0/lifecycle-viewmodel-savedstate-android-2.10.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/navigationevent/navigationevent-android/1.0.0/navigationevent-android-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/profileinstaller/profileinstaller/1.4.1/profileinstaller-1.4.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/tracing/tracing/1.2.0/tracing-1.2.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/annotation/annotation-experimental/1.4.1/annotation-experimental-1.4.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/runtime/runtime-annotation-android/1.9.2/runtime-annotation-android-1.9.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-coroutines-android/1.10.2/kotlinx-coroutines-android-1.10.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/collection/collection-jvm/1.5.0/collection-jvm-1.5.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/savedstate/savedstate-compose-android/1.3.3/savedstate-compose-android-1.3.3-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-geometry-android/1.9.2/ui-geometry-android-1.9.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-graphics-android/1.9.2/ui-graphics-android-1.9.2-samples-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-text-android/1.9.2/ui-text-android-1.9.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-unit-android/1.9.2/ui-unit-android-1.9.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-util-android/1.9.2/ui-util-android-1.9.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jspecify/jspecify/1.0.0/jspecify-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/activity/activity-ktx/1.8.1/activity-ktx-1.8.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/autofill/autofill/1.0.0/autofill-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/core/core/1.18.0/core-1.18.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/customview/customview-poolingcontainer/1.0.0/customview-poolingcontainer-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/emoji2/emoji2/1.4.0/emoji2-1.4.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-viewmodel-ktx/2.8.7/lifecycle-viewmodel-ktx-2.8.7-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/savedstate/savedstate-ktx/1.2.1/savedstate-ktx-1.2.1-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/annotations/23.0.0/annotations-23.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/arch/core/core-common/2.2.0/core-common-2.2.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/arch/core/core-runtime/2.2.0/core-runtime-2.2.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-runtime-ktx-android/2.9.4/lifecycle-runtime-ktx-android-2.9.4-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.7.3/kotlinx-serialization-core-jvm-1.7.3-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-livedata-core/2.10.0/lifecycle-livedata-core-2.10.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/startup/startup-runtime/1.1.1/startup-runtime-1.1.1-sources.jar",
+        "../../.platform/caches/resolved-deps/com/google/guava/listenablefuture/1.0/listenablefuture-1.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/concurrent/concurrent-futures/1.1.0/concurrent-futures-1.1.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/graphics/graphics-path/1.0.1/graphics-path-1.0.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/collection/collection-ktx/1.4.2/collection-ktx-1.4.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/versionedparcelable/versionedparcelable/1.1.1/versionedparcelable-1.1.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/interpolator/interpolator/1.0.0/interpolator-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-process/2.4.1/lifecycle-process-2.4.1-sources.jar"
+      ]
+    },
+    {
+      "name": "androidx.appcompat:appcompat:1.7.1",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/androidx/appcompat/appcompat/1.7.1/appcompat-1.7.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/appcompat/appcompat-resources/1.7.1/appcompat-resources-1.7.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/cursoradapter/cursoradapter/1.0.0/cursoradapter-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/drawerlayout/drawerlayout/1.0.0/drawerlayout-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/emoji2/emoji2-views-helper/1.4.0/emoji2-views-helper-1.4.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/resourceinspection/resourceinspection-annotation/1.0.1/resourceinspection-annotation-1.0.1.jar",
+        "../../.platform/caches/resolved-deps/androidx/vectordrawable/vectordrawable/1.1.0/vectordrawable-1.1.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/vectordrawable/vectordrawable-animated/1.1.0/vectordrawable-animated-1.1.0-exploded/classes.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/appcompat/appcompat/1.7.1/appcompat-1.7.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/appcompat/appcompat-resources/1.7.1/appcompat-resources-1.7.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/cursoradapter/cursoradapter/1.0.0/cursoradapter-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/drawerlayout/drawerlayout/1.0.0/drawerlayout-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/emoji2/emoji2-views-helper/1.2.0/emoji2-views-helper-1.2.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/resourceinspection/resourceinspection-annotation/1.0.1/resourceinspection-annotation-1.0.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/vectordrawable/vectordrawable/1.1.0/vectordrawable-1.1.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/vectordrawable/vectordrawable-animated/1.1.0/vectordrawable-animated-1.1.0-sources.jar"
+      ]
+    },
+    {
+      "name": "androidx.compose.foundation:foundation:1.6.8",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/androidx/compose/foundation/foundation-android/1.8.2/foundation-android-1.8.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/animation/animation-android/1.8.2/animation-android-1.8.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/foundation/foundation-layout-android/1.8.2/foundation-layout-android-1.8.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/animation/animation-core-android/1.8.2/animation-core-android-1.8.2-exploded/classes.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/compose/foundation/foundation/1.8.2/foundation-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/animation/animation/1.8.2/animation-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/foundation/foundation-layout/1.8.2/foundation-layout-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/animation/animation-core/1.8.2/animation-core-1.8.2-sources.jar"
+      ]
+    },
+    {
+      "name": "androidx.compose.material3:material3:1.3.0",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/androidx/compose/material3/material3-android/1.3.0/material3-android-1.3.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/material/material-icons-core-android/1.6.8/material-icons-core-android-1.6.8-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/material/material-ripple-android/1.7.0/material-ripple-android-1.7.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-common-java8/2.10.0/lifecycle-common-java8-2.10.0.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/compose/material3/material3/1.3.0/material3-1.3.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/material/material-icons-core/1.6.8/material-icons-core-1.6.8-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/material/material-ripple/1.7.0/material-ripple-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-common-java8/2.6.1/lifecycle-common-java8-2.6.1-sources.jar"
+      ]
+    },
+    {
+      "name": "androidx.compose.material3:material3:1.3.1",
+      "kind": "JAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/androidx/compose/material3/material3-desktop/1.3.1/material3-desktop-1.3.1.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/foundation/foundation-desktop/1.7.0/foundation-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/foundation/foundation-layout-desktop/1.7.0/foundation-layout-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/material/material-icons-core-desktop/1.6.0/material-icons-core-desktop-1.6.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/material/material-ripple-desktop/1.7.0/material-ripple-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/runtime/runtime-desktop/1.7.0/runtime-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-desktop/1.7.0/ui-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-text-desktop/1.7.0/ui-text-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/collection/collection-jvm/1.4.0/collection-jvm-1.4.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/animation/animation-core-desktop/1.7.0/animation-core-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-util-desktop/1.7.0/ui-util-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib/2.1.0/kotlin-stdlib-2.1.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/animation/animation-desktop/1.7.0/animation-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-unit-desktop/1.7.0/ui-unit-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2.jar",
+        "../../.platform/caches/resolved-deps/androidx/annotation/annotation-jvm/1.7.0/annotation-jvm-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/runtime/runtime-saveable-desktop/1.7.0/runtime-saveable-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-geometry-desktop/1.7.0/ui-geometry-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-graphics-desktop/1.7.0/ui-graphics-desktop-1.7.0.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-coroutines-swing/1.7.3/kotlinx-coroutines-swing-1.7.3.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/skiko/skiko-awt/0.7.7/skiko-awt-0.7.7.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib-jdk8/1.8.22/kotlin-stdlib-jdk8-1.8.22.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/annotations/23.0.0/annotations-23.0.0.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.5.2/kotlinx-coroutines-core-jvm-1.5.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib-jdk7/1.8.22/kotlin-stdlib-jdk7-1.8.22.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/compose/material3/material3-desktop/1.3.1/material3-desktop-1.3.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/foundation/foundation-desktop/1.7.0/foundation-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/foundation/foundation-layout-desktop/1.7.0/foundation-layout-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/material/material-icons-core-desktop/1.6.0/material-icons-core-desktop-1.6.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/material/material-ripple-desktop/1.7.0/material-ripple-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/runtime/runtime-desktop/1.7.0/runtime-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-desktop/1.7.0/ui-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-text-desktop/1.7.0/ui-text-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/collection/collection-jvm/1.4.0/collection-jvm-1.4.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/animation/animation-core-desktop/1.7.0/animation-core-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-util-desktop/1.7.0/ui-util-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib/2.1.0/kotlin-stdlib-2.1.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/animation/animation-desktop/1.7.0/animation-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-unit-desktop/1.7.0/ui-unit-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/annotation/annotation-jvm/1.7.0/annotation-jvm-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/runtime/runtime-saveable-desktop/1.7.0/runtime-saveable-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-geometry-desktop/1.7.0/ui-geometry-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/compose/ui/ui-graphics-desktop/1.7.0/ui-graphics-desktop-1.7.0-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-coroutines-swing/1.7.3/kotlinx-coroutines-swing-1.7.3-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/skiko/skiko/0.7.7/skiko-0.7.7-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib-jdk8/1.8.22/kotlin-stdlib-jdk8-1.8.22-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/annotations/23.0.0/annotations-23.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.5.2/kotlinx-coroutines-core-jvm-1.5.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib-jdk7/1.8.22/kotlin-stdlib-jdk7-1.8.22-sources.jar"
+      ]
+    },
+    {
+      "name": "androidx.compose.material:material-icons-extended:1.6.8",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/androidx/compose/material/material-icons-extended-android/1.6.8/material-icons-extended-android-1.6.8-exploded/classes.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/compose/material/material-icons-extended/1.6.8/material-icons-extended-1.6.8-sources.jar"
+      ]
+    },
+    {
+      "name": "androidx.datastore:datastore-preferences:1.1.1",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/androidx/datastore/datastore-preferences-android/1.1.1/datastore-preferences-android-1.1.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/datastore/datastore-android/1.1.1/datastore-android-1.1.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/datastore/datastore-preferences-core-jvm/1.1.1/datastore-preferences-core-jvm-1.1.1.jar",
+        "../../.platform/caches/resolved-deps/androidx/datastore/datastore-core-android/1.1.1/datastore-core-android-1.1.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/datastore/datastore-core-okio-jvm/1.1.1/datastore-core-okio-jvm-1.1.1.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-parcelize-runtime/1.9.22/kotlin-parcelize-runtime-1.9.22.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-android-extensions-runtime/1.9.22/kotlin-android-extensions-runtime-1.9.22.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/datastore/datastore-preferences/1.1.1/datastore-preferences-1.1.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/datastore/datastore/1.1.1/datastore-1.1.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/datastore/datastore-preferences-core-jvm/1.1.1/datastore-preferences-core-jvm-1.1.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/datastore/datastore-core/1.1.1/datastore-core-1.1.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/datastore/datastore-core-okio-jvm/1.1.1/datastore-core-okio-jvm-1.1.1-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-parcelize-runtime/1.9.22/kotlin-parcelize-runtime-1.9.22-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-android-extensions-runtime/1.9.22/kotlin-android-extensions-runtime-1.9.22-sources.jar"
+      ]
+    },
+    {
+      "name": "androidx.fragment:fragment-ktx:1.8.9",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/androidx/fragment/fragment-ktx/1.8.9/fragment-ktx-1.8.9-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/fragment/fragment/1.8.9/fragment-1.8.9-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-livedata-core-ktx/2.10.0/lifecycle-livedata-core-ktx-2.10.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/loader/loader/1.0.0/loader-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/viewpager/viewpager/1.0.0/viewpager-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-livedata/2.10.0/lifecycle-livedata-2.10.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/customview/customview/1.0.0/customview-1.0.0-exploded/classes.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/fragment/fragment-ktx/1.8.9/fragment-ktx-1.8.9-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/fragment/fragment/1.8.9/fragment-1.8.9-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-livedata-core-ktx/2.6.1/lifecycle-livedata-core-ktx-2.6.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/loader/loader/1.0.0/loader-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/viewpager/viewpager/1.0.0/viewpager-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-livedata/2.10.0/lifecycle-livedata-2.10.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/customview/customview/1.0.0/customview-1.0.0-sources.jar"
+      ]
+    },
+    {
+      "name": "androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-viewmodel-compose-android/2.10.0/lifecycle-viewmodel-compose-android-2.10.0-exploded/classes.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/lifecycle/lifecycle-viewmodel-compose-android/2.10.0/lifecycle-viewmodel-compose-android-2.10.0-sources.jar"
+      ]
+    },
+    {
+      "name": "androidx.navigation:navigation-compose:2.9.4",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/androidx/navigation/navigation-compose-android/2.9.4/navigation-compose-android-2.9.4-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/navigation/navigation-common-android/2.9.4/navigation-common-android-2.9.4-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/navigation/navigation-runtime-android/2.9.4/navigation-runtime-android-2.9.4-exploded/classes.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/navigation/navigation-compose/2.9.4/navigation-compose-2.9.4-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/navigation/navigation-common/2.9.4/navigation-common-2.9.4-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/navigation/navigation-runtime/2.9.4/navigation-runtime-2.9.4-sources.jar"
+      ]
+    },
+    {
+      "name": "com.google.android.gms:play-services-cast-framework:22.3.1",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/com/google/android/gms/play-services-cast-framework/22.3.1/play-services-cast-framework-22.3.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/media/media/1.6.0/media-1.6.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/mediarouter/mediarouter/1.8.1/mediarouter-1.8.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/recyclerview/recyclerview/1.1.0/recyclerview-1.1.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/android/datatransport/transport-api/3.0.0/transport-api-3.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/android/datatransport/transport-backend-cct/3.1.3/transport-backend-cct-3.1.3-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/android/datatransport/transport-runtime/3.1.3/transport-runtime-3.1.3-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/android/gms/play-services-base/18.7.2/play-services-base-18.7.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/android/gms/play-services-basement/18.9.0/play-services-basement-18.9.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/android/gms/play-services-cast/22.3.1/play-services-cast-22.3.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/android/gms/play-services-tasks/18.3.2/play-services-tasks-18.3.2-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/palette/palette/1.0.0/palette-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/firebase/firebase-encoders/17.0.0/firebase-encoders-17.0.0.jar",
+        "../../.platform/caches/resolved-deps/com/google/firebase/firebase-encoders-json/18.0.0/firebase-encoders-json-18.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/firebase/firebase-encoders-proto/16.0.0/firebase-encoders-proto-16.0.0.jar",
+        "../../.platform/caches/resolved-deps/javax/inject/javax.inject/1/javax.inject-1.jar",
+        "../../.platform/caches/resolved-deps/com/google/android/gms/play-services-flags/18.1.0/play-services-flags-18.1.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/legacy/legacy-support-core-utils/1.0.0/legacy-support-core-utils-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/documentfile/documentfile/1.0.0/documentfile-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/localbroadcastmanager/localbroadcastmanager/1.0.0/localbroadcastmanager-1.0.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/androidx/print/print/1.0.0/print-1.0.0-exploded/classes.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/androidx/media/media/1.6.0/media-1.6.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/mediarouter/mediarouter/1.8.1/mediarouter-1.8.1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/recyclerview/recyclerview/1.1.0/recyclerview-1.1.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/palette/palette/1.0.0/palette-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/com/google/firebase/firebase-encoders/17.0.0/firebase-encoders-17.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/com/google/firebase/firebase-encoders-json/18.0.0/firebase-encoders-json-18.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/com/google/firebase/firebase-encoders-proto/16.0.0/firebase-encoders-proto-16.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/javax/inject/javax.inject/1/javax.inject-1-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/legacy/legacy-support-core-utils/1.0.0/legacy-support-core-utils-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/documentfile/documentfile/1.0.0/documentfile-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/localbroadcastmanager/localbroadcastmanager/1.0.0/localbroadcastmanager-1.0.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/print/print/1.0.0/print-1.0.0-sources.jar"
+      ]
+    },
+    {
+      "name": "com.microsoft.playwright:playwright:1.55.0",
+      "kind": "JAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/com/microsoft/playwright/playwright/1.55.0/playwright-1.55.0.jar",
+        "../../.platform/caches/resolved-deps/com/google/code/gson/gson/2.12.1/gson-2.12.1.jar",
+        "../../.platform/caches/resolved-deps/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar",
+        "../../.platform/caches/resolved-deps/com/microsoft/playwright/driver/1.55.0/driver-1.55.0.jar",
+        "../../.platform/caches/resolved-deps/com/microsoft/playwright/driver-bundle/1.55.0/driver-bundle-1.55.0.jar",
+        "../../.platform/caches/resolved-deps/com/google/errorprone/error_prone_annotations/2.36.0/error_prone_annotations-2.36.0.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/com/microsoft/playwright/playwright/1.55.0/playwright-1.55.0-sources.jar",
+        "../../.platform/caches/resolved-deps/com/google/code/gson/gson/2.12.1/gson-2.12.1-sources.jar",
+        "../../.platform/caches/resolved-deps/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0-sources.jar",
+        "../../.platform/caches/resolved-deps/com/microsoft/playwright/driver/1.55.0/driver-1.55.0-sources.jar",
+        "../../.platform/caches/resolved-deps/com/microsoft/playwright/driver-bundle/1.55.0/driver-bundle-1.55.0-sources.jar",
+        "../../.platform/caches/resolved-deps/com/google/errorprone/error_prone_annotations/2.36.0/error_prone_annotations-2.36.0-sources.jar"
+      ]
+    },
+    {
+      "name": "com.squareup.retrofit2:converter-gson:2.11.0",
+      "kind": "JAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/com/squareup/retrofit2/converter-gson/2.11.0/converter-gson-2.11.0.jar",
+        "../../.platform/caches/resolved-deps/com/google/code/gson/gson/2.10.1/gson-2.10.1.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/com/squareup/retrofit2/converter-gson/2.11.0/converter-gson-2.11.0-sources.jar",
+        "../../.platform/caches/resolved-deps/com/google/code/gson/gson/2.10.1/gson-2.10.1-sources.jar"
+      ]
+    },
+    {
+      "name": "com.squareup.retrofit2:retrofit:2.11.0",
+      "kind": "JAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/com/squareup/retrofit2/retrofit/2.11.0/retrofit-2.11.0.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/com/squareup/retrofit2/retrofit/2.11.0/retrofit-2.11.0-sources.jar"
+      ]
+    },
+    {
+      "name": "dev.jdtech.mpv:libmpv:1.0.0",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/dev/jdtech/mpv/libmpv/1.0.0/libmpv-1.0.0-exploded/classes.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/dev/jdtech/mpv/libmpv/1.0.0/libmpv-1.0.0-sources.jar"
+      ]
+    },
+    {
+      "name": "io.coil-kt.coil3:coil-compose:3.3.0",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-compose-android/3.3.0/coil-compose-android-3.3.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-android/3.3.0/coil-android-3.3.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-compose-core-android/3.3.0/coil-compose-core-android-3.3.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-core-android/3.3.0/coil-core-android-3.3.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/foundation/foundation/1.8.2/foundation-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/com/google/accompanist/accompanist-drawablepainter/0.37.3/accompanist-drawablepainter-0.37.3-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/squareup/okio/okio-jvm/3.15.0/okio-jvm-3.15.0.jar",
+        "../../.platform/caches/resolved-deps/androidx/exifinterface/exifinterface/1.4.1/exifinterface-1.4.1-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/animation/animation/1.8.2/animation-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/runtime/runtime/1.8.2/runtime-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui/1.8.2/ui-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/annotation-internal/annotation/1.8.2/annotation-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/collection-internal/collection/1.8.2/collection-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/foundation/foundation-layout/1.8.2/foundation-layout-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui-text/1.8.2/ui-text-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui-util/1.8.2/ui-util-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib-jdk8/1.9.10/kotlin-stdlib-jdk8-1.9.10.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/animation/animation-core/1.8.2/animation-core-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui-geometry/1.8.2/ui-geometry-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/androidx/lifecycle/lifecycle-common/2.9.5/lifecycle-common-2.9.5.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/runtime/runtime-saveable/1.8.2/runtime-saveable-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui-graphics/1.8.2/ui-graphics-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui-unit/1.8.2/ui-unit-1.8.2.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/androidx/lifecycle/lifecycle-runtime/2.8.4/lifecycle-runtime-2.8.4.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/androidx/lifecycle/lifecycle-runtime-compose/2.8.4/lifecycle-runtime-compose-2.8.4.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/androidx/lifecycle/lifecycle-viewmodel/2.9.5/lifecycle-viewmodel-2.9.5.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib-jdk7/1.9.10/kotlin-stdlib-jdk7-1.9.10.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-compose-android/3.3.0/coil-compose-android-3.3.0-sources.jar",
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-android/3.3.0/coil-android-3.3.0-sources.jar",
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-compose-core-android/3.3.0/coil-compose-core-android-3.3.0-sources.jar",
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-core-android/3.3.0/coil-core-android-3.3.0-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/foundation/foundation/1.8.2/foundation-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/com/google/accompanist/accompanist-drawablepainter/0.37.3/accompanist-drawablepainter-0.37.3-sources.jar",
+        "../../.platform/caches/resolved-deps/com/squareup/okio/okio-jvm/3.15.0/okio-jvm-3.15.0-sources.jar",
+        "../../.platform/caches/resolved-deps/androidx/exifinterface/exifinterface/1.4.1/exifinterface-1.4.1-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/animation/animation/1.8.2/animation-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/runtime/runtime/1.8.2/runtime-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui/1.8.2/ui-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/annotation-internal/annotation/1.8.2/annotation-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/collection-internal/collection/1.8.2/collection-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/foundation/foundation-layout/1.8.2/foundation-layout-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui-text/1.8.2/ui-text-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui-util/1.8.2/ui-util-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib-jdk8/1.9.10/kotlin-stdlib-jdk8-1.9.10-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/animation/animation-core/1.8.2/animation-core-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui-geometry/1.8.2/ui-geometry-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/androidx/lifecycle/lifecycle-common/2.9.5/lifecycle-common-2.9.5-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/runtime/runtime-saveable/1.8.2/runtime-saveable-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui-graphics/1.8.2/ui-graphics-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/compose/ui/ui-unit/1.8.2/ui-unit-1.8.2-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/androidx/lifecycle/lifecycle-runtime/2.8.4/lifecycle-runtime-2.8.4-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/androidx/lifecycle/lifecycle-runtime-compose/2.8.4/lifecycle-runtime-compose-2.8.4-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/androidx/lifecycle/lifecycle-viewmodel/2.9.5/lifecycle-viewmodel-2.9.5-sources.jar",
+        "../../.platform/caches/resolved-deps/org/jetbrains/kotlin/kotlin-stdlib-jdk7/1.9.10/kotlin-stdlib-jdk7-1.9.10-sources.jar"
+      ]
+    },
+    {
+      "name": "io.coil-kt.coil3:coil-network-okhttp:3.3.0",
+      "kind": "JAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-network-okhttp-jvm/3.3.0/coil-network-okhttp-jvm-3.3.0.jar",
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-network-core-android/3.3.0/coil-network-core-android-3.3.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/squareup/okhttp3/okhttp/4.12.0/okhttp-4.12.0.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-network-okhttp-jvm/3.3.0/coil-network-okhttp-jvm-3.3.0-sources.jar",
+        "../../.platform/caches/resolved-deps/io/coil-kt/coil3/coil-network-core-android/3.3.0/coil-network-core-android-3.3.0-sources.jar",
+        "../../.platform/caches/resolved-deps/com/squareup/okhttp3/okhttp/4.12.0/okhttp-4.12.0-sources.jar"
+      ]
+    },
+    {
+      "name": "kotlin-stdlib",
+      "kind": "JAR",
+      "classes": [
+        ".platform/kotlin-stdlib-2.4.0.jar"
+      ],
+      "sources": []
+    },
+    {
+      "name": "org.jsoup:jsoup:1.23.1",
+      "kind": "JAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/org/jsoup/jsoup/1.23.1/jsoup-1.23.1.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/org/jsoup/jsoup/1.23.1/jsoup-1.23.1-sources.jar"
+      ]
+    }
+  ]
+}
