@@ -1,5 +1,5 @@
 #v2
-7
+8
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/.platform/gradle-backup/settings.gradle.kts	0	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/.platform/gradle-backup/app/build.gradle.kts	0	56	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/desktopApp/src/main/kotlin/com/lilac/anime/desktop/AniSkipDesktopService.kt	172	0	text
@@ -8,3 +8,4 @@
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/detail/DetailScreen.kt	22621	503	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/StreamUrlExtractor.kt	1101	1	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/player/PlayerScreen.kt	30780	654	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/network/OnlineAniSkipService.kt	941	26	text

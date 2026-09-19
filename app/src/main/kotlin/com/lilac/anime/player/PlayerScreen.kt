@@ -1611,6 +1611,168 @@ fun PlayerScreen(
         }
     }
 
+    // ONLINE ONLY: resolve OP/ED timestamps from AniSkip and feed them into
+    // the exact same chapter skip state/UI/auto-skip path used by the player.
+    //
+    // This effect is intentionally separate from the offline fingerprint
+    // analysis above. Offline playback is never analyzed or replaced by this
+    // network lookup.
+    LaunchedEffect(anime.id, anime.title, currentEpisode.id, currentEpisode.number, currentEpisode.displayNumber, isOffline, isDownloaded) {
+        Log.d(
+            "AniChapters",
+            "ONLINE_SKIP_EFFECT_START anime=${anime.id} title=${anime.title} " +
+                "episode=${currentEpisode.displayNumber} number=${currentEpisode.number} " +
+                "offline=$isOffline downloaded=$isDownloaded"
+        )
+        if (isOffline || isDownloaded || currentEpisode.number <= 0) {
+            Log.d(
+                "AniChapters",
+                "ONLINE_SKIP_EFFECT_SKIP reason=offline_or_downloaded_or_invalid_episode"
+            )
+            return@LaunchedEffect
+        }
+
+        // Let mpv expose the actual online episode duration first. This is
+        // used only for mapping AniSkip's canonical timeline onto the local
+        // video. AniSkip itself is always queried with episodeLength=0.
+        var durationSeconds = 0
+        for (attempt in 0 until 120) {
+            if (!isActive) return@LaunchedEffect
+            val duration = mpvEngine.duration
+            if (mpvEngine.playbackState == MpvPlayerEngine.STATE_READY && duration > 0L) {
+                durationSeconds = (duration / 1000L).toInt().coerceAtLeast(1)
+                break
+            }
+            if (attempt < 119) delay(250L)
+        }
+
+        if (!isActive) return@LaunchedEffect
+
+        Log.d(
+            "AniChapters",
+            "ONLINE_SKIP_DURATION_READY anime=${anime.id} episode=${currentEpisode.displayNumber} " +
+                "duration=$durationSeconds"
+        )
+
+        val onlineSegments = withContext(Dispatchers.IO) {
+            OnlineAniSkipService.getSkipSegments(
+                title = anime.title,
+                episodeNumber = currentEpisode.number,
+                episodeLengthSeconds = 0
+            )
+        }
+
+        if (!isActive) return@LaunchedEffect
+
+        Log.d(
+            "AniChapters",
+            "ONLINE_SKIP_QUERY_RETURNED anime=${anime.id} episode=${currentEpisode.displayNumber} " +
+                "segments=${onlineSegments.size}"
+        )
+
+        // If the source returned no data, leave the existing skip system empty.
+        // Never fail or interrupt video playback because the online service is
+        // unavailable or cannot confidently match the anime.
+        if (onlineSegments.isEmpty()) {
+            Log.d(
+                "AniChapters",
+                "ONLINE_SKIP_NONE anime=${anime.id} title=${anime.title} episode=${currentEpisode.displayNumber}"
+            )
+            return@LaunchedEffect
+        }
+
+        val localLength = durationSeconds.toDouble()
+
+        // Map the POSITION proportionally, but keep AniSkip's actual OP/ED
+        // duration unchanged. This is important when AniSkip was recorded from
+        // a different video cut (for example 869s vs a local 1400s episode).
+        //
+        // We do NOT scale the interval itself. Instead: 
+        //   OP  -> scale its distance from the beginning, then keep its length.
+        //   ED  -> scale its distance from the end, then keep its length.
+        // This treats the AniSkip timestamp as a position on the canonical
+        // timeline while preserving the real skip interval.
+        chapterSkipSegments = onlineSegments.mapNotNull { segment ->
+            val sourceLength = segment.episodeLength
+            if (sourceLength <= 0.0 || localLength <= 0.0) {
+                Log.w(
+                    "AniChapters",
+                    "ONLINE_SKIP_MAP_REJECT type=${segment.type} invalidLengths " +
+                        "source=$sourceLength local=$localLength"
+                )
+                return@mapNotNull null
+            }
+
+            val rawStart = segment.startTime
+            val rawEnd = segment.endTime
+            val rawDuration = rawEnd - rawStart
+            if (rawStart < 0.0 || rawEnd <= rawStart || rawEnd > sourceLength + 1.0) {
+                Log.w(
+                    "AniChapters",
+                    "ONLINE_SKIP_MAP_REJECT type=${segment.type} invalidRawRange=" +
+                        "$rawStart-$rawEnd sourceLength=$sourceLength"
+                )
+                return@mapNotNull null
+            }
+
+            val isEnding = segment.type == "ed" || segment.type == "mixed-ed"
+            val mappedStart: Double
+            val mappedEnd: Double
+
+            if (isEnding) {
+                // Preserve the distance from the END proportionally, then
+                // restore AniSkip's original interval length.
+                val sourceTailDistance = (sourceLength - rawEnd).coerceAtLeast(0.0)
+                val localTailDistance = sourceTailDistance * (localLength / sourceLength)
+                mappedEnd = localLength - localTailDistance
+                mappedStart = mappedEnd - rawDuration
+            } else {
+                // Preserve the distance from the START proportionally, then
+                // restore AniSkip's original interval length.
+                val mappedStartPosition = rawStart * (localLength / sourceLength)
+                mappedStart = mappedStartPosition
+                mappedEnd = mappedStart + rawDuration
+            }
+
+            val finalStart = mappedStart.coerceIn(0.0, localLength)
+            val finalEnd = mappedEnd.coerceIn(0.0, localLength)
+
+            if (finalEnd <= finalStart) {
+                Log.w(
+                    "AniChapters",
+                    "ONLINE_SKIP_MAP_REJECT type=${segment.type} invalidMappedRange=" +
+                        "$finalStart-$finalEnd raw=$rawStart-$rawEnd sourceLength=$sourceLength " +
+                        "localLength=$localLength"
+                )
+                return@mapNotNull null
+            }
+
+            Log.d(
+                "AniChapters",
+                "ONLINE_SKIP_MAP type=${segment.type} " +
+                    "sourceLength=$sourceLength localLength=$localLength " +
+                    "raw=$rawStart-$rawEnd rawDuration=$rawDuration " +
+                    "anchor=${if (isEnding) "END" else "START"} " +
+                    "mapped=$finalStart-$finalEnd " +
+                    "mappedDuration=${finalEnd - finalStart} " +
+                    "positionScale=${localLength / sourceLength}"
+            )
+
+            segment.copy(
+                startTime = finalStart,
+                endTime = finalEnd,
+                // The chapter is now expressed on the actual local timeline.
+                episodeLength = localLength
+            )
+        }
+
+        Log.d(
+            "AniChapters",
+            "ONLINE_SKIP_LOADED anime=${anime.id} episode=${currentEpisode.displayNumber} " +
+                "duration=$durationSeconds segments=${chapterSkipSegments.joinToString { "${it.type}:${it.startTime}-${it.endTime}" }}"
+        )
+    }
+
     LaunchedEffect(mpvEngine, currentEpisode.number, chapterSkipSegments, isAutoSkipEnabled) {
         val segments = chapterSkipSegments
         if (segments.isEmpty()) {
