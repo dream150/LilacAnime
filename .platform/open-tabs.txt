@@ -6,4 +6,4 @@
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/.platform/gradle-backup/desktopApp/build.gradle.kts	186	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/network/LinkkfChapterService.kt	322	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/detail/DetailScreen.kt	22621	503	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/StreamUrlExtractor.kt	1101	7	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/StreamUrlExtractor.kt	1101	27	text
