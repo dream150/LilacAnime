@@ -1,5 +1,23 @@
 package com.lilac.anime.data.offline
 
+import com.lilac.anime.*
+import com.lilac.anime.cast.*
+import com.lilac.anime.core.model.*
+import com.lilac.anime.core.update.*
+import com.lilac.anime.data.*
+import com.lilac.anime.data.matcher.*
+import com.lilac.anime.data.subtitle.*
+import com.lilac.anime.network.*
+import com.lilac.anime.player.*
+import com.lilac.anime.ui.*
+import com.lilac.anime.ui.detail.*
+import com.lilac.anime.ui.home.*
+import com.lilac.anime.ui.navigation.*
+import com.lilac.anime.ui.search.*
+import com.lilac.anime.ui.settings.*
+import com.lilac.anime.ui.theme.*
+import com.lilac.anime.viewmodel.*
+
 import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -7,11 +25,17 @@ import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 
-/** Files owned by the mpv-native offline downloader. */
+/**
+ * Persistent state and filesystem layout for offline downloads.
+ *
+ * The filesystem is the source of truth. JSON is only the durable job index/UI
+ * metadata; a progress value is never used to decide which bytes exist.
+ */
 object MpvOfflineStore {
     private const val ROOT = "mpv_offline"
     private const val META = "metadata.json"
     private const val VIDEO = "episode.mp4"
+    private const val VIDEO_PART = "episode.mp4.part"
     private const val LOCAL_HLS = "fallback.m3u8"
     private const val TEMP_TS = "segments.ts"
 
@@ -23,7 +47,11 @@ object MpvOfflineStore {
         val episodeId: String = "",
         val videoPath: String? = null,
         val error: String? = null,
-        val sourceUrl: String? = null
+        val animeId: String = "",
+        val sourceUrl: String? = null,
+        val referer: String? = null,
+        val episodeNumber: Int = 0,
+        val episodeKey: String = ""
     )
 
     fun root(context: Context): File = File(context.filesDir, ROOT)
@@ -33,6 +61,9 @@ object MpvOfflineStore {
 
     fun videoFile(context: Context, animeId: String, episodeId: String): File =
         File(episodeDir(context, animeId, episodeId), VIDEO)
+
+    fun videoPartFile(context: Context, animeId: String, episodeId: String): File =
+        File(episodeDir(context, animeId, episodeId), VIDEO_PART)
 
     fun fallbackPlaylist(context: Context, animeId: String, episodeId: String): File =
         File(episodeDir(context, animeId, episodeId), LOCAL_HLS)
@@ -45,27 +76,9 @@ object MpvOfflineStore {
 
     fun completedPath(context: Context, animeId: String, episodeId: String): String? {
         val mp4 = videoFile(context, animeId, episodeId)
-        // Never treat an audio-only/broken MP4 as a completed offline video.
-        // This also protects devices from the v43.4 muxing result where some
-        // HLS video codecs could produce an MP4 containing only the audio track.
-        if (mp4.isFile && mp4.length() > 0L && hasPlayableVideoTrack(mp4)) {
-            return mp4.absolutePath
+        return mp4.absolutePath.takeIf {
+            mp4.isFile && mp4.length() > 0L && hasPlayableVideoTrack(mp4)
         }
-        val fallback = fallbackPlaylist(context, animeId, episodeId)
-        if (!fallback.isFile || fallback.length() == 0L) return null
-
-        // A playlist left behind by an interrupted/older migration must not make
-        // an episode look playable. Verify that every local media URI it names
-        // actually exists before selecting it.
-        val valid = runCatching {
-            val lines = fallback.readLines(Charsets.UTF_8)
-            val base = fallback.parentFile ?: return@runCatching false
-            val mediaFiles = lines.map { it.trim() }
-                .filter { it.isNotEmpty() && !it.startsWith("#") }
-                .map { File(base, it.substringBefore('?').substringBefore('#')) }
-            mediaFiles.isNotEmpty() && mediaFiles.all { it.isFile && it.length() > 0L }
-        }.getOrDefault(false)
-        return fallback.absolutePath.takeIf { valid }
     }
 
     private fun hasPlayableVideoTrack(file: File): Boolean = runCatching {
@@ -76,8 +89,7 @@ object MpvOfflineStore {
             var audio = false
             for (index in 0 until extractor.trackCount) {
                 val mime = extractor.getTrackFormat(index)
-                    .getString(MediaFormat.KEY_MIME)
-                    .orEmpty()
+                    .getString(MediaFormat.KEY_MIME).orEmpty()
                 if (mime.startsWith("video/")) video = true
                 if (mime.startsWith("audio/")) audio = true
             }
@@ -87,64 +99,71 @@ object MpvOfflineStore {
         }
     }.getOrDefault(false)
 
+    @Synchronized
     fun saveStatus(context: Context, status: Status) {
-        val dir = episodeDir(context, status.id.substringBefore("::"), status.episodeId)
+        val animeId = status.animeId.takeIf { it.isNotBlank() }
+            ?: status.id.substringBefore("::")
+        val episodeId = status.episodeId.takeIf { it.isNotBlank() }
+            ?: status.id.substringAfter("::")
+        val dir = episodeDir(context, animeId, episodeId)
         dir.mkdirs()
         val obj = JSONObject()
             .put("id", status.id)
+            .put("animeId", animeId)
+            .put("episodeId", episodeId)
             .put("progress", status.progress.coerceIn(0f, 1f).toDouble())
             .put("state", status.state)
             .put("title", status.title)
-            .put("episodeId", status.episodeId)
+            .put("episodeNumber", status.episodeNumber)
+            .put("episodeKey", status.episodeKey)
         status.videoPath?.let { obj.put("videoPath", it) }
         status.error?.let { obj.put("error", it) }
         status.sourceUrl?.let { obj.put("sourceUrl", it) }
-
-        // Never expose a partially-written JSON file to the progress reader.
-        // A process death during write must leave either the old metadata or the
-        // complete new metadata on disk.
-        val tmp = File(dir, "$META.tmp")
-        tmp.writeText(obj.toString(), Charsets.UTF_8)
-        check(tmp.renameTo(File(dir, META))) { "다운로드 상태 저장에 실패했습니다." }
+        status.referer?.let { obj.put("referer", it) }
+        val temp = File(dir, "$META.tmp")
+        temp.writeText(obj.toString(), Charsets.UTF_8)
+        if (!temp.renameTo(File(dir, META))) {
+            File(dir, META).delete()
+            check(temp.renameTo(File(dir, META))) { "다운로드 상태 저장 실패" }
+        }
     }
 
-    fun findStatus(context: Context, id: String): Status? {
-        val dir = root(context).listFiles()?.firstOrNull { child ->
-            File(child, META).takeIf(File::isFile)?.let { file ->
-                runCatching { JSONObject(file.readText()).optString("id") == id }.getOrDefault(false)
-            } == true
-        } ?: return null
-        return runCatching {
-            val obj = JSONObject(File(dir, META).readText())
-            Status(
-                id = obj.optString("id"),
-                progress = obj.optDouble("progress", 0.0).toFloat(),
-                state = obj.optString("state", "queued"),
-                title = obj.optString("title"),
-                episodeId = obj.optString("episodeId"),
-                videoPath = obj.optString("videoPath").takeIf { it.isNotBlank() },
-                error = obj.optString("error").takeIf { it.isNotBlank() },
-                sourceUrl = obj.optString("sourceUrl").takeIf { it.isNotBlank() }
-            )
-        }.getOrNull()
-    }
+    fun findStatus(context: Context, id: String): Status? =
+        listStatuses(context).firstOrNull { it.id == id }
 
     fun listStatuses(context: Context): List<Status> =
         root(context).listFiles()?.mapNotNull { dir ->
-            runCatching {
-                val obj = JSONObject(File(dir, META).takeIf(File::isFile)?.readText() ?: return@runCatching null)
-                Status(
-                    id = obj.optString("id"),
-                    progress = obj.optDouble("progress", 0.0).toFloat(),
-                    state = obj.optString("state", "queued"),
-                    title = obj.optString("title"),
-                    episodeId = obj.optString("episodeId"),
-                    videoPath = obj.optString("videoPath").takeIf { it.isNotBlank() },
-                    error = obj.optString("error").takeIf { it.isNotBlank() },
-                    sourceUrl = obj.optString("sourceUrl").takeIf { it.isNotBlank() }
-                )
-            }.getOrNull()
+            val meta = File(dir, META)
+            if (!meta.isFile) return@mapNotNull null
+            readStatus(meta)
         } ?: emptyList()
+
+    private fun readStatus(file: File): Status? = runCatching {
+        val obj = JSONObject(file.readText(Charsets.UTF_8))
+        val id = obj.optString("id").takeIf { it.isNotBlank() } ?: return@runCatching null
+        Status(
+            id = id,
+            progress = obj.optDouble("progress", 0.0).toFloat().coerceIn(0f, 1f),
+            state = obj.optString("state", "queued"),
+            title = obj.optString("title"),
+            episodeId = obj.optString("episodeId", id.substringAfter("::")),
+            videoPath = obj.optString("videoPath").takeIf { it.isNotBlank() },
+            error = obj.optString("error").takeIf { it.isNotBlank() },
+            animeId = obj.optString("animeId", id.substringBefore("::")),
+            sourceUrl = obj.optString("sourceUrl").takeIf { it.isNotBlank() },
+            referer = obj.optString("referer").takeIf { it.isNotBlank() },
+            episodeNumber = obj.optInt("episodeNumber", 0),
+            episodeKey = obj.optString("episodeKey")
+        )
+    }.getOrNull()
+
+    fun clearPartial(context: Context, animeId: String, episodeId: String) {
+        val dir = episodeDir(context, animeId, episodeId)
+        File(dir, "hls").deleteRecursively()
+        videoPartFile(context, animeId, episodeId).delete()
+        File(dir, "video_source.bin").delete()
+        File(dir, "audio_source.bin").delete()
+    }
 
     fun delete(context: Context, animeId: String, episodeId: String) {
         episodeDir(context, animeId, episodeId).deleteRecursively()

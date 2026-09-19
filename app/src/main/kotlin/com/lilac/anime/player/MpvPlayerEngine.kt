@@ -1,5 +1,23 @@
 package com.lilac.anime.player
 
+import com.lilac.anime.*
+import com.lilac.anime.cast.*
+import com.lilac.anime.core.model.*
+import com.lilac.anime.core.update.*
+import com.lilac.anime.data.*
+import com.lilac.anime.data.matcher.*
+import com.lilac.anime.data.offline.*
+import com.lilac.anime.data.subtitle.*
+import com.lilac.anime.network.*
+import com.lilac.anime.ui.*
+import com.lilac.anime.ui.detail.*
+import com.lilac.anime.ui.home.*
+import com.lilac.anime.ui.navigation.*
+import com.lilac.anime.ui.search.*
+import com.lilac.anime.ui.settings.*
+import com.lilac.anime.ui.theme.*
+import com.lilac.anime.viewmodel.*
+
 import android.content.Context
 import android.graphics.SurfaceTexture
 import android.util.Log
@@ -218,35 +236,15 @@ class MpvPlayerEngine(private val context: Context) {
         }
     }
 
-    /**
-     * Attach only the Android video output surface. This must never change the
-     * playback lifecycle: PIP/fullscreen transitions are allowed to recreate
-     * the Surface while the same libmpv media item keeps buffering/decoding.
-     */
     fun attachSurface(surface: Surface) {
-        runCatching {
-            mpv.attachSurface(surface)
-            // Keep the mpv window alive independently of the Compose/TextureView
-            // lifecycle. Toggling force-window during a PIP transition can tear
-            // down the video output and make an HLS stream appear to have stalled.
-            mpv.setOptionString("force-window", "yes")
-            Log.d(TAG, "SURFACE_ATTACHED valid=${surface.isValid}")
-        }.onFailure {
-            Log.w(TAG, "SURFACE_ATTACH_FAILED", it)
-        }
+        mpv.attachSurface(surface)
+        mpv.setOptionString("force-window", "yes")
     }
 
-    /**
-     * Detach video output only. Do NOT pause/stop/seek/reload libmpv here.
-     * HLS networking and the current playback position must remain owned by
-     * MpvPlayerEngine, not by TextureView's Surface lifecycle.
-     */
     fun detachSurface() {
         runCatching {
+            mpv.setOptionString("force-window", "no")
             mpv.detachSurface()
-            Log.d(TAG, "SURFACE_DETACHED playback=$isPlaying position=$currentPosition")
-        }.onFailure {
-            Log.w(TAG, "SURFACE_DETACH_FAILED", it)
         }
     }
 
@@ -541,7 +539,6 @@ class MpvPlayerSurfaceView(
     var onLongPress: (() -> Unit)? = null
 
     private var attached = false
-    private var currentSurface: Surface? = null
     private var longPressActive = false
     private var speedBeforeLongPress = 1.0f
 
@@ -636,36 +633,15 @@ class MpvPlayerSurfaceView(
     }
 
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-        // TextureView may recreate its Surface during PIP/configuration changes.
-        // Replace only the rendering target; never recreate the player engine.
-        currentSurface?.let { old ->
-            runCatching { old.release() }
-        }
-        val newSurface = Surface(surface)
-        currentSurface = newSurface
-        surfaceWrapper = surface
-        engine.attachSurface(newSurface)
+        engine.attachSurface(Surface(surface))
         attached = true
-        Log.d("LilacMpvSurface", "SURFACE_AVAILABLE ${width}x${height}")
     }
 
-    private var surfaceWrapper: SurfaceTexture? = null
-
-    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
-        Log.d("LilacMpvSurface", "SURFACE_SIZE ${width}x${height}")
-    }
+    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
 
     override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-        // IMPORTANT: this is only a video-output lifecycle event. The mpv
-        // engine/HLS session must remain alive for PIP/background playback.
-        if (attached) {
-            engine.detachSurface()
-        }
+        if (attached) engine.detachSurface()
         attached = false
-        surfaceWrapper = null
-        currentSurface?.let { runCatching { it.release() } }
-        currentSurface = null
-        Log.d("LilacMpvSurface", "SURFACE_DESTROYED player_kept_alive=true")
         return true
     }
 

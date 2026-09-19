@@ -1,5 +1,22 @@
 package com.lilac.anime
 
+import com.lilac.anime.cast.*
+import com.lilac.anime.core.model.*
+import com.lilac.anime.core.update.*
+import com.lilac.anime.data.matcher.*
+import com.lilac.anime.data.offline.*
+import com.lilac.anime.data.subtitle.*
+import com.lilac.anime.network.*
+import com.lilac.anime.player.*
+import com.lilac.anime.ui.*
+import com.lilac.anime.ui.detail.*
+import com.lilac.anime.ui.home.*
+import com.lilac.anime.ui.navigation.*
+import com.lilac.anime.ui.search.*
+import com.lilac.anime.ui.settings.*
+import com.lilac.anime.ui.theme.*
+import com.lilac.anime.viewmodel.*
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -125,7 +142,6 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         var isVideoPlaying: Boolean = false
-        var isPlayerScreenActive: Boolean = false
         var isInPictureInPicture: Boolean by mutableStateOf(false)
     }
 
@@ -136,7 +152,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (isPlayerScreenActive && isVideoPlaying && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (isVideoPlaying && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             enterPictureInPictureMode(
                 PictureInPictureParams.Builder()
                     .setAspectRatio(Rational(16, 9))
@@ -170,6 +186,7 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
 
         requestNotificationPermission()
+        com.lilac.anime.data.offline.OfflineDownloadManager.resumePending(this)
 
         setContent {
             val viewModel: AnimeViewModel = viewModel()

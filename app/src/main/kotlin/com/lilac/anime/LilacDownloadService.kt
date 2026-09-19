@@ -1,30 +1,61 @@
 package com.lilac.anime
 
+import com.lilac.anime.cast.*
+import com.lilac.anime.core.model.*
+import com.lilac.anime.core.update.*
+import com.lilac.anime.data.*
+import com.lilac.anime.data.matcher.*
+import com.lilac.anime.data.offline.*
+import com.lilac.anime.data.subtitle.*
+import com.lilac.anime.network.*
+import com.lilac.anime.player.*
+import com.lilac.anime.ui.*
+import com.lilac.anime.ui.detail.*
+import com.lilac.anime.ui.home.*
+import com.lilac.anime.ui.navigation.*
+import com.lilac.anime.ui.search.*
+import com.lilac.anime.ui.settings.*
+import com.lilac.anime.ui.theme.*
+import com.lilac.anime.viewmodel.*
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.content.pm.ServiceInfo
 import androidx.core.app.NotificationCompat
 import com.lilac.anime.data.offline.MpvHlsDownloader
 import com.lilac.anime.data.offline.MpvOfflineStore
 import com.lilac.anime.data.subtitle.downloadSubtitleFile
 import com.lilac.anime.network.LinkkfRequestContextStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import org.json.JSONObject
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
-/** Native HLS -> MP4 downloader used for all new downloads. */
+/**
+ * Owns the offline download queue. Each episode is an independent persistent
+ * job. The service lifecycle must never be used as the source of truth for a
+ * job's progress or completion.
+ */
 class LilacDownloadService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val serviceJob = SupervisorJob()
+    private val scope = CoroutineScope(serviceJob + Dispatchers.IO)
     private val jobs = mutableMapOf<String, Job>()
+    private val cancelledForRemoval = mutableSetOf<String>()
+    private val lock = Any()
+    private val slots = Semaphore(MAX_CONCURRENT_DOWNLOADS)
+    private var foregroundStarted = false
+    private var recoveryStarted = false
 
     override fun onCreate() {
         super.onCreate()
@@ -32,192 +63,364 @@ class LilacDownloadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_DOWNLOAD -> startDownload(intent, startId)
-            ACTION_REMOVE -> {
-                removeDownload(intent)
-                stopSelfResult(startId)
-            }
-            ACTION_CANCEL_ALL -> {
-                jobs.values.forEach { it.cancel() }
-                jobs.clear()
-                stopSelf()
-            }
+        ensureForeground()
+        if (!recoveryStarted) {
+            recoveryStarted = true
+            recoverPersistentJobs()
         }
-        // A foreground download must be redelivered after an Android process kill.
-        // The downloader itself is resumable, so the last intent is enough to continue.
-        return START_REDELIVER_INTENT
+
+        when (intent?.action) {
+            ACTION_DOWNLOAD -> enqueue(intent)
+            ACTION_REMOVE -> removeDownload(intent)
+            ACTION_CANCEL_ALL -> cancelAll()
+        }
+        return START_STICKY
     }
 
-    private fun startDownload(intent: Intent, startId: Int) {
+    private fun ensureForeground() {
+        if (foregroundStarted) return
+        val notification = summaryNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+        foregroundStarted = true
+    }
+
+    private fun recoverPersistentJobs() {
+        MpvOfflineStore.listStatuses(applicationContext)
+            .filter { it.state == STATE_DOWNLOADING || it.state == STATE_QUEUED || it.state == STATE_PAUSED }
+            .forEach { status ->
+                val source = status.sourceUrl ?: return@forEach
+                val intent = Intent(this, LilacDownloadService::class.java).apply {
+                    putExtra(EXTRA_ANIME_ID, status.animeId)
+                    putExtra(EXTRA_EPISODE_ID, status.episodeId)
+                    putExtra(EXTRA_TITLE, status.title)
+                    putExtra(EXTRA_URL, source)
+                    putExtra(EXTRA_REFERER, status.referer)
+                    putExtra(EXTRA_EPISODE_NUMBER, status.episodeNumber)
+                    putExtra(EXTRA_EPISODE_KEY, status.episodeKey)
+                    action = ACTION_DOWNLOAD
+                }
+                enqueue(intent, recovering = true)
+            }
+    }
+
+    private fun enqueue(intent: Intent, recovering: Boolean = false) {
         val animeId = intent.getStringExtra(EXTRA_ANIME_ID) ?: return
         val episodeId = intent.getStringExtra(EXTRA_EPISODE_ID) ?: return
+        val sourceUrl = intent.getStringExtra(EXTRA_URL)?.takeIf { it.isNotBlank() }
+            ?: MpvOfflineStore.findStatus(applicationContext, "$animeId::$episodeId")?.sourceUrl
+            ?: return
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
-        val sourceUrl = intent.getStringExtra(EXTRA_URL) ?: return
         val referer = intent.getStringExtra(EXTRA_REFERER)
-        val subtitleUrl = intent.getStringExtra(EXTRA_SUBTITLE_URL)
-            ?: LinkkfRequestContextStore.getSubtitleUrl(applicationContext, animeId, episodeId)
+        val requestedSubtitleUrl = intent.getStringExtra(EXTRA_SUBTITLE_URL)
+        val requestedSubtitleReferer = intent.getStringExtra(EXTRA_SUBTITLE_REFERER)
         val episodeNumber = intent.getIntExtra(EXTRA_EPISODE_NUMBER, 0)
         val episodeKey = intent.getStringExtra(EXTRA_EPISODE_KEY) ?: episodeNumber.toString()
-        val subtitleReferer = intent.getStringExtra(EXTRA_SUBTITLE_REFERER)
-            ?: LinkkfRequestContextStore.getSubtitle(applicationContext, animeId, episodeId)
-            ?: referer
-        val key = "${animeId}::${episodeId}"
-        if (jobs[key]?.isActive == true) return
+        val key = "$animeId::$episodeId"
 
-        val previous = MpvOfflineStore.findStatus(applicationContext, key)
-        val previousProgress = previous?.progress?.coerceIn(0f, 1f) ?: 0f
-        val previousSource = previous?.sourceUrl
-        // If the URL really changed, the old HLS fragments cannot safely be reused.
-        // Otherwise keep the hls/ directory so an interrupted download can resume.
-        val sameSource = previousSource.isNullOrBlank() ||
-            sourceIdentity(previousSource) == sourceIdentity(sourceUrl)
-        if (!sameSource) {
-            // A genuinely different stream (for example a different quality/path)
-            // must not reuse fragments from the old stream. Query-string-only
-            // changes are intentionally ignored because HLS URLs commonly rotate
-            // tokens between retries while pointing at the same VOD.
-            MpvOfflineStore.episodeDir(applicationContext, animeId, episodeId)
-                .resolve("hls").deleteRecursively()
+        synchronized(lock) {
+            if (jobs[key]?.isActive == true) return
         }
 
-        // startForegroundService() has a strict startup deadline.  Promote the
-        // service synchronously before launching any coroutine/network work.
-        val initialNotification = notification("$title - ${episodeId}", (if (sameSource) previousProgress else 0f).times(100).toInt())
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                initialNotification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        val old = MpvOfflineStore.findStatus(applicationContext, key)
+        if (MpvOfflineStore.isCompleted(applicationContext, animeId, episodeId)) {
+            updateState(
+                key,
+                STATE_COMPLETED,
+                progress = 1f,
+                videoPath = MpvOfflineStore.completedPath(applicationContext, animeId, episodeId),
+                title = title.ifBlank { old?.title.orEmpty() },
+                episodeId = episodeId,
+                sourceUrl = sourceUrl,
+                referer = referer ?: old?.referer,
+                episodeNumber = episodeNumber,
+                episodeKey = episodeKey
             )
-        } else {
-            startForeground(NOTIFICATION_ID, initialNotification)
+            return
         }
+        if (old?.sourceUrl != null && old.sourceUrl != sourceUrl) {
+            // A genuinely different stream must never reuse another stream's
+            // segment files. This is the only condition that clears partial HLS.
+            MpvOfflineStore.clearPartial(applicationContext, animeId, episodeId)
+        }
+
+        val existingProgress = old?.progress ?: 0f
+        val state = if (recovering) STATE_QUEUED else STATE_QUEUED
         MpvOfflineStore.saveStatus(
             applicationContext,
             MpvOfflineStore.Status(
                 id = key,
-                progress = if (sameSource) previousProgress else 0f,
-                state = "downloading",
-                title = title,
+                progress = existingProgress,
+                state = state,
+                title = title.ifBlank { old?.title.orEmpty() },
                 episodeId = episodeId,
-                sourceUrl = sourceUrl
+                animeId = animeId,
+                sourceUrl = sourceUrl,
+                referer = referer ?: old?.referer,
+                episodeNumber = if (episodeNumber != 0) episodeNumber else old?.episodeNumber ?: 0,
+                episodeKey = episodeKey.ifBlank { old?.episodeKey.orEmpty() }
             )
         )
-        jobs[key] = scope.launch {
+
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                // Linkkf VTT is independent of the video download. Save it first so
-                // the completed offline episode always has a local subtitle when the
-                // subtitle URL/Referer were already captured by the player WebView.
-                var localSubtitle: String? = null
-                suspend fun saveLinkkfSubtitle(): String? {
-                    val url = subtitleUrl?.takeIf { it.isNotBlank() }
-                        ?: LinkkfRequestContextStore.getSubtitleUrl(applicationContext, animeId, episodeId)
-                        ?: return null
-                    // The VTT endpoint can require a different Referer from the m3u8.
-                    // Prefer the exact subtitle request Referer passed by the collector, then
-                    // the persisted subtitle Referer. Never downgrade to the video Referer unless
-                    // there is no subtitle-specific context at all.
-                    val ref = subtitleReferer?.takeIf { it.isNotBlank() }
-                        ?: LinkkfRequestContextStore.getSubtitle(applicationContext, animeId, episodeId)
-                        ?: referer
-                    LinkkfRequestContextStore.saveSubtitleUrl(applicationContext, animeId, episodeId, url)
-                    ref?.let { LinkkfRequestContextStore.saveSubtitle(applicationContext, animeId, episodeId, it) }
-                    return runCatching {
-                        downloadSubtitleFile(
-                            context = applicationContext,
-                            animeId = animeId,
-                            episodeNumber = episodeNumber,
-                            episodeKey = episodeKey,
-                            vttUrl = url,
-                            referer = ref
-                        )
-                    }.getOrNull()?.also { path ->
-                        SubtitleStore.save(
-                            context = applicationContext,
-                            animeId = animeId,
-                            episodeKey = episodeKey,
-                            episodeNumber = episodeNumber,
-                            source = "linkkf",
-                            path = path
-                        )
-                        android.util.Log.d("OfflineDownload", "SUBTITLE_SAVED_WITH_VIDEO episode=$episodeKey path=$path ref=${ref ?: "<none>"}")
-                    }
-                }
-
-                // Do this before the potentially long HLS download. If the first
-                // attempt fails, the same URL/context is retried after the video.
-                localSubtitle = saveLinkkfSubtitle()
-                if (localSubtitle == null) {
-                    android.util.Log.w("OfflineDownload", "SUBTITLE_FIRST_ATTEMPT_FAILED episode=$episodeKey url=${subtitleUrl ?: "<none>"}")
-                }
-
-                val file = MpvHlsDownloader().download(applicationContext, animeId, episodeId, sourceUrl, referer) { progress ->
-                    val fraction = if (progress.total > 0) progress.downloaded.toFloat() / progress.total else 0f
-                    MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, fraction, "downloading", title, episodeId, sourceUrl = sourceUrl))
-                    updateNotification("$title - ${episodeId}", fraction)
-                }
-
-                val stored = OfflineStore.getEpisodesForAnime(applicationContext, animeId)
-                    .firstOrNull { it.id == episodeId }
-
-                // The player can refresh the subtitle URL/Referer while the video is
-                // downloading. Re-read the shared context and retry once at the end.
-                if (localSubtitle == null) {
-                    localSubtitle = saveLinkkfSubtitle()
-                }
-
-                if (stored != null) {
-                    OfflineStore.saveEpisode(
-                        context = applicationContext,
+                slots.withPermit {
+                    runDownload(
                         animeId = animeId,
-                        episode = stored.copy(
-                            videoUrl = file.absolutePath,
-                            vttUrl = localSubtitle ?: stored.vttUrl
-                        )
+                        episodeId = episodeId,
+                        title = title.ifBlank { old?.title.orEmpty() },
+                        sourceUrl = sourceUrl,
+                        referer = referer ?: old?.referer,
+                        episodeNumber = episodeNumber,
+                        episodeKey = episodeKey,
+                        subtitleUrl = requestedSubtitleUrl,
+                        subtitleReferer = requestedSubtitleReferer
                     )
                 }
-                // Persist completion only after the final MP4 has passed the
-                // downloader's validation. Player/ViewModel can then recognize
-                // this episode as offline without waiting for the old store.
-                MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, 1f, "completed", title, episodeId, file.absolutePath, sourceUrl = sourceUrl))
-                updateNotification("$title - ${episodeId}", 1f, completed = true)
+            } catch (cancel: CancellationException) {
+                val removed = synchronized(lock) { cancelledForRemoval.contains(key) }
+                if (!removed) {
+                    val current = MpvOfflineStore.findStatus(applicationContext, key)
+                    MpvOfflineStore.saveStatus(
+                        applicationContext,
+                        (current ?: MpvOfflineStore.Status(key, existingProgress, STATE_PAUSED, title, episodeId))
+                            .copy(state = STATE_PAUSED)
+                    )
+                }
+                throw cancel
             } catch (t: Throwable) {
-                MpvOfflineStore.saveStatus(applicationContext, MpvOfflineStore.Status(key, previousProgress, "failed", title, episodeId, error = t.message, sourceUrl = sourceUrl))
-                updateNotification("$title - ${episodeId}", previousProgress, failed = true)
+                val current = MpvOfflineStore.findStatus(applicationContext, key)
+                MpvOfflineStore.saveStatus(
+                    applicationContext,
+                    (current ?: MpvOfflineStore.Status(key, existingProgress, STATE_FAILED, title, episodeId))
+                        .copy(state = STATE_FAILED, error = t.message)
+                )
             } finally {
-                jobs.remove(key)
-                if (jobs.isEmpty()) stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelfResult(startId)
+                synchronized(lock) {
+                    jobs.remove(key)
+                    cancelledForRemoval.remove(key)
+                }
+                publishSummary()
+                maybeStopService()
             }
         }
+        synchronized(lock) { jobs[key] = job }
+        job.start()
+        publishSummary()
     }
 
-    private fun sourceIdentity(url: String): String = runCatching {
-        val u = java.net.URI(url)
-        "${u.scheme}://${u.host}${if (u.port > 0) ":${u.port}" else ""}${u.path}"
-    }.getOrElse { url.substringBefore('#').substringBefore('?') }
+    private suspend fun runDownload(
+        animeId: String,
+        episodeId: String,
+        title: String,
+        sourceUrl: String,
+        referer: String?,
+        episodeNumber: Int,
+        episodeKey: String,
+        subtitleUrl: String?,
+        subtitleReferer: String?
+    ) {
+        val key = "$animeId::$episodeId"
+        updateState(key, STATE_DOWNLOADING)
+
+        // Subtitle download is deliberately best-effort. A subtitle failure
+        // can never invalidate a successfully downloaded video.
+        var localSubtitle: String? = null
+        val effectiveSubtitleUrl = subtitleUrl?.takeIf { it.isNotBlank() }
+            ?: LinkkfRequestContextStore.getSubtitleUrl(applicationContext, animeId, episodeId)
+        val effectiveSubtitleReferer = subtitleReferer?.takeIf { it.isNotBlank() }
+            ?: LinkkfRequestContextStore.getSubtitle(applicationContext, animeId, episodeId)
+            ?: referer
+        if (!effectiveSubtitleUrl.isNullOrBlank()) {
+            localSubtitle = runCatching {
+                downloadSubtitleFile(
+                    context = applicationContext,
+                    animeId = animeId,
+                    episodeNumber = episodeNumber,
+                    episodeKey = episodeKey,
+                    vttUrl = effectiveSubtitleUrl,
+                    referer = effectiveSubtitleReferer
+                )
+            }.getOrNull()?.also { path ->
+                SubtitleStore.save(applicationContext, animeId, episodeKey, episodeNumber, "linkkf", path)
+            }
+        }
+
+        val file = MpvHlsDownloader().download(
+            context = applicationContext,
+            animeId = animeId,
+            episodeId = episodeId,
+            sourceUrl = sourceUrl,
+            referer = referer
+        ) { progress ->
+            val fraction = if (progress.total > 0L) progress.downloaded.toFloat() / progress.total else 0f
+            updateProgress(key, fraction, title, episodeId, sourceUrl, referer, episodeNumber, episodeKey)
+        }
+
+        if (localSubtitle == null && !effectiveSubtitleUrl.isNullOrBlank()) {
+            localSubtitle = runCatching {
+                downloadSubtitleFile(
+                    context = applicationContext,
+                    animeId = animeId,
+                    episodeNumber = episodeNumber,
+                    episodeKey = episodeKey,
+                    vttUrl = effectiveSubtitleUrl,
+                    referer = effectiveSubtitleReferer
+                )
+            }.getOrNull()?.also { path ->
+                SubtitleStore.save(applicationContext, animeId, episodeKey, episodeNumber, "linkkf", path)
+            }
+        }
+
+        val stored = OfflineStore.getEpisodesForAnime(applicationContext, animeId)
+            .firstOrNull { it.id == episodeId }
+        if (stored != null) {
+            OfflineStore.saveEpisode(
+                applicationContext,
+                animeId,
+                stored.copy(videoUrl = file.absolutePath, vttUrl = localSubtitle ?: stored.vttUrl)
+            )
+        }
+
+        updateState(
+            key,
+            STATE_COMPLETED,
+            progress = 1f,
+            videoPath = file.absolutePath,
+            title = title,
+            episodeId = episodeId,
+            sourceUrl = sourceUrl,
+            referer = referer,
+            episodeNumber = episodeNumber,
+            episodeKey = episodeKey
+        )
+    }
+
+    private fun updateProgress(
+        key: String,
+        progress: Float,
+        title: String,
+        episodeId: String,
+        sourceUrl: String,
+        referer: String?,
+        episodeNumber: Int,
+        episodeKey: String
+    ) {
+        val old = MpvOfflineStore.findStatus(applicationContext, key)
+        MpvOfflineStore.saveStatus(
+            applicationContext,
+            MpvOfflineStore.Status(
+                id = key,
+                progress = progress,
+                state = STATE_DOWNLOADING,
+                title = title,
+                episodeId = episodeId,
+                videoPath = old?.videoPath,
+                animeId = key.substringBefore("::"),
+                sourceUrl = sourceUrl,
+                referer = referer,
+                episodeNumber = episodeNumber,
+                episodeKey = episodeKey
+            )
+        )
+        publishSummary()
+    }
+
+    private fun updateState(
+        key: String,
+        state: String,
+        progress: Float? = null,
+        videoPath: String? = null,
+        title: String? = null,
+        episodeId: String? = null,
+        sourceUrl: String? = null,
+        referer: String? = null,
+        episodeNumber: Int? = null,
+        episodeKey: String? = null
+    ) {
+        val old = MpvOfflineStore.findStatus(applicationContext, key)
+        MpvOfflineStore.saveStatus(
+            applicationContext,
+            (old ?: MpvOfflineStore.Status(key, 0f, state, title.orEmpty(), episodeId.orEmpty()))
+                .copy(
+                    state = state,
+                    progress = progress ?: old?.progress ?: 0f,
+                    videoPath = videoPath ?: old?.videoPath,
+                    title = title ?: old?.title.orEmpty(),
+                    episodeId = episodeId ?: old?.episodeId.orEmpty(),
+                    sourceUrl = sourceUrl ?: old?.sourceUrl,
+                    referer = referer ?: old?.referer,
+                    episodeNumber = episodeNumber ?: old?.episodeNumber ?: 0,
+                    episodeKey = episodeKey ?: old?.episodeKey.orEmpty(),
+                    error = null
+                )
+        )
+        publishSummary()
+    }
 
     private fun removeDownload(intent: Intent) {
         val animeId = intent.getStringExtra(EXTRA_ANIME_ID) ?: return
         val episodeId = intent.getStringExtra(EXTRA_EPISODE_ID) ?: return
-        val key = "${animeId}::${episodeId}"
-        jobs.remove(key)?.cancel()
+        val key = "$animeId::$episodeId"
+        synchronized(lock) {
+            jobs.remove(key)?.let {
+                cancelledForRemoval += key
+                it.cancel()
+            }
+        }
         MpvOfflineStore.delete(applicationContext, animeId, episodeId)
-        if (jobs.isEmpty()) stopSelf()
+        publishSummary()
+        maybeStopService()
     }
 
-    private fun notification(text: String, progress: Int, completed: Boolean = false, failed: Boolean = false): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(if (failed) android.R.drawable.stat_notify_error else android.R.drawable.stat_sys_download)
-            .setContentTitle("LilacAnime")
-            .setContentText(if (completed) "$text 저장 완료" else if (failed) "$text 저장 실패" else "$text 저장 중")
-            .setOngoing(!completed && !failed)
-            .setProgress(100, (progress.coerceIn(0, 1) * 100).toInt(), false)
-            .build()
+    private fun cancelAll() {
+        synchronized(lock) {
+            jobs.values.toList().forEach { it.cancel() }
+            jobs.clear()
+        }
+        MpvOfflineStore.listStatuses(applicationContext)
+            .filter { it.state == STATE_DOWNLOADING || it.state == STATE_QUEUED }
+            .forEach { status ->
+                MpvOfflineStore.saveStatus(applicationContext, status.copy(state = STATE_PAUSED))
+            }
+        maybeStopService(force = true)
+    }
 
-    private fun updateNotification(text: String, fraction: Float, completed: Boolean = false, failed: Boolean = false) {
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text, (fraction * 100).toInt(), completed, failed))
+    private fun maybeStopService(force: Boolean = false) {
+        val active = synchronized(lock) { jobs.values.any { it.isActive } }
+        if (force || !active) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            if (force || MpvOfflineStore.listStatuses(applicationContext).none {
+                    it.state == STATE_DOWNLOADING || it.state == STATE_QUEUED
+                }) stopSelf()
+        }
+    }
+
+    private fun publishSummary() {
+        if (!foregroundStarted) return
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, summaryNotification())
+    }
+
+    private fun summaryNotification(): Notification {
+        val active = MpvOfflineStore.listStatuses(applicationContext)
+            .filter { it.state == STATE_DOWNLOADING || it.state == STATE_QUEUED }
+        val running = active.count { it.state == STATE_DOWNLOADING }
+        val text = when {
+            active.isEmpty() -> "다운로드 대기 없음"
+            active.size == 1 -> "${active.first().title} · ${"%.0f".format(active.first().progress * 100)}%"
+            else -> "${active.size}개 다운로드 · ${running}개 진행 중"
+        }
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("LilacAnime 오프라인 저장")
+            .setContentText(text)
+            .setOngoing(active.isNotEmpty())
+            .setOnlyAlertOnce(true)
+            .build()
     }
 
     private fun createChannel() {
@@ -231,6 +434,15 @@ class LilacDownloadService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        // Persist the interruption before cancelling coroutines. The next
+        // service instance can then recover the exact same jobs and the HLS
+        // engine will reuse their completed segment files.
+        MpvOfflineStore.listStatuses(applicationContext)
+            .filter { it.state == STATE_DOWNLOADING || it.state == STATE_QUEUED }
+            .forEach { status ->
+                MpvOfflineStore.saveStatus(applicationContext, status.copy(state = STATE_PAUSED))
+            }
+        synchronized(lock) { jobs.values.toList().forEach { it.cancel() }; jobs.clear() }
         scope.cancel()
         super.onDestroy()
     }
@@ -248,7 +460,14 @@ class LilacDownloadService : Service() {
         const val EXTRA_REFERER = "referer"
         const val EXTRA_SUBTITLE_URL = "subtitleUrl"
         const val EXTRA_SUBTITLE_REFERER = "subtitleReferer"
+
         private const val CHANNEL_ID = "lilac_mpv_download"
         private const val NOTIFICATION_ID = 4101
+        private const val MAX_CONCURRENT_DOWNLOADS = 2
+        private const val STATE_QUEUED = "queued"
+        private const val STATE_DOWNLOADING = "downloading"
+        private const val STATE_PAUSED = "paused"
+        private const val STATE_FAILED = "failed"
+        private const val STATE_COMPLETED = "completed"
     }
 }

@@ -1,10 +1,27 @@
-package com.lilac.anime
+package com.lilac.anime.data.offline
+
+import com.lilac.anime.*
+import com.lilac.anime.cast.*
+import com.lilac.anime.core.model.*
+import com.lilac.anime.core.update.*
+import com.lilac.anime.data.*
+import com.lilac.anime.data.matcher.*
+import com.lilac.anime.data.subtitle.*
+import com.lilac.anime.network.*
+import com.lilac.anime.player.*
+import com.lilac.anime.ui.*
+import com.lilac.anime.ui.detail.*
+import com.lilac.anime.ui.home.*
+import com.lilac.anime.ui.navigation.*
+import com.lilac.anime.ui.search.*
+import com.lilac.anime.ui.settings.*
+import com.lilac.anime.ui.theme.*
+import com.lilac.anime.viewmodel.*
 
 import android.content.Context
-import android.content.Intent
 import com.lilac.anime.Episode
 
-/** Starts the mpv-native HLS -> MP4 downloader. */
+/** Backwards-compatible facade for existing UI call sites. */
 fun startEpisodeDownload(
     context: Context,
     animeId: String,
@@ -15,19 +32,18 @@ fun startEpisodeDownload(
     subtitleUrl: String? = null,
     subtitleReferer: String? = null
 ) {
-    val intent = Intent(context.applicationContext, LilacDownloadService::class.java).apply {
-        action = LilacDownloadService.ACTION_DOWNLOAD
-        putExtra(LilacDownloadService.EXTRA_ANIME_ID, animeId)
-        putExtra(LilacDownloadService.EXTRA_EPISODE_ID, episode.id)
-        putExtra(LilacDownloadService.EXTRA_TITLE, "$animeTitle - ${episode.displayNumber}화")
-        putExtra(LilacDownloadService.EXTRA_URL, streamUrl)
-        putExtra(LilacDownloadService.EXTRA_EPISODE_NUMBER, episode.number)
-        putExtra(LilacDownloadService.EXTRA_EPISODE_KEY, episode.displayNumber)
-        referer?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_REFERER, it) }
-        subtitleUrl?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_SUBTITLE_URL, it) }
-        subtitleReferer?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_SUBTITLE_REFERER, it) }
-    }
-    androidx.core.content.ContextCompat.startForegroundService(context.applicationContext, intent)
+    OfflineDownloadManager.enqueue(
+        context,
+        OfflineDownloadManager.Request(
+            animeId = animeId,
+            animeTitle = animeTitle,
+            episode = episode,
+            streamUrl = streamUrl,
+            referer = referer,
+            subtitleUrl = subtitleUrl,
+            subtitleReferer = subtitleReferer
+        )
+    )
 }
 
 fun offlineDownloadId(animeId: String, episode: Episode): String = "${animeId}::${episode.id}"

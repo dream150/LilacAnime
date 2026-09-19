@@ -1,5 +1,23 @@
 package com.lilac.anime.data.offline
 
+import com.lilac.anime.*
+import com.lilac.anime.cast.*
+import com.lilac.anime.core.model.*
+import com.lilac.anime.core.update.*
+import com.lilac.anime.data.*
+import com.lilac.anime.data.matcher.*
+import com.lilac.anime.data.subtitle.*
+import com.lilac.anime.network.*
+import com.lilac.anime.player.*
+import com.lilac.anime.ui.*
+import com.lilac.anime.ui.detail.*
+import com.lilac.anime.ui.home.*
+import com.lilac.anime.ui.navigation.*
+import com.lilac.anime.ui.search.*
+import com.lilac.anime.ui.settings.*
+import com.lilac.anime.ui.theme.*
+import com.lilac.anime.viewmodel.*
+
 import android.content.Context
 import android.media.MediaCodec
 import android.media.MediaExtractor
@@ -21,6 +39,7 @@ import java.io.FileOutputStream
 import java.net.URL
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Downloads a VOD HLS stream completely to local storage and then creates
@@ -77,20 +96,16 @@ class MpvHlsDownloader(
         }
 
         val output = MpvOfflineStore.videoFile(context, animeId, episodeId)
-        val tempOutput = File(dir, "episode.mp4.part")
-        val localRoot = File(dir, "hls").apply { mkdirs() }
+        val tempOutput = MpvOfflineStore.videoPartFile(context, animeId, episodeId)
 
-        // Keep downloaded HLS segments across transient failures/service restarts.
-        // A new signed URL is treated as a new download so segments from another
-        // stream can never be mixed into this one.
-        val sourceMarker = File(localRoot, ".source")
-        val sourceFingerprint = sha256(sourceUrl)
-        val oldFingerprint = sourceMarker.takeIf { it.isFile }?.readText()?.trim()
-        if (oldFingerprint != null && oldFingerprint != sourceFingerprint) {
-            localRoot.deleteRecursively()
-            localRoot.mkdirs()
+        // A validated final file is immutable. A duplicate enqueue must never
+        // restart or truncate an already completed episode.
+        if (MpvOfflineStore.isCompleted(context, animeId, episodeId)) {
+            onProgress(Progress(1L, 1L))
+            return@withContext output
         }
-        sourceMarker.writeText(sourceFingerprint, Charsets.UTF_8)
+        // Partial HLS data is durable. Never delete it at the start of a retry.
+        val localRoot = File(dir, "hls").apply { mkdirs() }
 
         // A direct MP4 URL is also accepted. It still goes through the same
         // final audio/video-track validation before becoming "completed".
@@ -126,11 +141,11 @@ class MpvHlsDownloader(
             val totalSegments =
                 videoSegments.size.toLong() + audioSegments.size.toLong()
 
-            var completedSegments = 0L
+            val completedSegments = AtomicLong(0L)
 
             suspend fun segmentProgress() {
-                completedSegments++
-                onProgress(Progress(completedSegments, totalSegments))
+                val current = completedSegments.incrementAndGet()
+                onProgress(Progress(current, totalSegments))
             }
 
             val videoLocal = downloadPlaylist(
@@ -183,20 +198,13 @@ class MpvHlsDownloader(
             onProgress(Progress(totalSegments, totalSegments))
             output
         } catch (t: Throwable) {
-            // Keep the HLS segment cache so a transient network/service failure can
-            // continue instead of restarting the entire episode from zero.
+            // Keep every completed HLS segment. Only the muxing scratch file is
+            // disposable; the next run will verify and reuse the segment files.
             tempOutput.delete()
-            // Never delete an already completed MP4 because a later retry failed.
-            // The old file is still a valid offline copy.
-            Log.e(TAG, "HLS download failed; partial HLS cache preserved", t)
+            Log.e(TAG, "HLS download failed; partial data preserved", t)
             throw t
         }
     }
-
-    private fun sha256(value: String): String =
-        java.security.MessageDigest.getInstance("SHA-256")
-            .digest(value.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
 
     /**
      * Resolves a master playlist into:
@@ -270,40 +278,50 @@ class MpvHlsDownloader(
     ): LocalPlaylist = coroutineScope {
         outputDir.mkdirs()
 
-        val semaphore = Semaphore(6)
+        val semaphore = Semaphore(3)
+        val completedBefore = segments.indices.count { index ->
+            val segment = segments[index]
+            val suffix = segmentSuffix(segment.url)
+            val target = File(outputDir, "%06d.%s".format(Locale.US, index, suffix))
+            target.isFile && target.length() > 0L &&
+                (segment.range == null || target.length() == segment.range.length)
+        }
+        repeat(completedBefore) { onSegment() }
 
         val files = segments.mapIndexed { index, segment ->
             async {
                 semaphore.withPermit {
-                    val suffix = when {
-                        segment.url.substringBefore('?')
-                            .endsWith(".m4s", true) -> "m4s"
+                    val suffix = segmentSuffix(segment.url)
+                    val target = File(outputDir, "%06d.%s".format(Locale.US, index, suffix))
+                    val validExisting = target.isFile && target.length() > 0L &&
+                        (segment.range == null || target.length() == segment.range.length)
 
-                        segment.url.substringBefore('?')
-                            .endsWith(".mp4", true) -> "mp4"
-
-                        else -> "ts"
-                    }
-
-                    val target = File(
-                        outputDir,
-                        "%06d.%s".format(Locale.US, index, suffix)
-                    )
-
-                    if (!target.isFile || target.length() == 0L) {
-                        downloadToFile(
+                    if (!validExisting) {
+                        val part = File(outputDir, "${target.name}.part")
+                        // A .part file is never treated as a completed segment.
+                        // downloadToFileWithRetry() removes it only between retry
+                        // attempts and only after the request has definitively failed.
+                        downloadToFileWithRetry(
                             url = segment.url,
-                            target = target,
+                            target = part,
                             range = segment.range,
                             referer = referer
                         )
+                        check(part.isFile && part.length() > 0L) {
+                            "세그먼트 다운로드 실패: ${segment.url}"
+                        }
+                        atomicReplace(part, target)
                     }
 
                     check(target.isFile && target.length() > 0L) {
                         "세그먼트 다운로드 실패: ${segment.url}"
                     }
-
-                    onSegment()
+                    if (segment.range != null) {
+                        check(target.length() == segment.range.length) {
+                            "HLS byte-range 길이가 다릅니다: ${target.name}"
+                        }
+                    }
+                    if (!validExisting) onSegment()
                     index to target
                 }
             }
@@ -315,31 +333,31 @@ class MpvHlsDownloader(
 
         if (mapLine != null) {
             val attrs = parseAttributes(mapLine.substringAfter(':'))
-            val uri = attrs["URI"]
-                ?: error("EXT-X-MAP URI가 없습니다.")
-
+            val uri = attrs["URI"] ?: error("EXT-X-MAP URI가 없습니다.")
             val mapUrl = resolveUrl(baseUrl, uri)
             val mapRange = attrs["BYTERANGE"]?.let(::parseByteRange)
-
             initFile = File(outputDir, "init.mp4")
-            if (!initFile.isFile || initFile.length() == 0L) {
-                downloadToFile(mapUrl, initFile, mapRange, referer)
+            val validInit = initFile.isFile && initFile.length() > 0L &&
+                (mapRange == null || initFile.length() == mapRange.length)
+            if (!validInit) {
+                val part = File(outputDir, "init.mp4.part")
+                part.delete()
+                downloadToFile(mapUrl, part, mapRange, referer)
+                check(part.isFile && part.length() > 0L) { "HLS 초기화 세그먼트 다운로드 실패" }
+                atomicReplace(part, initFile)
             }
-
-            check(initFile.isFile && initFile.length() > 0L) {
-                "HLS 초기화 세그먼트 다운로드 실패"
-            }
+            check(initFile.isFile && initFile.length() > 0L) { "HLS 초기화 세그먼트 다운로드 실패" }
         }
 
         val localPlaylist = File(outputDir, "playlist.m3u8")
-        writeLocalPlaylist(
-            file = localPlaylist,
-            original = playlistText,
-            parts = files,
-            initFile = initFile
-        )
-
+        writeLocalPlaylist(localPlaylist, playlistText, files, initFile)
         LocalPlaylist(localPlaylist, segments.size, initFile, files)
+    }
+
+    private fun segmentSuffix(url: String): String = when {
+        url.substringBefore('?').endsWith(".m4s", true) -> "m4s"
+        url.substringBefore('?').endsWith(".mp4", true) -> "mp4"
+        else -> "ts"
     }
 
     /**
@@ -1041,6 +1059,43 @@ class MpvHlsDownloader(
         }
     }
 
+    private fun downloadToFileWithRetry(
+        url: String,
+        target: File,
+        range: ByteRange? = null,
+        referer: String? = null
+    ) {
+        var lastError: Throwable? = null
+        repeat(SEGMENT_RETRY_COUNT) { attempt ->
+            try {
+                // Never append to a partial response unless the request itself
+                // explicitly represents a byte-range segment. Starting each
+                // retry with a clean .part prevents truncated/corrupt data from
+                // being mistaken for a completed HLS segment.
+                if (attempt > 0) target.delete()
+                downloadToFile(url, target, range, referer)
+                return
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                lastError = t
+                Log.w(
+                    TAG,
+                    "segment retry ${attempt + 1}/$SEGMENT_RETRY_COUNT failed: $url",
+                    t
+                )
+                if (attempt + 1 < SEGMENT_RETRY_COUNT) {
+                    try {
+                        Thread.sleep(RETRY_BACKOFF_MS * (attempt + 1))
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw e
+                    }
+                }
+            }
+        }
+        throw lastError ?: IllegalStateException("segment download failed: $url")
+    }
+
     private fun downloadToFile(
         url: String,
         target: File,
@@ -1074,6 +1129,7 @@ class MpvHlsDownloader(
             val body = response.body
                 ?: error("empty response: $url")
 
+            target.parentFile?.mkdirs()
             target.outputStream().buffered(DISK_COPY_BUFFER_SIZE).use { out ->
                 body.byteStream().use { input ->
                     input.copyTo(out, DISK_COPY_BUFFER_SIZE)
@@ -1153,6 +1209,8 @@ class MpvHlsDownloader(
         private const val TAG = "MpvHlsDownloader"
         private const val DISK_COPY_BUFFER_SIZE = 4 * 1024 * 1024
         private const val SAMPLE_BUFFER_SIZE = 16 * 1024 * 1024
+        private const val SEGMENT_RETRY_COUNT = 5
+        private const val RETRY_BACKOFF_MS = 1500L
 
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
@@ -1163,8 +1221,9 @@ class MpvHlsDownloader(
 
         val defaultClient: OkHttpClient =
             OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(180, TimeUnit.SECONDS)
+                .writeTimeout(60, TimeUnit.SECONDS)
                 .build()
     }
 }
