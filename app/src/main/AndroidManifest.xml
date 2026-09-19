@@ -6,6 +6,7 @@
     <!-- 다운로드를 위한 포그라운드 서비스 및 알림 권한 추가 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -52,6 +53,15 @@
             android:name=".network.OpEdAnalysisForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".player.BackgroundAudioService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <receiver
+            android:name=".player.PipActionReceiver"
+            android:exported="false" />
 
 
     </application>

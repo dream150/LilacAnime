@@ -32,6 +32,8 @@ import android.view.GestureDetector
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -635,6 +637,25 @@ fun PlayerScreen(
     val currentAutoPlayState = rememberUpdatedState(isAutoPlayEnabled)
     val currentEpisodeState = rememberUpdatedState(currentEpisode)
 
+    // Background audio is a separate playback mode. The libmpv engine itself is
+    // shared process-wide, so leaving the Activity does not destroy playback.
+    val mpvEngine = remember { MpvPlaybackManager.engine(context) }
+    var backgroundAudioActive by remember { mutableStateOf(MpvPlaybackManager.isBackgroundAudio) }
+
+    DisposableEffect(activity) {
+        val owner = activity as? androidx.lifecycle.LifecycleOwner
+            ?: return@DisposableEffect onDispose { }
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && MpvPlaybackManager.isBackgroundAudio) {
+                backgroundAudioActive = false
+                MainActivity.isVideoPlaying = mpvEngine.isPlaying
+                MpvPlaybackManager.exitBackgroundAudio(activity)
+            }
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose { owner.lifecycle.removeObserver(observer) }
+    }
+
     // Re-evaluate on every ViewModel download-state update so a newly completed
     // mpv-native MP4 is picked up without reopening the player.
     val isDownloaded = vm.isEpisodeDownloaded(anime.id, currentEpisode)
@@ -698,7 +719,19 @@ fun PlayerScreen(
     // Animenosub 인증/쿠키 로직은 현재 비활성화한다.
     // 스트림은 StreamUrlExtractor의 WebView에서 직접 탐지하고,
     // 사용자가 PlayerScreen을 나가려는 경우에만 기존 Back 동작을 수행한다.
-    BackHandler { back() }
+    BackHandler {
+        // 일반적인 뒤로가기는 PiP/백그라운드 재생으로 취급하지 않는다.
+        // 현재 위치 저장을 위해 먼저 pause()만 하고, 화면을 빠져나간다.
+        // stop()은 currentPosition을 0으로 초기화하므로 여기서는 사용하지 않는다.
+        if (MpvPlaybackManager.isBackgroundAudio) {
+            MpvPlaybackManager.exitBackgroundAudio(context)
+        }
+        backgroundAudioActive = false
+        MainActivity.isVideoPlaying = false
+        mpvEngine.pause()
+        mpvEngine.detachSurface()
+        back()
+    }
 
     // User subtitles are stored in SubtitleStore under the separate "user" source.
     // They are not restored into Episode.vttUrl, so changing/adding a user subtitle
@@ -970,8 +1003,6 @@ fun PlayerScreen(
         }
     }
 
-    val mpvEngine = remember(context) { MpvPlayerEngine(context) }
-
     // Google Cast sender: the existing mpv player remains the local renderer.
     // Selecting a Cast device moves the current HLS stream to the Default Media Receiver.
     DisposableEffect(context, mpvEngine) {
@@ -1025,10 +1056,6 @@ fun PlayerScreen(
         )
         mpvEngine.pause()
     }
-    DisposableEffect(mpvEngine) {
-        onDispose { mpvEngine.release() }
-    }
-
     LaunchedEffect(mpvEngine, playbackSpeed) {
         mpvEngine.setSpeed(playbackSpeed)
     }
@@ -1199,6 +1226,23 @@ fun PlayerScreen(
 
         mpvEngine.stopForEpisodeSwitch()
         currentEpisode = target
+    }
+
+    DisposableEffect(currentEpisode.id, nextEpisode?.id, mpvEngine) {
+        MpvPlaybackManager.setNextEpisodeCallback {
+            currentNextEpisodeState.value?.let(::switchEpisode)
+        }
+        onDispose {
+            MpvPlaybackManager.setNextEpisodeCallback(null)
+        }
+    }
+
+    LaunchedEffect(anime.title, currentEpisode.id, currentEpisode.displayNumber, backgroundAudioActive) {
+        MpvPlaybackManager.updateNowPlaying(
+            context = context,
+            animeTitle = anime.title,
+            episodeTitle = currentEpisode.title ?: "${currentEpisode.number}화"
+        )
     }
 
     // 다음화 자동재생은 mpv의 END_FILE/eof 이벤트를 사용하지 않는다.
@@ -2782,6 +2826,31 @@ fun PlayerScreen(
                             }
                         }
                     )
+                    IconButton(
+                        onClick = {
+                            if (!mpvEngine.isPlaying) {
+                                mpvEngine.play()
+                            }
+                            backgroundAudioActive = true
+                            MainActivity.isVideoPlaying = false
+                            MpvPlaybackManager.enterBackgroundAudio(
+                                context = context,
+                                animeTitle = anime.title,
+                                episodeTitle = currentEpisode.title ?: "${currentEpisode.number}화"
+                            )
+                            // Release the video surface before moving the task to the
+                            // background. The shared mpv engine keeps audio playing.
+                            mpvEngine.detachSurface()
+                            activity?.moveTaskToBack(true)
+                        },
+                        enabled = streamUrl != null && mpvEngine.playbackState == MpvPlayerEngine.STATE_READY
+                    ) {
+                        Icon(
+                            Icons.Default.Headphones,
+                            "소리만 듣기",
+                            tint = if (streamUrl != null) Color.White else Color.White.copy(alpha = 0.35f)
+                        )
+                    }
                     IconButton(onClick = { showPlayerSettingsDialog = true }) {
                         Icon(Icons.Default.Settings, "플레이어 설정", tint = Color.White.copy(alpha = 0.92f))
                     }

@@ -34,6 +34,9 @@ import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.graphics.drawable.Icon
+import android.app.PendingIntent
 import android.util.Rational
 import android.os.Handler
 import android.os.Looper
@@ -141,8 +144,95 @@ import kotlinx.coroutines.CompletableDeferred
 class MainActivity : FragmentActivity() {
 
     companion object {
+        const val PIP_ACTION_BACKGROUND_AUDIO = "com.lilac.anime.action.PIP_BACKGROUND_AUDIO"
+        const val PIP_ACTION_PLAY_PAUSE = "com.lilac.anime.action.PIP_PLAY_PAUSE"
+        const val PIP_ACTION_NEXT = "com.lilac.anime.action.PIP_NEXT"
+
         var isVideoPlaying: Boolean = false
         var isInPictureInPicture: Boolean by mutableStateOf(false)
+
+        @Volatile
+        private var currentActivity: MainActivity? = null
+
+        @JvmStatic
+        fun handlePipAction(context: Context, action: String) {
+            val activity = currentActivity
+            if (activity != null) {
+                activity.handlePipActionInternal(action)
+                return
+            }
+
+            // The PiP Activity should normally still exist. If Android has already
+            // recreated it, bring MainActivity back with the action so the command
+            // is not lost.
+            context.startActivity(
+                Intent(context, MainActivity::class.java).apply {
+                    this.action = action
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                }
+            )
+        }
+    }
+
+    private fun buildPictureInPictureParams(): PictureInPictureParams {
+        val toggleIcon = if (isVideoPlaying) R.drawable.ic_pip_pause else R.drawable.ic_pip_play
+        val toggleLabel = if (isVideoPlaying) "정지" else "재생"
+
+        fun action(iconRes: Int, title: String, action: String, requestCode: Int): RemoteAction {
+            val pendingIntent = PendingIntent.getBroadcast(
+                this,
+                requestCode,
+                Intent(this, PipActionReceiver::class.java).setAction(action),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            return RemoteAction(
+                Icon.createWithResource(this, iconRes),
+                title,
+                title,
+                pendingIntent
+            )
+        }
+
+        return PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .setActions(
+                listOf(
+                    action(R.drawable.ic_pip_headphones, "소리만 듣기", PIP_ACTION_BACKGROUND_AUDIO, 7101),
+                    action(toggleIcon, toggleLabel, PIP_ACTION_PLAY_PAUSE, 7102),
+                    action(R.drawable.ic_pip_next, "다음 화", PIP_ACTION_NEXT, 7103)
+                )
+            )
+            .build()
+    }
+
+    private fun handlePipActionInternal(action: String) {
+        when (action) {
+            PIP_ACTION_BACKGROUND_AUDIO -> {
+                if (isInPictureInPicture || isVideoPlaying) {
+                    val engine = MpvPlaybackManager.engine(this)
+                    if (!engine.isPlaying) engine.play()
+                    MpvPlaybackManager.enterBackgroundAudio(
+                        context = this,
+                        animeTitle = MpvPlaybackManager.animeTitle,
+                        episodeTitle = MpvPlaybackManager.episodeTitle
+                    )
+                    engine.detachSurface()
+                    isVideoPlaying = false
+                    moveTaskToBack(true)
+                }
+            }
+            PIP_ACTION_PLAY_PAUSE -> {
+                val engine = MpvPlaybackManager.engine(this)
+                if (engine.isPlaying) engine.pause() else engine.play()
+                isVideoPlaying = engine.isPlaying
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPicture) {
+                    setPictureInPictureParams(buildPictureInPictureParams())
+                }
+            }
+            PIP_ACTION_NEXT -> {
+                MpvPlaybackManager.requestNextEpisode()
+            }
+        }
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
@@ -152,13 +242,27 @@ class MainActivity : FragmentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (isVideoPlaying && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            enterPictureInPictureMode(
-                PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
-                    .build()
-            )
+        if (isVideoPlaying && !MpvPlaybackManager.isBackgroundAudio && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            enterPictureInPictureMode(buildPictureInPictureParams())
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.action?.let { action ->
+            if (action == PIP_ACTION_BACKGROUND_AUDIO ||
+                action == PIP_ACTION_PLAY_PAUSE ||
+                action == PIP_ACTION_NEXT
+            ) {
+                handlePipActionInternal(action)
+                intent.action = null
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        if (currentActivity === this) currentActivity = null
+        super.onDestroy()
     }
 
     private var refreshInstallPermission: (() -> Unit)? = null
@@ -184,6 +288,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        currentActivity = this
 
         requestNotificationPermission()
         com.lilac.anime.data.offline.OfflineDownloadManager.resumePending(this)
