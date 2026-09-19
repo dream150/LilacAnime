@@ -8,6 +8,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import org.json.JSONObject
+import org.jsoup.Jsoup
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.URLEncoder
@@ -174,126 +175,350 @@ object OnlineAniSkipService {
     }
 
     private suspend fun resolveMalId(title: String): Int? {
-        val normalized = HangulSimilarityMatcher.filterNoise(title)
-        Log.d(TAG, "MAL_SEARCH_START provider=AniList title=\"$title\" normalized=\"$normalized\"")
-        if (normalized.isBlank()) {
-            Log.w(TAG, "MAL_SEARCH_ABORT normalized title is blank")
-            return null
-        }
+        // Only BD tags are removed. Season information (e.g. "2기") is kept
+        // exactly as supplied and is included in the NamuWiki title search.
+        val searchTitle = separateKoreanTitle(removeBdTag(title))
+        val normalized = HangulSimilarityMatcher.filterNoise(searchTitle)
+        Log.d(TAG, "MAL_SEARCH_START title=\"$title\" searchTitle=\"$searchTitle\" normalized=\"$normalized\"")
+        if (normalized.isBlank()) return null
 
         malIdCache[normalized]?.let { cachedId ->
             Log.d(TAG, "MAL_CACHE_HIT normalized=\"$normalized\" malId=$cachedId")
             return cachedId
         }
-        Log.d(TAG, "MAL_CACHE_MISS normalized=\"$normalized\"")
 
-        // AniList is used only as a resolver: it searches anime by a complete
-        // title in ONE script/language at a time and returns idMal, which AniSkip
-        // needs. Do not send a mixed Korean+Romanized query such as
-        // "이거 그리고 죽어 Kore Kaite Shine" because AniList search can fail to
-        // find the intended title when unrelated language variants are combined.
-        // Instead this becomes two independent searches:
-        //   1) "이거 그리고 죽어"
-        //   2) "Kore Kaite Shine"
-        // The same rule also keeps other scripts (Japanese/CJK) separate.
-        val queries = buildAniListLanguageQueries(title)
-        Log.d(TAG, "ANILIST_LANGUAGE_QUERIES title=\"$title\" queries=$queries")
-
-        for ((index, query) in queries.withIndex()) {
-            val body = searchAniListCandidates(query, attempt = index + 1)
-            if (body.isBlank()) continue
-
-            val bestId = parseBestAniListMalId(body, query)
-            if (bestId != null) {
-                malIdCache[normalized] = bestId
-                Log.d(TAG, "MAL_SEARCH_DONE provider=AniList title=\"$title\" malId=$bestId query=\"$query\"")
-                return bestId
-            }
+        val namu = searchNamuWikiTitle(searchTitle)
+        if (namu == null) {
+            Log.w(TAG, "NAMU_NO_MATCH title=\"$searchTitle\"")
+            return null
         }
 
-        Log.w(TAG, "MAL_SEARCH_NO_MATCH provider=AniList title=\"$title\"")
+        Log.d(
+            TAG,
+            "NAMU_MATCH title=\"$searchTitle\" page=\"${namu.pageTitle}\" score=${namu.score} url=${namu.url} japanese=\"${namu.japaneseTitle}\""
+        )
+
+        val japaneseTitle = namu.japaneseTitle.trim()
+        if (japaneseTitle.isBlank()) {
+            Log.w(TAG, "NAMU_JAPANESE_TITLE_EMPTY title=\"$searchTitle\" url=${namu.url}")
+            return null
+        }
+
+        val body = searchAniListCandidates(japaneseTitle, 1)
+        val candidates = parseAniListCandidates(
+            body = body,
+            query = japaneseTitle,
+            rankingTitles = listOf(japaneseTitle)
+        ).filter { it.malId != null }
+            .associateBy { it.malId!! }
+            .values
+            .sortedByDescending { it.score }
+
+        if (candidates.isEmpty()) {
+            Log.w(TAG, "ANILIST_NO_CANDIDATES title=\"$searchTitle\" japanese=\"$japaneseTitle\"")
+            return null
+        }
+
+        val best = candidates.first()
+        val secondScore = candidates.getOrNull(1)?.score ?: 0
+        val margin = best.score - secondScore
+
+        Log.d(
+            TAG,
+            "ANILIST_GLOBAL_MATCH title=\"$searchTitle\" japanese=\"$japaneseTitle\" " +
+                "candidates=${candidates.size} bestId=${best.malId} bestScore=${best.score} " +
+                "secondScore=$secondScore margin=$margin query=\"${best.query}\" native=\"${best.nativeTitle}\""
+        )
+
+        if (best.malId != null && best.score >= 7000 &&
+            (secondScore == 0 || margin >= 300)
+        ) {
+            malIdCache[normalized] = best.malId
+            Log.d(TAG, "MAL_SEARCH_DONE title=\"$searchTitle\" malId=${best.malId} source=namu")
+            return best.malId
+        }
+
+        Log.w(TAG, "MAL_MATCH_REJECTED title=\"$searchTitle\" bestId=${best.malId} bestScore=${best.score} margin=$margin")
         return null
     }
 
+    private data class NamuSearchCandidate(
+        val pageTitle: String,
+        val url: String,
+        val score: Int,
+        val japaneseTitle: String
+    )
+
     /**
-     * Splits a title into script/language-specific queries.
-     *
-     * Example:
-     *   "이거 그리고 죽어 Kore Kaite Shine"
-     * becomes:
-     *   "이거 그리고 죽어" and "Kore Kaite Shine"
-     *
-     * Tokens containing multiple scripts are split into their script groups so
-     * a Korean query never carries Romanized text (and vice versa).
+     * Searches NamuWiki with the original Korean title, picks the most similar
+     * title-content result, opens that page, and extracts the Japanese original
+     * title from the infobox/content.
      */
-    private fun buildAniListLanguageQueries(title: String): List<String> {
-        val hangul = mutableListOf<String>()
-        val latin = mutableListOf<String>()
-        val eastAsian = mutableListOf<String>()
-        val neutral = mutableListOf<String>()
+    private suspend fun searchNamuWikiTitle(title: String): NamuSearchCandidate? {
+        if (title.isBlank()) return null
 
-        fun isHangul(c: Char) = c in '\uAC00'..'\uD7A3'
-        fun isLatin(c: Char) = (c in 'A'..'Z') || (c in 'a'..'z')
-        fun isEastAsian(c: Char) =
-            (c in '\u3040'..'\u30FF') ||
-                (c in '\u31F0'..'\u31FF') ||
-                (c in '\u3400'..'\u4DBF') ||
-                (c in '\u4E00'..'\u9FFF')
+        val encoded = URLEncoder.encode(title, Charsets.UTF_8.name())
+        val searchUrl = "https://namu.wiki/Search?target=title_content&q=$encoded"
+        val request = Request.Builder()
+            .url(searchUrl)
+            .header("Accept", "text/html,application/xhtml+xml")
+            .header("Accept-Language", "ko-KR,ko;q=0.9")
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
+            .get()
+            .build()
 
-        title.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.forEach { token ->
-            val hasHangul = token.any(::isHangul)
-            val hasLatin = token.any(::isLatin)
-            val hasEastAsian = token.any(::isEastAsian)
+        Log.d(TAG, "NAMU_REQUEST title=\"$title\" url=$searchUrl")
 
-            when {
-                hasHangul && !hasLatin && !hasEastAsian -> hangul += token
-                hasLatin && !hasHangul && !hasEastAsian -> latin += token
-                hasEastAsian && !hasHangul && !hasLatin -> eastAsian += token
-                hasHangul || hasLatin || hasEastAsian -> {
-                    // A genuinely mixed token is split by script so the request
-                    // still never mixes Korean and Romanized text.
-                    token.filter(::isHangul).takeIf { it.isNotBlank() }?.let { hangul += it }
-                    token.filter(::isLatin).takeIf { it.isNotBlank() }?.let { latin += it }
-                    token.filter(::isEastAsian).takeIf { it.isNotBlank() }?.let { eastAsian += it }
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                Log.d(TAG, "NAMU_RESPONSE code=${response.code} success=${response.isSuccessful} bodyLength=${body.length}")
+                if (!response.isSuccessful || body.isBlank()) return@use null
+
+                // Parse only title/link pairs from the NamuWiki search result page.
+                // The article itself is fetched only after the best title is selected.
+                val links = Jsoup.parse(body)
+                    .select("a[href^=/w/]")
+                    .mapNotNull { element ->
+                        val path = element.attr("href").trim()
+                        val label = element.text().replace(Regex("\\s+"), " ").trim()
+                        if (path.isBlank() || label.isBlank()) return@mapNotNull null
+
+                        // Compare the actual work title without season information.
+                        // NamuWiki commonly puts the season in a suffix such as
+                        // "(애니메이션 2기)", while the search query is usually
+                        // "작품명 2기". Removing the season from both sides makes
+                        // the base title similarity comparable and lets the
+                        // separate season bonus handle the season match.
+                        val baseTitleScore = HangulSimilarityMatcher.score(
+                            removeNamuSeasonInfo(title),
+                            removeNamuSeasonInfo(label)
+                        )
+                        val seasonBonus = namuTitleSeasonBonus(title, label)
+                        val score = baseTitleScore + seasonBonus
+                        Triple(label, "https://namu.wiki$path", score)
+                    }
+                    .distinctBy { it.second }
+                    .sortedByDescending { it.third }
+
+                Log.d(TAG, "NAMU_TITLE_LINK_RESULTS title=\"$title\" count=${links.size}")
+                links.take(10).forEachIndexed { index, result ->
+                    Log.d(TAG, "NAMU_RESULT index=$index title=\"${result.first}\" score=${result.third} url=${result.second}")
                 }
-                else -> neutral += token
+
+                val bestLink = links.firstOrNull() ?: return@use null
+                Log.d(TAG, "NAMU_BEST_LINK title=\"$title\" page=\"${bestLink.first}\" score=${bestLink.third} url=${bestLink.second}")
+
+                val articleRequest = Request.Builder()
+                    .url(bestLink.second)
+                    .header("Accept", "text/html,application/xhtml+xml")
+                    .header("Accept-Language", "ko-KR,ko;q=0.9")
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
+                    .get()
+                    .build()
+
+                client.newCall(articleRequest).execute().use { articleResponse ->
+                    val articleBody = articleResponse.body?.string().orEmpty()
+                    Log.d(TAG, "NAMU_ARTICLE_RESPONSE code=${articleResponse.code} success=${articleResponse.isSuccessful} bodyLength=${articleBody.length}")
+                    if (!articleResponse.isSuccessful || articleBody.isBlank()) return@use null
+
+                    val japanese = extractNamuJapaneseTitle(articleBody, title)
+                    if (japanese.isBlank()) {
+                        Log.w(TAG, "NAMU_JAPANESE_TITLE_NOT_FOUND url=${bestLink.second}")
+                        return@use null
+                    }
+
+                    Log.d(TAG, "NAMU_JAPANESE_TITLE title=\"${bestLink.first}\" japanese=\"$japanese\"")
+                    NamuSearchCandidate(bestLink.first, bestLink.second, bestLink.third, japanese)
+                }
+            }
+        }.onFailure { error ->
+            Log.e(TAG, "NAMU_ERROR ${error.javaClass.simpleName}: ${error.message}", error)
+        }.getOrNull()
+    }
+
+    private fun removeNamuSeasonInfo(value: String): String =
+        value
+            // Handles both "2기" and "(애니메이션 2기)" forms.
+            .replace(Regex("(?:\\(\\s*애니메이션\\s*)?\\d+\\s*기\\s*\\)?"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    private fun namuTitleSeasonBonus(query: String, resultTitle: String): Int {
+        val normalizedQuery = normalizeNamuTitle(query)
+        val normalizedResult = normalizeNamuTitle(resultTitle)
+
+        var bonus = 0
+
+        // A NamuWiki title such as "작품명(애니메이션 4기)" is a strong
+        // signal that the result is the exact anime season requested.
+        val querySeason = extractKoreanSeasonNumber(normalizedQuery)
+        val resultAnimeSeason = Regex("(?:애니메이션\\s*)?(\\d+)기")
+            .find(normalizedResult)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+
+        if (querySeason != null && resultAnimeSeason == querySeason) {
+            bonus += 3000
+        }
+
+        // If the complete normalized titles are identical, strongly prefer it
+        // over a merely similar search result.
+        if (normalizedQuery == normalizedResult) {
+            bonus += 2500
+        }
+
+        // Also reward the common NamuWiki convention where the base title is
+        // followed by an explicit "(애니메이션 N기)" suffix.
+        if (querySeason != null && resultAnimeSeason == querySeason &&
+            normalizedResult.contains("애니메이션${querySeason}기")) {
+            bonus += 1500
+        }
+
+        return bonus
+    }
+
+    private fun extractKoreanSeasonNumber(title: String): Int? =
+        Regex("(?:제\\s*)?(\\d+)\\s*기\\b")
+            .find(title)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+
+    private fun normalizeNamuTitle(value: String): String =
+        value
+            .replace(Regex("\\s+"), "")
+            .replace("-", "")
+            .replace("–", "")
+            .replace("—", "")
+            .replace(":", "")
+            .trim()
+
+    private fun extractNamuJapaneseTitle(html: String, searchTitle: String): String {
+        val document = Jsoup.parse(html)
+
+        // NamuWiki's infobox normally stores the field name and its value in
+        // adjacent <th>/<td> (or <td>/<td>) cells.  Only inspect the value
+        // cell belonging to an explicit Japanese-title field.  Do not use the
+        // longest Japanese-looking string from the whole page: that can pick
+        // an author's name, a character name, or another work's title.
+        val labelPatterns = listOf(
+            "원제",
+            "일본어",
+            "일본어판 제목",
+            "일본어 제목",
+            "원작명",
+            "원어"
+        )
+
+        fun isJapaneseTitleLabel(value: String): Boolean {
+            val normalized = value
+                .replace(Regex("\\s+"), "")
+                .trim()
+            return labelPatterns.any { normalized.equals(it.replace(" ", ""), ignoreCase = true) }
+        }
+
+        fun japaneseCandidate(value: String): String? {
+            // Keep Japanese-script characters and digits together.  The previous
+            // extractor discarded digits, so titles such as "作品名 2" / "作品名 第2期"
+            // lost their season number before the AniList search.
+            val parts = Regex("[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}ー・「」『』]+(?:\\s*(?:第\\s*)?\\d+(?:\\s*[期部章話])?)?")
+                .findAll(value)
+                .map { it.value.trim(' ', '·', '•') }
+                .filter { it.isNotBlank() && it.any(Char::isLetter) }
+                .toList()
+
+            if (parts.isEmpty()) return null
+
+            // Take every Japanese text run from the selected <td>. Numeric season
+            // markers that belong to the Japanese run are preserved as well.
+            return parts.joinToString(" ").trim()
+        }
+
+        // NamuWiki anime/manga infoboxes can expose the original title in a
+        // dedicated first-row <td colspan="2">. For example, the DOM can look
+        // like:
+        //   <tr><td colspan="2"><div><span>逃げ上手の若君<br>
+        //   The Elusive Samurai</span></div></td></tr>
+        // In that structure there is no Korean label such as "원제", so check
+        // the colspan=2 title cell before the label-based paths below.
+        for (cell in document.select("td[colspan='2']")) {
+            val text = cell.text().trim()
+            val candidate = japaneseCandidate(text)
+            if (!candidate.isNullOrBlank()) {
+                Log.d(TAG, "NAMU_JAPANESE_TITLE colspan2 text=\"$text\" value=\"$candidate\"")
+                return candidate
             }
         }
 
-        // Pure numbers/punctuation are neutral. Add them to each language
-        // query instead of making a meaningless number-only AniList request.
-        val groups = listOf(hangul, eastAsian, latin)
-        if (neutral.isNotEmpty() && groups.any { it.isNotEmpty() }) {
-            groups.filter { it.isNotEmpty() }.forEach { it += neutral }
+        // First: explicit table rows. This is the most reliable path.
+        for (row in document.select("tr")) {
+            val cells = row.select(":scope > th, :scope > td")
+            if (cells.size < 2) continue
+
+            for (index in 0 until (cells.size - 1)) {
+                val label = cells[index].text().trim()
+                if (!isJapaneseTitleLabel(label)) continue
+
+                val valueCell = cells[index + 1]
+                val candidate = japaneseCandidate(valueCell.text())
+                if (!candidate.isNullOrBlank()) {
+                    Log.d(TAG, "NAMU_JAPANESE_TITLE label=\"$label\" value=\"$candidate\"")
+                    return candidate
+                }
+            }
         }
 
-        val queries = buildList {
-            if (hangul.isNotEmpty()) add(hangul.joinToString(" "))
-            if (eastAsian.isNotEmpty()) add(eastAsian.joinToString(" "))
-            if (latin.isNotEmpty()) add(latin.joinToString(" "))
-        }.map { HangulSimilarityMatcher.filterNoise(it).trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
+        // Second: handle nested markup where the label itself is inside a
+        // span/div within the table cell.
+        for (element in document.getAllElements()) {
+            val own = element.ownText().trim()
+            if (!isJapaneseTitleLabel(own)) continue
 
-        // For titles made of a single unclassified script/symbol set, retain a
-        // complete-title query rather than producing an empty request list.
-        return if (queries.isNotEmpty()) {
-            queries
-        } else {
-            listOf(HangulSimilarityMatcher.filterNoise(title).trim())
-                .filter { it.isNotBlank() }
+            val cell = element.parents().firstOrNull {
+                it.tagName() == "th" || it.tagName() == "td"
+            }
+            val valueCell = cell?.nextElementSibling()
+            val candidate = valueCell?.let { japaneseCandidate(it.text()) }
+            if (!candidate.isNullOrBlank()) {
+                Log.d(TAG, "NAMU_JAPANESE_TITLE label=\"$own\" value=\"$candidate\"")
+                return candidate
+            }
         }
+
+        // No broad page-wide Japanese fallback. Returning an unrelated
+        // Japanese string is worse than failing and letting the caller log the
+        // missing original title.
+        return ""
     }
 
     /**
-     * AniList is the only MAL-ID resolver. It is an optional dependency:
-     * any HTTP, GraphQL, parsing, timeout, or network failure becomes an empty
-     * result so online OP/ED lookup simply becomes unavailable for this title.
-     *
-     * AniList's public GraphQL endpoint accepts POST requests with a query and
-     * variables. The query asks for anime entries plus idMal and all useful
-     * title variants/synonyms for local verification.
+     * Many catalog titles are stored as "한국어 제목 Romanized Title".
+     * NamuWiki title search should use the Korean work title, not the trailing
+     * romanization. Keep an explicit Korean season suffix such as "2기".
      */
+    private fun separateKoreanTitle(title: String): String {
+        val value = title.replace(Regex("\\s+"), " ").trim()
+        if (value.isBlank() || !value.any { it in '\uAC00'..'\uD7A3' }) return value
+
+        val lastHangulIndex = value.indexOfLast { it in '\uAC00'..'\uD7A3' }
+        if (lastHangulIndex < 0 || lastHangulIndex >= value.lastIndex) return value
+
+        val suffix = value.substring(lastHangulIndex + 1)
+        // Preserve season notation immediately following the Korean title.
+        val season = Regex("^\\s*(?:제\\s*)?\\d+\\s*기\\b").find(suffix)?.value.orEmpty()
+        val koreanPart = value.substring(0, lastHangulIndex + 1)
+        return (koreanPart + season).trim()
+    }
+
+    private fun removeBdTag(title: String): String {
+        return title
+            .replace(Regex("(?i)(?:\\[\\s*bd\\s*\\]|\\(\\s*bd\\s*\\)|(?<![A-Za-z0-9])bd(?![A-Za-z0-9]))"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
     private suspend fun searchAniListCandidates(query: String, attempt: Int): String {
         val graphQl = """
             query SearchAnime(${'$'}search: String!) {
@@ -363,42 +588,43 @@ object OnlineAniSkipService {
 
     /**
      * Select a MAL id only when the AniList candidate is a strong title match.
-     * AniList explicitly notes that titles are not unique, so we do not blindly
-     * take the first search result.
+     * Also returns AniList title.romaji so a Japanese-title miss can retry using
+     * the canonical romanized title supplied by AniList itself.
      */
-    private fun parseBestAniListMalId(body: String, query: String): Int? {
-        if (body.isBlank()) return null
+    private fun parseAniListCandidates(
+        body: String,
+        query: String,
+        rankingTitles: List<String>
+    ): List<AniListCandidate> {
+        if (body.isBlank()) return emptyList()
 
         return runCatching {
             val root = JSONObject(body)
             val errors = root.optJSONArray("errors")
             if (errors != null && errors.length() > 0) {
                 Log.w(TAG, "ANILIST_GRAPHQL_ERROR query=\"$query\" errors=$errors")
-                return@runCatching null
+                return@runCatching emptyList()
             }
 
             val data = root.optJSONObject("data")
                 ?.optJSONObject("Page")
                 ?.optJSONArray("media")
-                ?: return@runCatching null
+                ?: return@runCatching emptyList()
 
-            var bestId: Int? = null
-            var bestScore = 0
-            var secondScore = 0
-            var candidateCount = 0
-
+            val candidates = mutableListOf<AniListCandidate>()
             for (i in 0 until data.length()) {
                 val item = data.optJSONObject(i) ?: continue
-                val malId = item.optInt("idMal", 0)
-                if (malId <= 0) continue
-                candidateCount++
+                val malId = item.optInt("idMal", 0).takeIf { it > 0 }
+                val titleObject = item.optJSONObject("title")
+                val romaji = titleObject?.optString("romaji").orEmpty().trim()
+                val nativeTitle = titleObject?.optString("native").orEmpty().trim()
+                val englishTitle = titleObject?.optString("english").orEmpty().trim()
 
                 val titles = mutableListOf<String>()
-                val titleObject = item.optJSONObject("title")
-                titleObject?.optString("romaji").takeIf { !it.isNullOrBlank() }?.let(titles::add)
-                titleObject?.optString("english").takeIf { !it.isNullOrBlank() }?.let(titles::add)
-                titleObject?.optString("native").takeIf { !it.isNullOrBlank() }?.let(titles::add)
-                titleObject?.optString("userPreferred").takeIf { !it.isNullOrBlank() }?.let(titles::add)
+                titleObject?.optString("romaji")?.takeIf { it.isNotBlank() }?.let(titles::add)
+                titleObject?.optString("english")?.takeIf { it.isNotBlank() }?.let(titles::add)
+                titleObject?.optString("native")?.takeIf { it.isNotBlank() }?.let(titles::add)
+                titleObject?.optString("userPreferred")?.takeIf { it.isNotBlank() }?.let(titles::add)
 
                 item.optJSONArray("synonyms")?.let { aliases ->
                     for (j in 0 until aliases.length()) {
@@ -406,28 +632,59 @@ object OnlineAniSkipService {
                     }
                 }
 
-                val score = MalAnimeMatcher.bestScore(query, titles)
-                if (score > bestScore) {
-                    secondScore = bestScore
-                    bestScore = score
-                    bestId = malId
-                } else if (score > secondScore) {
-                    secondScore = score
+                val score = rankingTitles
+                    .filter { it.isNotBlank() }
+                    .maxOfOrNull { reference -> MalAnimeMatcher.bestScore(reference, titles) }
+                    ?: MalAnimeMatcher.bestScore(query, titles)
+
+                if (malId != null) {
+                    candidates += AniListCandidate(
+                        malId = malId,
+                        romaji = romaji,
+                        nativeTitle = nativeTitle,
+                        englishTitle = englishTitle,
+                        synonyms = item.optJSONArray("synonyms")?.let { aliases ->
+                            buildList {
+                                for (j in 0 until aliases.length()) {
+                                    aliases.optString(j).takeIf { it.isNotBlank() }?.let(::add)
+                                }
+                            }
+                        }.orEmpty(),
+                        score = score,
+                        query = query
+                    )
+                } else if (romaji.isNotBlank()) {
+                    candidates += AniListCandidate(
+                        malId = null,
+                        romaji = romaji,
+                        nativeTitle = nativeTitle,
+                        englishTitle = englishTitle,
+                        synonyms = emptyList(),
+                        score = score,
+                        query = query
+                    )
                 }
             }
 
-            val margin = bestScore - secondScore
-            Log.d(TAG, "MAL_MATCH provider=AniList query=\"$query\" candidates=$candidateCount bestId=$bestId bestScore=$bestScore secondScore=$secondScore margin=$margin")
-
-            if (bestId != null && bestScore >= 8200 && (secondScore == 0 || margin >= 500)) {
-                bestId
-            } else {
-                Log.w(TAG, "MAL_MATCH_REJECTED provider=AniList query=\"$query\" bestId=$bestId bestScore=$bestScore secondScore=$secondScore margin=$margin")
-                null
-            }
+            val sorted = candidates.sortedByDescending { it.score }
+            Log.d(
+                TAG,
+                "ANILIST_PARSE query=\"$query\" candidates=${sorted.size} top=${sorted.take(5).joinToString { candidate -> "${candidate.malId}:${candidate.score}" }}"
+            )
+            sorted
         }.onFailure { error ->
             Log.e(TAG, "ANILIST_PARSE_ERROR ${error.javaClass.simpleName}: ${error.message}", error)
-        }.getOrNull()
+        }.getOrElse { emptyList() }
     }
+
+    private data class AniListCandidate(
+        val malId: Int?,
+        val romaji: String,
+        val nativeTitle: String,
+        val englishTitle: String,
+        val synonyms: List<String>,
+        val score: Int,
+        val query: String
+    )
 
 }

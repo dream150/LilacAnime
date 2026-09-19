@@ -737,8 +737,13 @@ fun PlayerScreen(
     // They are not restored into Episode.vttUrl, so changing/adding a user subtitle
     // never hides the Linkkf/Kairan/Csora subtitles.
 
+    var playbackRetryEpisodeKey by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(currentEpisode, isDownloaded, offlineEp) {
         isLoading = true
+        if (playbackRetryEpisodeKey != currentEpisode.id) {
+            playbackRetryEpisodeKey = null
+        }
 
         // Offline episodes are owned by the mpv-native downloader.
         // Never consult or migrate the old Media3 cache here.
@@ -1416,6 +1421,8 @@ fun PlayerScreen(
         // stuck while the old item's state is being torn down.
         var waitedMs = 0L
         var restored = false
+        var playbackStarted = false
+        var loadFailed = false
         val playWatchdogUntil = 5_000L
         while (isActive && waitedMs < 10_000L && !restored) {
             if (mpvEngine.loadedLoadGeneration == loadGeneration &&
@@ -1426,31 +1433,130 @@ fun PlayerScreen(
                 if (waitedMs <= playWatchdogUntil) {
                     mpvEngine.forcePlayIfReady(loadGeneration)
                 }
+
+                // Do not use duration as the definition of successful playback.
+                // HLS can be actively playing while duration is still unavailable
+                // or temporarily reported as 0. mpv marks the current generation
+                // READY and clears pause when FILE_LOADED starts autoplay.
+                // currentPosition > 0 is an additional confirmation once playback
+                // has actually advanced.
+                if (mpvEngine.isPlaying || mpvEngine.currentPosition > 0L) {
+                    playbackStarted = true
+                }
+
                 val duration = mpvEngine.duration
-                if (duration > 0L) {
-                    when {
-                        pendingSeek >= 0L -> mpvEngine.seekTo(pendingSeek.coerceIn(0L, duration))
-                        resumeProgress != null -> mpvEngine.seekTo((resumeProgress * duration).toLong().coerceIn(0L, duration))
-                        savedProgress != null -> {
-                            // 95%+ is a completed watch record. Start at 0 instead
-                            // of restoring the playhead to the very end.
-                            mpvEngine.seekTo(0L)
-                            vm.updateProgress(
-                                context = context,
-                                animeId = anime.id,
-                                episodeNumber = currentEpisode.number,
-                                episodeKey = currentEpisode.displayNumber,
-                                progress = 0f
-                            )
+                if (playbackStarted) {
+                    if (duration > 0L) {
+                        when {
+                            pendingSeek >= 0L -> mpvEngine.seekTo(pendingSeek.coerceIn(0L, duration))
+                            resumeProgress != null -> mpvEngine.seekTo((resumeProgress * duration).toLong().coerceIn(0L, duration))
+                            savedProgress != null -> {
+                                // 95%+ is a completed watch record. Start at 0 instead
+                                // of restoring the playhead to the very end.
+                                mpvEngine.seekTo(0L)
+                                vm.updateProgress(
+                                    context = context,
+                                    animeId = anime.id,
+                                    episodeNumber = currentEpisode.number,
+                                    episodeKey = currentEpisode.displayNumber,
+                                    progress = 0f
+                                )
+                            }
                         }
                     }
+                    // Successful playback is independent of duration. If duration
+                    // is not ready yet, leave it to mpv's property observer rather
+                    // than treating the stream as failed and reloading it.
                     restored = true
                     pendingSeekPositionMs = -1L
+                    Log.d(
+                        "MpvEpisode",
+                        "MPV_PLAYBACK_STARTED episode=${currentEpisode.displayNumber} " +
+                            "generation=$loadGeneration duration=$duration position=${mpvEngine.currentPosition}"
+                    )
                     break
                 }
             }
+            if (mpvEngine.loadedLoadGeneration == loadGeneration &&
+                mpvEngine.playbackState == MpvPlayerEngine.STATE_ENDED) {
+                loadFailed = !playbackStarted
+                break
+            }
             delay(50L)
             waitedMs += 50L
+        }
+
+        if (!restored && isActive) {
+            // Retry only when mpv never entered an actual playing state. A missing
+            // duration alone is not a playback failure.
+            loadFailed = loadFailed || (!playbackStarted && waitedMs >= 10_000L)
+            val retryEpisodeKey = currentEpisode.id
+            val pageUrl = currentEpisode.videoUrl?.trim().orEmpty()
+            val canRefreshLinkkfStream =
+                !isOffline &&
+                vm.playerSettings.videoSourcePreference == "linkkf" &&
+                pageUrl.isNotBlank() &&
+                !pageUrl.contains(".m3u8", ignoreCase = true) &&
+                !pageUrl.contains(".mp4", ignoreCase = true) &&
+                playbackRetryEpisodeKey != retryEpisodeKey
+
+            if (canRefreshLinkkfStream) {
+                playbackRetryEpisodeKey = retryEpisodeKey
+                Log.w(
+                    "MpvEpisode",
+                    "MPV_LOAD_RETRY_START episode=${currentEpisode.displayNumber} " +
+                        "reason=${if (loadFailed) "END_OR_TIMEOUT" else "UNKNOWN"} page=$pageUrl"
+                )
+                val retryResult = withContext(Dispatchers.IO) {
+                    LinkkfEpisodeM3u8Collector.collect(
+                        context = context,
+                        episodes = listOf(currentEpisode),
+                        waitForSubtitle = false,
+                        onSubtitleFound = { episodeId, subtitleUrl, capturedSubtitleReferer ->
+                            if (episodeId == currentEpisode.id) {
+                                linkkfSubtitleUrl = subtitleUrl
+                                subtitlesUrl = subtitleUrl
+                                subtitleSource = "linkkf-vtt"
+                                LinkkfRequestContextStore.saveSubtitleUrl(
+                                    context, anime.id, episodeId, subtitleUrl
+                                )
+                                capturedSubtitleReferer?.let { ref ->
+                                    subtitleReferer = ref
+                                    LinkkfRequestContextStore.saveSubtitle(context, anime.id, episodeId, ref)
+                                }
+                            }
+                        }
+                    )
+                }
+
+                if (!isActive) return@LaunchedEffect
+                val refreshedUrl = retryResult.urls[retryEpisodeKey]
+                val refreshedReferer = retryResult.referers[retryEpisodeKey]
+                if (!refreshedUrl.isNullOrBlank() && currentEpisode.id == retryEpisodeKey) {
+                    streamReferer = refreshedReferer ?: streamReferer
+                    refreshedReferer?.let { ref ->
+                        LinkkfRequestContextStore.save(context, anime.id, retryEpisodeKey, ref)
+                    }
+                    Log.d(
+                        "MpvEpisode",
+                        "MPV_LOAD_RETRY_FOUND episode=${currentEpisode.displayNumber} " +
+                            "url=$refreshedUrl referer=${refreshedReferer ?: "<none>"}"
+                    )
+                    streamUrl = refreshedUrl
+                    isLoading = true
+                } else {
+                    Log.e(
+                        "MpvEpisode",
+                        "MPV_LOAD_RETRY_FAILED episode=${currentEpisode.displayNumber} page=$pageUrl"
+                    )
+                }
+            } else if (loadFailed) {
+                Log.e(
+                    "MpvEpisode",
+                    "MPV_LOAD_FAILED episode=${currentEpisode.displayNumber} retryAvailable=false " +
+                        "url=$actualUrl"
+                )
+            }
         }
         pendingSeekPositionMs = -1L
     }
@@ -1632,28 +1738,8 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
 
-        // Let mpv expose the actual online episode duration first. This is
-        // used only for mapping AniSkip's canonical timeline onto the local
-        // video. AniSkip itself is always queried with episodeLength=0.
-        var durationSeconds = 0
-        for (attempt in 0 until 120) {
-            if (!isActive) return@LaunchedEffect
-            val duration = mpvEngine.duration
-            if (mpvEngine.playbackState == MpvPlayerEngine.STATE_READY && duration > 0L) {
-                durationSeconds = (duration / 1000L).toInt().coerceAtLeast(1)
-                break
-            }
-            if (attempt < 119) delay(250L)
-        }
-
-        if (!isActive) return@LaunchedEffect
-
-        Log.d(
-            "AniChapters",
-            "ONLINE_SKIP_DURATION_READY anime=${anime.id} episode=${currentEpisode.displayNumber} " +
-                "duration=$durationSeconds"
-        )
-
+        // AniSkip 응답의 시간을 그대로 사용한다.
+        // 실제 영상 길이에 맞춘 위치 보정이나 스케일링은 하지 않는다.
         val onlineSegments = withContext(Dispatchers.IO) {
             OnlineAniSkipService.getSkipSegments(
                 title = anime.title,
@@ -1670,9 +1756,6 @@ fun PlayerScreen(
                 "segments=${onlineSegments.size}"
         )
 
-        // If the source returned no data, leave the existing skip system empty.
-        // Never fail or interrupt video playback because the online service is
-        // unavailable or cannot confidently match the anime.
         if (onlineSegments.isEmpty()) {
             Log.d(
                 "AniChapters",
@@ -1681,95 +1764,13 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
 
-        val localLength = durationSeconds.toDouble()
-
-        // Map the POSITION proportionally, but keep AniSkip's actual OP/ED
-        // duration unchanged. This is important when AniSkip was recorded from
-        // a different video cut (for example 869s vs a local 1400s episode).
-        //
-        // We do NOT scale the interval itself. Instead: 
-        //   OP  -> scale its distance from the beginning, then keep its length.
-        //   ED  -> scale its distance from the end, then keep its length.
-        // This treats the AniSkip timestamp as a position on the canonical
-        // timeline while preserving the real skip interval.
-        chapterSkipSegments = onlineSegments.mapNotNull { segment ->
-            val sourceLength = segment.episodeLength
-            if (sourceLength <= 0.0 || localLength <= 0.0) {
-                Log.w(
-                    "AniChapters",
-                    "ONLINE_SKIP_MAP_REJECT type=${segment.type} invalidLengths " +
-                        "source=$sourceLength local=$localLength"
-                )
-                return@mapNotNull null
-            }
-
-            val rawStart = segment.startTime
-            val rawEnd = segment.endTime
-            val rawDuration = rawEnd - rawStart
-            if (rawStart < 0.0 || rawEnd <= rawStart || rawEnd > sourceLength + 1.0) {
-                Log.w(
-                    "AniChapters",
-                    "ONLINE_SKIP_MAP_REJECT type=${segment.type} invalidRawRange=" +
-                        "$rawStart-$rawEnd sourceLength=$sourceLength"
-                )
-                return@mapNotNull null
-            }
-
-            val isEnding = segment.type == "ed" || segment.type == "mixed-ed"
-            val mappedStart: Double
-            val mappedEnd: Double
-
-            if (isEnding) {
-                // Preserve the distance from the END proportionally, then
-                // restore AniSkip's original interval length.
-                val sourceTailDistance = (sourceLength - rawEnd).coerceAtLeast(0.0)
-                val localTailDistance = sourceTailDistance * (localLength / sourceLength)
-                mappedEnd = localLength - localTailDistance
-                mappedStart = mappedEnd - rawDuration
-            } else {
-                // Preserve the distance from the START proportionally, then
-                // restore AniSkip's original interval length.
-                val mappedStartPosition = rawStart * (localLength / sourceLength)
-                mappedStart = mappedStartPosition
-                mappedEnd = mappedStart + rawDuration
-            }
-
-            val finalStart = mappedStart.coerceIn(0.0, localLength)
-            val finalEnd = mappedEnd.coerceIn(0.0, localLength)
-
-            if (finalEnd <= finalStart) {
-                Log.w(
-                    "AniChapters",
-                    "ONLINE_SKIP_MAP_REJECT type=${segment.type} invalidMappedRange=" +
-                        "$finalStart-$finalEnd raw=$rawStart-$rawEnd sourceLength=$sourceLength " +
-                        "localLength=$localLength"
-                )
-                return@mapNotNull null
-            }
-
-            Log.d(
-                "AniChapters",
-                "ONLINE_SKIP_MAP type=${segment.type} " +
-                    "sourceLength=$sourceLength localLength=$localLength " +
-                    "raw=$rawStart-$rawEnd rawDuration=$rawDuration " +
-                    "anchor=${if (isEnding) "END" else "START"} " +
-                    "mapped=$finalStart-$finalEnd " +
-                    "mappedDuration=${finalEnd - finalStart} " +
-                    "positionScale=${localLength / sourceLength}"
-            )
-
-            segment.copy(
-                startTime = finalStart,
-                endTime = finalEnd,
-                // The chapter is now expressed on the actual local timeline.
-                episodeLength = localLength
-            )
-        }
+        // 서버가 반환한 startTime/endTime을 그대로 사용한다.
+        chapterSkipSegments = onlineSegments
 
         Log.d(
             "AniChapters",
             "ONLINE_SKIP_LOADED anime=${anime.id} episode=${currentEpisode.displayNumber} " +
-                "duration=$durationSeconds segments=${chapterSkipSegments.joinToString { "${it.type}:${it.startTime}-${it.endTime}" }}"
+                "segments=${chapterSkipSegments.joinToString { "${it.type}:${it.startTime}-${it.endTime}" }}"
         )
     }
 
