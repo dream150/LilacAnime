@@ -1,2 +1,3 @@
 #v2
 0
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/CsoraSubtitleService.kt	4815	107	text

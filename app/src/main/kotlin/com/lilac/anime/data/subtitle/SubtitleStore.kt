@@ -50,6 +50,12 @@ object SubtitleStore {
         if (!file.isFile || episodeNumber <= 0) return false
         val name = file.nameWithoutExtension.lowercase(java.util.Locale.ROOT)
 
+        // Csora flat anime cache: 1.ass, 2.ass, 3.vtt, ...
+        // The filename is the authoritative episode identity.
+        name.toIntOrNull()?.let { numericEpisode ->
+            return numericEpisode == episodeNumber
+        }
+
         // New Linkkf VTT cache format.
         Regex("(?:^|_)ep_([a-z0-9._-]+)$", RegexOption.IGNORE_CASE)
             .find(name)?.groupValues?.getOrNull(1)?.let { key ->

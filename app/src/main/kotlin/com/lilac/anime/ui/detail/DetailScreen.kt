@@ -87,7 +87,7 @@ private suspend fun persistOfflineSubtitleAssets(
     val providerRoots = mapOf(
         "linkkf" to context.filesDir.resolve("linkkf_subtitles"),
         "kairan" to context.filesDir.resolve("kairan_subtitles").resolve(titleKey).resolve(safeEpisodeKey(episodeKey)),
-        "csora" to context.filesDir.resolve("csora_subtitles").resolve(titleKey).resolve(safeEpisodeKey(episodeKey))
+        "csora" to context.filesDir.resolve("csora_subtitles").resolve(titleKey)
     )
     val primaries = mapOf(
         "linkkf" to linkkfPath,

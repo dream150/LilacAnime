@@ -947,6 +947,11 @@ fun PlayerScreen(
     // 발견되면 로컬 캐시에 저장된 경로를 유지하고, 사용자에게만 짧게 전환 여부를 묻는다.
     LaunchedEffect(anime.id, anime.title, currentEpisode.displayNumber, isOffline, isDownloaded) {
         if (isOffline || isDownloaded || kairanAssPromptHandled) return@LaunchedEffect
+        // Never make subtitle discovery part of the initial playback path.
+        // Cached subtitles are resolved by the main subtitle effect; this search
+        // is only the optional background upgrade/prompt.
+        delay(1200L)
+        if (!isActive) return@LaunchedEffect
         if (subtitleSource == "user" || subtitleSourcePreference == "kairan") return@LaunchedEffect
 
         val result = try {
@@ -981,6 +986,9 @@ fun PlayerScreen(
     LaunchedEffect(anime.id, anime.title, currentEpisode.displayNumber, isOffline, isDownloaded) {
         if (isOffline || isDownloaded || csoraSubtitleResolved) return@LaunchedEffect
         if (subtitleSource == "user" || subtitleSourcePreference == "csora") return@LaunchedEffect
+        // Optional Csora discovery must never delay HLS/mpv startup.
+        delay(1500L)
+        if (!isActive) return@LaunchedEffect
 
         val result = try {
             withContext(Dispatchers.IO) {
@@ -1085,9 +1093,17 @@ fun PlayerScreen(
         )
     }
 
+    // 자막 싱크는 파일을 다시 다운로드하거나 다시 attach하지 않는다.
+    // mpv의 subtitle-delay만 즉시 갱신하므로 재생 위치/버퍼/자막 파일을 건드리지 않는다.
+    LaunchedEffect(mpvEngine, syncOffsetMs) {
+        withContext(Dispatchers.Main.immediate) {
+            mpvEngine.setSubtitleDelay(syncOffsetMs)
+        }
+    }
+
     // Linkkf VTT/SRT도 영상과 분리해서 적용한다. 자막 URL이 늦게 발견되어도
     // 현재 회차의 mpv loadfile을 다시 실행하지 않는다.
-    LaunchedEffect(mpvEngine, currentEpisode.id, subtitlesUrl, subtitleSource, subtitleReferer, syncOffsetMs) {
+    LaunchedEffect(mpvEngine, currentEpisode.id, subtitlesUrl, subtitleSource, subtitleReferer) {
         val subtitle = subtitlesUrl?.takeIf { it.isNotBlank() } ?: run {
             Log.d("Subtitle", "ATTACH_SKIP reason=no_url episode=${currentEpisode.displayNumber} source=$subtitleSource")
             return@LaunchedEffect
@@ -1140,6 +1156,20 @@ fun PlayerScreen(
             Log.d("Subtitle", "MPV_ATTACH_SUBTITLE source=$subtitle prepared=$prepared isAss=$isAss")
             mpvEngine.replaceSubtitleTrack(prepared)
             mpvEngine.setSubtitleDelay(syncOffsetMs)
+        }
+
+        // If a local track arrived while mpv was still finalizing the demuxer,
+        // retry twice without reloading or restarting the video.
+        if (!subtitle.startsWith("http://", true) && !subtitle.startsWith("https://", true)) {
+            repeat(2) { retry ->
+                delay(250L)
+                if (!isActive) return@LaunchedEffect
+                withContext(Dispatchers.Main) {
+                    Log.d("Subtitle", "MPV_ATTACH_SUBTITLE_RETRY attempt=${retry + 1} path=$prepared")
+                    mpvEngine.replaceSubtitleTrack(prepared)
+                    mpvEngine.setSubtitleDelay(syncOffsetMs)
+                }
+            }
         }
     }
 
@@ -1405,11 +1435,28 @@ fun PlayerScreen(
             )
         }
 
+        // Offline subtitles are local files. Pass them directly to mpv so the
+        // track is attached from MPV_EVENT_FILE_LOADED rather than depending only
+        // on a later Compose effect (which can race an episode transition).
+        val initialLocalSubtitle = subtitlesUrl
+            ?.takeIf { path ->
+                val lower = path.substringBefore('?').substringBefore('#').lowercase(Locale.ROOT)
+                val isLocal = !path.startsWith("http://", true) && !path.startsWith("https://", true)
+                isLocal &&
+                    File(path.removePrefix("file://")).isFile &&
+                    (lower.endsWith(".vtt") || lower.endsWith(".srt") ||
+                     lower.endsWith(".ass") || lower.endsWith(".ssa"))
+            }
+
+        // Resume initialization is intentionally ordered: load the new media paused,
+        // wait until mpv exposes a real duration, seek to the saved position, then play.
+        // This prevents HLS duration=0 from causing the resume seek to be skipped.
         mpvEngine.load(
             url = actualUrl,
-            subtitlePath = null,
+            subtitlePath = initialLocalSubtitle,
             syncOffsetMs = syncOffsetMs,
-            customFontPath = fontSelectedPath
+            customFontPath = fontSelectedPath,
+            autoPlay = false
         )
 
         val loadGeneration = mpvEngine.activeLoadGeneration
@@ -1421,71 +1468,60 @@ fun PlayerScreen(
         val resumeProgress = savedProgress?.progress
             ?.takeUnless { it >= 0.95f }
 
-        // Do NOT call play() here. MpvPlayerEngine starts playback from
-        // MPV_EVENT_FILE_LOADED. Calling play() immediately after loadfile can
-        // race a remote HLS replacement and leave the newly selected episode
-        // stuck while the old item's state is being torn down.
+        // Resume initialization is intentionally synchronous in ordering: mpv must
+        // expose a valid duration before we seek, and playback starts only after the
+        // seek command has been issued for the current load generation.
         var waitedMs = 0L
         var restored = false
         var playbackStarted = false
         var loadFailed = false
-        val playWatchdogUntil = 5_000L
-        while (isActive && waitedMs < 10_000L && !restored) {
+        val resumeTimeoutMs = 15_000L
+
+        while (isActive && waitedMs < resumeTimeoutMs && !restored) {
             if (mpvEngine.loadedLoadGeneration == loadGeneration &&
                 mpvEngine.playbackState == MpvPlayerEngine.STATE_READY) {
-                // Re-assert play for the current generation. Remote HLS can reach
-                // READY with pause=true after a replacement even though load()
-                // requested autoplay. Never use a stale generation here.
-                if (waitedMs <= playWatchdogUntil) {
-                    mpvEngine.forcePlayIfReady(loadGeneration)
-                }
-
-                // Do not use duration as the definition of successful playback.
-                // HLS can be actively playing while duration is still unavailable
-                // or temporarily reported as 0. mpv marks the current generation
-                // READY and clears pause when FILE_LOADED starts autoplay.
-                // currentPosition > 0 is an additional confirmation once playback
-                // has actually advanced.
-                if (mpvEngine.isPlaying || mpvEngine.currentPosition > 0L) {
-                    playbackStarted = true
-                }
-
                 val duration = mpvEngine.duration
-                if (playbackStarted) {
-                    if (duration > 0L) {
-                        when {
-                            pendingSeek >= 0L -> mpvEngine.seekTo(pendingSeek.coerceIn(0L, duration))
-                            resumeProgress != null -> mpvEngine.seekTo((resumeProgress * duration).toLong().coerceIn(0L, duration))
-                            savedProgress != null -> {
-                                // 95%+ is a completed watch record. Start at 0 instead
-                                // of restoring the playhead to the very end.
-                                mpvEngine.seekTo(0L)
-                                vm.updateProgress(
-                                    context = context,
-                                    animeId = anime.id,
-                                    episodeNumber = currentEpisode.number,
-                                    episodeKey = currentEpisode.displayNumber,
-                                    progress = 0f
-                                )
-                            }
+                if (duration > 0L) {
+                    when {
+                        pendingSeek >= 0L -> {
+                            mpvEngine.seekTo(pendingSeek.coerceIn(0L, duration))
+                        }
+                        resumeProgress != null -> {
+                            mpvEngine.seekTo((resumeProgress * duration).toLong().coerceIn(0L, duration))
+                        }
+                        savedProgress != null -> {
+                            // 95%+ is a completed watch record. Start at 0 instead
+                            // of restoring the playhead to the very end.
+                            mpvEngine.seekTo(0L)
+                            vm.updateProgress(
+                                context = context,
+                                animeId = anime.id,
+                                episodeNumber = currentEpisode.number,
+                                episodeKey = currentEpisode.displayNumber,
+                                progress = 0f
+                            )
                         }
                     }
-                    // Successful playback is independent of duration. If duration
-                    // is not ready yet, leave it to mpv's property observer rather
-                    // than treating the stream as failed and reloading it.
+
+                    // Only now allow playback. No subtitle search or background task
+                    // participates in this critical resume path.
+                    mpvEngine.play()
+                    playbackStarted = true
                     restored = true
                     pendingSeekPositionMs = -1L
                     Log.d(
                         "MpvEpisode",
-                        "MPV_PLAYBACK_STARTED episode=${currentEpisode.displayNumber} " +
-                            "generation=$loadGeneration duration=$duration position=${mpvEngine.currentPosition}"
+                        "MPV_RESUME_READY episode=${currentEpisode.displayNumber} " +
+                            "generation=$loadGeneration duration=$duration " +
+                            "position=${mpvEngine.currentPosition} resume=${resumeProgress ?: 0f}"
                     )
                     break
                 }
             }
+
             if (mpvEngine.loadedLoadGeneration == loadGeneration &&
                 mpvEngine.playbackState == MpvPlayerEngine.STATE_ENDED) {
-                loadFailed = !playbackStarted
+                loadFailed = true
                 break
             }
             delay(50L)
@@ -1744,10 +1780,8 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
 
-        // AniSkip timestamps belong to AniSkip's canonical episode length.
-        // Keep the raw response here, then map it once mpv exposes the actual
-        // local stream duration. This prevents a valid segment from sitting at
-        // a timestamp that the current Linkkf cut never reaches.
+        // AniSkip 응답의 시간을 그대로 사용한다.
+        // 실제 영상 길이에 맞춘 위치 보정이나 스케일링은 하지 않는다.
         val onlineSegments = withContext(Dispatchers.IO) {
             OnlineAniSkipService.getSkipSegments(
                 title = anime.title,
@@ -1772,52 +1806,8 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
 
-        // Wait briefly for HLS to expose its real duration. AniSkip data can
-        // arrive before mpv knows the duration, so mapping immediately would
-        // sometimes leave the segment on the wrong timeline.
-        var localDuration = mpvEngine.duration / 1000.0
-        var waitedMs = 0L
-        while (isActive && localDuration <= 0.0 && waitedMs < 10_000L) {
-            delay(200L)
-            waitedMs += 200L
-            localDuration = mpvEngine.duration / 1000.0
-        }
-
-        fun mapSegments(localDurationSeconds: Double): List<ChapterSkipSegment> {
-            return onlineSegments.mapNotNull { segment ->
-                val source = segment.episodeLength
-                if (source <= 0.0 || localDurationSeconds <= 0.0) return@mapNotNull null
-
-                val diff = localDurationSeconds - source
-                val (start, end, mode) = if (kotlin.math.abs(diff) <= 90.0) {
-                    Triple(segment.startTime + diff, segment.endTime + diff, "offset")
-                } else {
-                    val ratio = localDurationSeconds / source
-                    Triple(segment.startTime * ratio, segment.endTime * ratio, "scale")
-                }
-
-                val safeStart = start.coerceIn(0.0, localDurationSeconds)
-                val safeEnd = end.coerceIn(0.0, localDurationSeconds)
-                if (safeEnd <= safeStart) return@mapNotNull null
-
-                Log.d(
-                    "AniChapters",
-                    "ONLINE_SKIP_MAPPED type=${segment.type} raw=${segment.startTime}-${segment.endTime} " +
-                        "source=$source local=$localDurationSeconds diff=$diff mode=$mode " +
-                        "mapped=$safeStart-$safeEnd"
-                )
-                segment.copy(startTime = safeStart, endTime = safeEnd)
-            }
-        }
-
-        chapterSkipSegments = if (localDuration > 0.0) {
-            mapSegments(localDuration)
-        } else {
-            // Extremely slow HLS startup: keep the canonical timestamps rather
-            // than losing the AniSkip result. The position watcher will still
-            // display it if the stream uses the canonical timeline.
-            onlineSegments
-        }
+        // 서버가 반환한 startTime/endTime을 그대로 사용한다.
+        chapterSkipSegments = onlineSegments
 
         Log.d(
             "AniChapters",

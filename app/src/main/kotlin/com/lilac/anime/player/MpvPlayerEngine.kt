@@ -249,39 +249,31 @@ class MpvPlayerEngine(private val context: Context) {
     }
 
     fun configureNetworkHeaders(headers: String, referer: String? = null) {
-        // Clear the previous episode's HTTP state first. Without this, a stream
-        // that has no Referer/Origin can inherit the previous Linkkf request
-        // headers and intermittently fail after an episode/source change.
-        val normalized = headers
-            .lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .joinToString(",")
-
-        runCatching {
-            mpv.setOptionString("http-header-fields", normalized)
-        }.onFailure {
-            Log.w(TAG, "HTTP_HEADER_OPTION_FAILED", it)
+        // mpv expects HTTP header fields as a comma-separated list.
+        // A newline-delimited value can be ignored by the native HTTP client,
+        // which is especially visible with protected VTT files.
+        if (headers.isNotBlank()) {
+            val normalized = headers
+                .lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .joinToString(",")
+            // These are mpv options rather than ordinary observed properties.
+            // setPropertyString() can silently fail on some libmpv builds, which
+            // leaves protected Linkkf HLS requests without the required Referer.
+            runCatching {
+                mpv.setOptionString("http-header-fields", normalized)
+            }.onFailure {
+                Log.w(TAG, "HTTP_HEADERS_OPTION_FAILED", it)
+            }
+        } else {
+            runCatching { mpv.setOptionString("http-header-fields", "") }
         }
         runCatching {
-            mpv.setPropertyString("http-header-fields", normalized)
-        }.onFailure {
-            Log.w(TAG, "HTTP_HEADER_PROPERTY_FAILED", it)
-        }
-
-        val safeReferer = referer.orEmpty()
-        runCatching {
-            mpv.setOptionString("http-referrer", safeReferer)
+            mpv.setOptionString("http-referrer", referer.orEmpty())
         }.onFailure {
             Log.w(TAG, "HTTP_REFERRER_OPTION_FAILED", it)
         }
-        runCatching {
-            mpv.setPropertyString("http-referrer", safeReferer)
-        }.onFailure {
-            Log.w(TAG, "HTTP_REFERRER_PROPERTY_FAILED", it)
-        }
-
-        Log.d(TAG, "HTTP_HEADERS_APPLIED headers=$normalized referer=$safeReferer")
     }
 
     fun setSubtitleFontsDir(path: String) {
@@ -449,7 +441,13 @@ class MpvPlayerEngine(private val context: Context) {
         _playbackEndedEvents.tryEmit(generation)
     }
 
-    fun load(url: String, subtitlePath: String?, syncOffsetMs: Long, customFontPath: String?) {
+    fun load(
+        url: String,
+        subtitlePath: String?,
+        syncOffsetMs: Long,
+        customFontPath: String?,
+        autoPlay: Boolean = true
+    ) {
         loadGeneration++
         activeLoadGeneration = loadGeneration
         completionSignalledGeneration = -1L
@@ -461,7 +459,7 @@ class MpvPlayerEngine(private val context: Context) {
             val clean = it.substringBefore('?').substringBefore('#').lowercase(Locale.ROOT)
             clean.endsWith(".ass") || clean.endsWith(".ssa")
         } == true
-        playWhenLoaded = true
+        playWhenLoaded = autoPlay
         isPlaying = false
         playbackState = STATE_BUFFERING
         // Replacing an already loaded item may emit END_FILE for the old item.
