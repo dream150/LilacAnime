@@ -1331,8 +1331,14 @@ fun PlayerScreen(
     LaunchedEffect(
         streamUrl,
         currentEpisode.id,
-        isOffline
+        isOffline,
+        vm.watchHistoryLoaded
     ) {
+        // Do not initialize the player before persisted watch history is ready.
+        // Otherwise savedProgress is null on the first run and the resume seek
+        // is permanently skipped for this episode.
+        if (!vm.watchHistoryLoaded) return@LaunchedEffect
+
         val url = streamUrl ?: return@LaunchedEffect
         val isLocalFile = url.startsWith("file://") || url.startsWith("/")
         val actualUrl = if (isLocalFile && !url.startsWith("file://")) "file://${url}" else url
@@ -1738,8 +1744,10 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
 
-        // AniSkip 응답의 시간을 그대로 사용한다.
-        // 실제 영상 길이에 맞춘 위치 보정이나 스케일링은 하지 않는다.
+        // AniSkip timestamps belong to AniSkip's canonical episode length.
+        // Keep the raw response here, then map it once mpv exposes the actual
+        // local stream duration. This prevents a valid segment from sitting at
+        // a timestamp that the current Linkkf cut never reaches.
         val onlineSegments = withContext(Dispatchers.IO) {
             OnlineAniSkipService.getSkipSegments(
                 title = anime.title,
@@ -1764,8 +1772,52 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
 
-        // 서버가 반환한 startTime/endTime을 그대로 사용한다.
-        chapterSkipSegments = onlineSegments
+        // Wait briefly for HLS to expose its real duration. AniSkip data can
+        // arrive before mpv knows the duration, so mapping immediately would
+        // sometimes leave the segment on the wrong timeline.
+        var localDuration = mpvEngine.duration / 1000.0
+        var waitedMs = 0L
+        while (isActive && localDuration <= 0.0 && waitedMs < 10_000L) {
+            delay(200L)
+            waitedMs += 200L
+            localDuration = mpvEngine.duration / 1000.0
+        }
+
+        fun mapSegments(localDurationSeconds: Double): List<ChapterSkipSegment> {
+            return onlineSegments.mapNotNull { segment ->
+                val source = segment.episodeLength
+                if (source <= 0.0 || localDurationSeconds <= 0.0) return@mapNotNull null
+
+                val diff = localDurationSeconds - source
+                val (start, end, mode) = if (kotlin.math.abs(diff) <= 90.0) {
+                    Triple(segment.startTime + diff, segment.endTime + diff, "offset")
+                } else {
+                    val ratio = localDurationSeconds / source
+                    Triple(segment.startTime * ratio, segment.endTime * ratio, "scale")
+                }
+
+                val safeStart = start.coerceIn(0.0, localDurationSeconds)
+                val safeEnd = end.coerceIn(0.0, localDurationSeconds)
+                if (safeEnd <= safeStart) return@mapNotNull null
+
+                Log.d(
+                    "AniChapters",
+                    "ONLINE_SKIP_MAPPED type=${segment.type} raw=${segment.startTime}-${segment.endTime} " +
+                        "source=$source local=$localDurationSeconds diff=$diff mode=$mode " +
+                        "mapped=$safeStart-$safeEnd"
+                )
+                segment.copy(startTime = safeStart, endTime = safeEnd)
+            }
+        }
+
+        chapterSkipSegments = if (localDuration > 0.0) {
+            mapSegments(localDuration)
+        } else {
+            // Extremely slow HLS startup: keep the canonical timestamps rather
+            // than losing the AniSkip result. The position watcher will still
+            // display it if the stream uses the canonical timeline.
+            onlineSegments
+        }
 
         Log.d(
             "AniChapters",

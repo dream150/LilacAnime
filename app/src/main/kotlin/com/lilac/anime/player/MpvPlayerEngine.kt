@@ -249,22 +249,39 @@ class MpvPlayerEngine(private val context: Context) {
     }
 
     fun configureNetworkHeaders(headers: String, referer: String? = null) {
-        // mpv expects HTTP header fields as a comma-separated list.
-        // A newline-delimited value can be ignored by the native HTTP client,
-        // which is especially visible with protected VTT files.
-        if (headers.isNotBlank()) {
-            val normalized = headers
-                .lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
-                .joinToString(",")
-            if (normalized.isNotBlank()) {
-                mpv.setPropertyString("http-header-fields", normalized)
-            }
+        // Clear the previous episode's HTTP state first. Without this, a stream
+        // that has no Referer/Origin can inherit the previous Linkkf request
+        // headers and intermittently fail after an episode/source change.
+        val normalized = headers
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString(",")
+
+        runCatching {
+            mpv.setOptionString("http-header-fields", normalized)
+        }.onFailure {
+            Log.w(TAG, "HTTP_HEADER_OPTION_FAILED", it)
         }
         runCatching {
-            mpv.setPropertyString("http-referrer", referer.orEmpty())
+            mpv.setPropertyString("http-header-fields", normalized)
+        }.onFailure {
+            Log.w(TAG, "HTTP_HEADER_PROPERTY_FAILED", it)
         }
+
+        val safeReferer = referer.orEmpty()
+        runCatching {
+            mpv.setOptionString("http-referrer", safeReferer)
+        }.onFailure {
+            Log.w(TAG, "HTTP_REFERRER_OPTION_FAILED", it)
+        }
+        runCatching {
+            mpv.setPropertyString("http-referrer", safeReferer)
+        }.onFailure {
+            Log.w(TAG, "HTTP_REFERRER_PROPERTY_FAILED", it)
+        }
+
+        Log.d(TAG, "HTTP_HEADERS_APPLIED headers=$normalized referer=$safeReferer")
     }
 
     fun setSubtitleFontsDir(path: String) {

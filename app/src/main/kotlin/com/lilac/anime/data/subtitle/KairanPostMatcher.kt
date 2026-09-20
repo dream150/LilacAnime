@@ -147,6 +147,69 @@ object KairanPostMatcher {
     fun weightedSimilarity(first: String, second: String): Double =
         HangulSimilarityMatcher.similarity(first, second)
 
+    /**
+     * Csora-specific title score. In mixed-language titles, comparing the whole
+     * string can unfairly lower the score even when one script contains the
+     * actual canonical title (for example, Korean + English vs English + Korean).
+     * Compare meaningful runs within the same script and keep the strongest
+     * language-level match.
+     */
+    fun languageAwareSimilarity(first: String, second: String): Double {
+        val base = HangulSimilarityMatcher.similarity(first, second)
+        val firstParts = splitByScript(first)
+        val secondParts = splitByScript(second)
+
+        var best = base
+        for ((script, leftParts) in firstParts) {
+            val rightParts = secondParts[script].orEmpty()
+            if (rightParts.isEmpty()) continue
+
+            for (left in leftParts) {
+                for (right in rightParts) {
+                    val score = HangulSimilarityMatcher.similarity(left, right)
+                    if (score > best) best = score
+                }
+            }
+        }
+        return best
+    }
+
+    private enum class Script { HANGUL, LATIN, CJK }
+
+    private fun splitByScript(value: String): Map<Script, List<String>> {
+        val result = linkedMapOf<Script, MutableList<String>>()
+        var currentScript: Script? = null
+        val current = StringBuilder()
+
+        fun flush() {
+            val script = currentScript ?: return
+            val text = current.toString().trim()
+            if (text.length >= 2) {
+                result.getOrPut(script) { mutableListOf() }.add(text)
+            }
+            current.setLength(0)
+        }
+
+        for (char in value) {
+            val script = when {
+                char in '\uAC00'..'\uD7A3' -> Script.HANGUL
+                char in 'A'..'Z' || char in 'a'..'z' || char.isDigit() -> Script.LATIN
+                char in '\u3040'..'\u30FF' || char in '\u3400'..'\u9FFF' -> Script.CJK
+                else -> null
+            }
+
+            if (script == currentScript && script != null) {
+                current.append(char)
+            } else {
+                flush()
+                currentScript = script
+                if (script != null) current.append(char)
+            }
+        }
+        flush()
+        return result
+    }
+
     // 기존 서비스의 엄격한 회차 판정을 유지한다. 제목에서 회차를 제거한 뒤 유사도를 계산한다.
     fun episodeMatch(postTitle: String, url: String, episode: Int, episodeKey: String = episode.toString()): Boolean {
         val key = episodeKey.lowercase(Locale.ROOT)

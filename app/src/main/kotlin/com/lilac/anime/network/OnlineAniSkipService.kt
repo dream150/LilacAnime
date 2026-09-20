@@ -177,25 +177,38 @@ object OnlineAniSkipService {
     private suspend fun resolveMalId(title: String): Int? {
         // Only BD tags are removed. Season information (e.g. "2기") is kept
         // exactly as supplied and is included in the NamuWiki title search.
-        val searchTitle = separateKoreanTitle(removeBdTag(title))
-        val normalized = HangulSimilarityMatcher.filterNoise(searchTitle)
-        Log.d(TAG, "MAL_SEARCH_START title=\"$title\" searchTitle=\"$searchTitle\" normalized=\"$normalized\"")
-        if (normalized.isBlank()) return null
+        val searchTitle = removeBdTag(title)
+        Log.d(TAG, "MAL_SEARCH_START title=\"$title\" searchTitle=\"$searchTitle\"")
+        if (searchTitle.isBlank()) return null
 
-        malIdCache[normalized]?.let { cachedId ->
-            Log.d(TAG, "MAL_CACHE_HIT normalized=\"$normalized\" malId=$cachedId")
+        malIdCache[searchTitle]?.let { cachedId ->
+            Log.d(TAG, "MAL_CACHE_HIT searchTitle=\"$searchTitle\" malId=$cachedId")
             return cachedId
         }
 
-        val namu = searchNamuWikiTitle(searchTitle)
+        // Search NamuWiki twice: first with the original title (BD removed only),
+        // then with the same title with trailing Romanized text removed.
+        // Keep both candidates and choose the higher-scoring Namu result.
+        val namuQueries = listOf(
+            searchTitle,
+            separateKoreanTitle(searchTitle)
+        ).distinct().filter { it.isNotBlank() }
+
+        val namuCandidates = namuQueries.mapNotNull { query ->
+            Log.d(TAG, "NAMU_SEARCH_VARIANT query=\"$query\"")
+            searchNamuWikiTitle(query)
+        }
+
+        val namu = namuCandidates.maxByOrNull { it.score }
         if (namu == null) {
-            Log.w(TAG, "NAMU_NO_MATCH title=\"$searchTitle\"")
+            Log.w(TAG, "NAMU_NO_MATCH title=\"$searchTitle\" queries=$namuQueries")
             return null
         }
 
         Log.d(
             TAG,
-            "NAMU_MATCH title=\"$searchTitle\" page=\"${namu.pageTitle}\" score=${namu.score} url=${namu.url} japanese=\"${namu.japaneseTitle}\""
+            "NAMU_MATCH title=\"$searchTitle\" queries=$namuQueries " +
+                "page=\"${namu.pageTitle}\" score=${namu.score} url=${namu.url} japanese=\"${namu.japaneseTitle}\""
         )
 
         val japaneseTitle = namu.japaneseTitle.trim()
@@ -233,7 +246,7 @@ object OnlineAniSkipService {
         if (best.malId != null && best.score >= 7000 &&
             (secondScore == 0 || margin >= 300)
         ) {
-            malIdCache[normalized] = best.malId
+            malIdCache[searchTitle] = best.malId
             Log.d(TAG, "MAL_SEARCH_DONE title=\"$searchTitle\" malId=${best.malId} source=namu")
             return best.malId
         }
@@ -283,6 +296,7 @@ object OnlineAniSkipService {
                         val path = element.attr("href").trim()
                         val label = element.text().replace(Regex("\\s+"), " ").trim()
                         if (path.isBlank() || label.isBlank()) return@mapNotNull null
+                        if (label.contains("문서로 가기")) return@mapNotNull null
 
                         // Compare the actual work title without season information.
                         // NamuWiki commonly puts the season in a suffix such as
@@ -302,7 +316,7 @@ object OnlineAniSkipService {
                     .sortedByDescending { it.third }
 
                 Log.d(TAG, "NAMU_TITLE_LINK_RESULTS title=\"$title\" count=${links.size}")
-                links.take(10).forEachIndexed { index, result ->
+                links.take(15).forEachIndexed { index, result ->
                     Log.d(TAG, "NAMU_RESULT index=$index title=\"${result.first}\" score=${result.third} url=${result.second}")
                 }
 
@@ -513,10 +527,11 @@ object OnlineAniSkipService {
     }
 
     private fun removeBdTag(title: String): String {
-        return title
-            .replace(Regex("(?i)(?:\\[\\s*bd\\s*\\]|\\(\\s*bd\\s*\\)|(?<![A-Za-z0-9])bd(?![A-Za-z0-9]))"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        // Keep the title exactly as supplied for NamuWiki search; remove only BD markers.
+        return title.replace(
+            Regex("(?i)(?:\\[\\s*bd\\s*\\]|\\(\\s*bd\\s*\\)|(?<![A-Za-z0-9])bd(?![A-Za-z0-9]))"),
+            ""
+        )
     }
 
     private suspend fun searchAniListCandidates(query: String, attempt: Int): String {

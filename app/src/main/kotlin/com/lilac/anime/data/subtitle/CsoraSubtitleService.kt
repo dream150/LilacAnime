@@ -129,7 +129,12 @@ object CsoraSubtitleService {
         val posts = CsoraBlogRepository.getPosts(context)
         val match = posts
             .asSequence()
-            .map { post -> post to KairanPostMatcher.weightedSimilarity(title, post.title) }
+            .map { post ->
+                val base = KairanPostMatcher.weightedSimilarity(title, post.title)
+                val languageAware = KairanPostMatcher.languageAwareSimilarity(title, post.title)
+                Log.d(TAG, "TITLE_SCORE target=$title candidate=${post.title} base=$base languageAware=$languageAware")
+                post to languageAware
+            }
             .maxByOrNull { it.second }
             ?: return null
 
@@ -169,11 +174,29 @@ object CsoraSubtitleService {
     private fun safeEpisodeKey(value: String): String = value.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9._-]"), "_")
 
     private fun selectEpisodeLinks(links: List<DownloadLink>, episode: Int): List<DownloadLink> {
-        val exact = links.filter { !isFontLink(it.label) && isEpisodeLink(it.label, episode) }
+        val subtitleLinks = links.filterNot { isFontLink(it.label) }
+
+        // Prefer an explicit episode label.
+        val exact = subtitleLinks.filter { isEpisodeLink(it.label, episode) }
         if (exact.isNotEmpty()) return exact
 
-        val ranged = links.filter { !isFontLink(it.label) && isEpisodeRange(it.label, episode) }
+        // Then accept a range such as "1 ~ 5화".
+        val ranged = subtitleLinks.filter { isEpisodeRange(it.label, episode) }
         if (ranged.isNotEmpty()) return ranged
+
+        // Some Csora posts label the link only with a bare number or include
+        // extra text around the episode marker. Keep the match inclusive rather
+        // than requiring the whole label to be equal to the episode text.
+        val included = subtitleLinks.filter { link ->
+            val label = link.label.replace(Regex("\\s+"), " ").trim()
+            Regex("(?<!\\d)0*${episode}(?!\\d)").containsMatchIn(label)
+        }
+        if (included.isNotEmpty()) return included
+
+        // A single non-font Drive/ZIP link is often a bundle containing every
+        // episode. Let extractZip()/selectEpisodeFiles() choose the requested
+        // episode instead of rejecting the post before the archive is opened.
+        if (subtitleLinks.size == 1) return subtitleLinks
 
         return emptyList()
     }

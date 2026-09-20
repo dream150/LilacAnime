@@ -99,6 +99,12 @@ class AnimeViewModel : ViewModel() {
     var watchHistory by mutableStateOf<List<WatchProgress>>(emptyList())
         private set
 
+    // PlayerScreen must wait until persisted watch history has been loaded.
+    // Otherwise the resume effect can run once with an empty history and never
+    // seek to the saved position when the history arrives afterward.
+    var watchHistoryLoaded by mutableStateOf(false)
+        private set
+
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     init {
@@ -221,6 +227,7 @@ class AnimeViewModel : ViewModel() {
             withContext(Dispatchers.Main) {
                 library = lib
                 watchHistory = history
+                watchHistoryLoaded = true
                 playerSettings = settings
                 if (cachedList.isNotEmpty() && homeAnime.isEmpty()) {
                     homeAnime = cachedList.take(10)
