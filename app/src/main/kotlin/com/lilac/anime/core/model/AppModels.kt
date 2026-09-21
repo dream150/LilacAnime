@@ -29,7 +29,11 @@ data class StreamQuality(
     val referer: String? = null,
     // Headers captured from the WebView request that produced this stream.
     // Protected HLS providers may require the same User-Agent/Cookie as the browser.
-    val headers: String? = null
+    val headers: String? = null,
+    // FlixCloud's custom hls.js exposes this browser-side manifest XOR key as
+    // window.__pk. It is carried with the detected quality so playback can
+    // transparently proxy/decrypt the HLS responses in libmpv.
+    val flixCloudPk: String? = null
 )
 
 data class PlayerSettings(

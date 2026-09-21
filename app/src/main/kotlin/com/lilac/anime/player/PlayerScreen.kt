@@ -86,6 +86,7 @@ import com.lilac.anime.data.offline.MpvOfflineStore
 import com.lilac.anime.network.LinkkfChapterService
 import com.lilac.anime.network.LinkkfEpisodeM3u8Collector
 import com.lilac.anime.network.LinkkfRequestContextStore
+import com.lilac.anime.network.FlixCloudHlsProxy
 import com.lilac.anime.player.MpvPlayerEngine
 import com.lilac.anime.player.MpvPlayerSurfaceView
 import com.lilac.anime.network.OfflineOpEdFingerprintStore
@@ -1986,6 +1987,10 @@ fun PlayerScreen(
                 if (vm.playerSettings.videoSourcePreference != "linkkf") key(extractorTargetUrl) {
                     StreamUrlExtractor(
                     targetUrl = extractorTargetUrl,
+                    reAnimeAnilistId = currentEpisode.let {
+                        Regex("(?:bx|/anime/)(\\d+)").find(anime.poster)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    },
+                    reAnimeEpisodeNumber = currentEpisode.number,
                     onRefererFound = { referer ->
                         if (vm.playerSettings.videoSourcePreference == "linkkf" &&
                             resolvedVideoPageUrl == extractorTargetUrl &&
@@ -2018,7 +2023,17 @@ fun PlayerScreen(
                                     LinkkfRequestContextStore.save(context, anime.id, currentEpisode.id, referer)
                                 }
                             }
-                            streamUrl = selected.url
+                            streamUrl = if (!selected.flixCloudPk.isNullOrBlank()) {
+                                val proxied = FlixCloudHlsProxy.createProxyUrl(
+                                    upstreamUrl = selected.url,
+                                    pkBase64 = selected.flixCloudPk,
+                                    headers = selected.headers
+                                )
+                                Log.d("LilacMpv", "FLIXCLOUD_PROXY_CREATED url=$proxied")
+                                proxied
+                            } else {
+                                selected.url
+                            }
                             isLoading = false
                         }
                     },
@@ -2378,7 +2393,15 @@ fun PlayerScreen(
                                                 pendingSeekPositionMs = mpvEngine.currentPosition
                                                 selectedStreamingQuality = quality
                                                 vm.updatePlayerSettings(context, vm.playerSettings.copy(defaultQuality = quality.label))
-                                                streamUrl = quality.url
+                                                streamUrl = if (!quality.flixCloudPk.isNullOrBlank()) {
+                                                    FlixCloudHlsProxy.createProxyUrl(
+                                                        upstreamUrl = quality.url,
+                                                        pkBase64 = quality.flixCloudPk,
+                                                        headers = quality.headers
+                                                    )
+                                                } else {
+                                                    quality.url
+                                                }
                                             }
                                         }
                                         .padding(vertical = 6.dp),

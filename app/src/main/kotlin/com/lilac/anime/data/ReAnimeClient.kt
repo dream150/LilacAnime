@@ -105,6 +105,29 @@ class ReAnimeClient {
         }
     }
 
+
+    /** Resolve the actual FlixCloud player links for a specific anime/episode. */
+    fun getFlixServers(anilistId: Int, episodeNumber: Int): String {
+        val url = "$BASE_URL/api/flix/$anilistId/$episodeNumber"
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json")
+            .header("Accept-Language", "en-US")
+            .header("Referer", BASE_URL + "/")
+            .build()
+
+        android.util.Log.d(TAG, "FLIX_RESOLVE url=$url")
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            android.util.Log.d(TAG, "FLIX_RESOLVE_RESULT code=${response.code} length=${body.length}")
+            if (!response.isSuccessful || body.isBlank()) {
+                throw IOException("Re:Anime Flix API HTTP ${response.code}: ${body.take(300)}")
+            }
+            return body
+        }
+    }
+
     fun searchAnime(
         query: String,
         limit: Int = 36,

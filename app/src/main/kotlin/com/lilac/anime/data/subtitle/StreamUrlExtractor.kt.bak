@@ -32,11 +32,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import com.lilac.anime.core.model.StreamQuality
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
-import kotlin.concurrent.thread
 
 /**
  * Hidden WebView stream detector. It never exposes the provider page to the user.
@@ -53,11 +48,11 @@ fun StreamUrlExtractor(
     onAuthRequired: () -> Unit = {},
     onFlixCloudPkFound: (String) -> Unit = {},
     allowedHosts: Set<String> = emptySet(),
-    restartKey: Any? = null,
-    reAnimeAnilistId: Int? = null,
-    reAnimeEpisodeNumber: Int? = null
+    restartKey: Any? = null
 ) {
-    val detectedUrls = remember(targetUrl, restartKey) { linkedSetOf<String>() }
+    val detectedUrls = remember(targetUrl, restartKey) {
+        java.util.Collections.synchronizedSet(linkedSetOf<String>())
+    }
     var isSubtitleFound by remember(targetUrl, restartKey) { mutableStateOf(false) }
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
@@ -132,7 +127,11 @@ fun StreamUrlExtractor(
                     }
                     if (hasFlixCloud && flixCloudPk.isNullOrBlank()) return
 
-                    val urls = detectedUrls.toList()
+                    val urls = synchronized(detectedUrls) {
+
+                        detectedUrls.toList()
+
+                    }
                     mainHandler.post {
                         val ordered = urls.sortedWith(
                             compareByDescending<String> {
@@ -141,25 +140,56 @@ fun StreamUrlExtractor(
                                 }.getOrDefault(false)
                             }
                         )
-                        val qualities = ordered.mapIndexed { index, u ->
+                        val qualities = ordered.mapIndexedNotNull { index, rawUrl ->
+
+                            // Runtime guard for the null observed at StreamQuality(url=...).
+
+                            val u = (rawUrl as Any?) as? String
+
+                                ?: return@mapIndexedNotNull null
+
+                            val safeUrl = u.trim()
+
+                            if (safeUrl.isBlank()) return@mapIndexedNotNull null
+
+                        
+
                             val uPath = runCatching {
-                                android.net.Uri.parse(u).path.orEmpty().lowercase()
+
+                                android.net.Uri.parse(safeUrl).path.orEmpty().lowercase()
+
                             }.getOrDefault("")
+
                             val label = when {
+
                                 uPath.contains("1080") -> "1080p"
+
                                 uPath.contains("720") -> "720p"
+
                                 uPath.contains("480") -> "480p"
+
                                 uPath.contains("360") -> "360p"
+
                                 uPath.contains("master") -> "Auto"
+
                                 else -> "Stream ${index + 1}"
+
                             }
+
                             StreamQuality(
+
                                 label = label,
-                                url = u,
+
+                                url = safeUrl,
+
                                 referer = lastM3u8Referer ?: lastPlayHdReferer,
+
                                 headers = lastM3u8Headers,
+
                                 flixCloudPk = flixCloudPk
+
                             )
+
                         }.distinctBy { it.url }
                         onQualitiesFound(qualities)
                     }
@@ -199,16 +229,45 @@ fun StreamUrlExtractor(
                     val path = runCatching { android.net.Uri.parse(url).path.orEmpty().lowercase() }.getOrDefault("")
                     if (!path.endsWith(".m3u8")) return
 
-                    val isReAnime = targetHost == "reanime.to" || targetHost == "www.reanime.to"
+                    if (url.contains("flixcloud.cc", ignoreCase = true) &&
+                        flixCloudPk.isNullOrBlank()
+                    ) {
+                        // The current FlixCloud WASM's _c() export produces a stable
+                        // 32-byte __pk. Prefer the live WebView value when available,
+                        // but keep playback working if the HLS request comes from a
+                        // cross-origin iframe whose window cannot be inspected.
+                        flixCloudPk = FlixCloudHlsProxy.DEFAULT_PK_BASE64
+                        mainHandler.post { onFlixCloudPkFound(flixCloudPk!!) }
+                    }
 
-                    // FlixCloud returns encrypted M3U8 text to Chromium and decrypts it
-                    // inside its JavaScript player. The WebView request interceptor sees
-                    // the real encrypted URL, which is exactly what our local proxy needs.
-                    // Do not wait for a second "decrypted" URL and do not use a fixed __pk.
-                    if (!detectedUrls.add(url)) return
+                    val isReAnime = targetHost == "reanime.to" || targetHost == "www.reanime.to"
+                    val isMaster = runCatching {
+                        android.net.Uri.parse(url).lastPathSegment?.contains("master", true) == true
+                    }.getOrDefault(false)
+
+                    if (isReAnime && isMaster && !reanimeDecryptedM3u8Reported) {
+                        reanimeEncryptedMasterUrl = url
+                        Log.d("ReAnimeStream", "ENCRYPTED_MASTER_CAPTURED $url")
+
+                        if (!reanimeMasterFallbackPosted) {
+                            reanimeMasterFallbackPosted = true
+                            mainHandler.postDelayed({
+                                if (!reanimeDecryptedM3u8Reported && reanimeEncryptedMasterUrl == url) {
+                                    Log.w("ReAnimeStream", "DECRYPTED_M3U8_NOT_OBSERVED_FALLBACK_MASTER $url")
+                                    reportM3u8(url)
+                                }
+                            }, 8000L)
+                        }
+                        return
+                    }
+
+                    val safeUrl = url.trim()
+                    if (safeUrl.isBlank()) return
+                    if (!synchronized(detectedUrls) { detectedUrls.add(safeUrl) }) return
 
                     if (isReAnime) {
-                        Log.d("ReAnimeStream", "FLIXCLOUD_M3U8_CAPTURED $url")
+                        reanimeDecryptedM3u8Reported = true
+                        Log.d("ReAnimeStream", "DECRYPTED_M3U8_CAPTURED $url")
                     }
 
                     if (lastM3u8Headers.isNullOrBlank()) {
@@ -436,8 +495,7 @@ fun StreamUrlExtractor(
                             }
                         )
 
-                        if ((targetHost == "reanime.to" || targetHost == "www.reanime.to") &&
-                            !url.orEmpty().contains("flixcloud.cc", ignoreCase = true)) {
+                        if (targetHost == "reanime.to" || targetHost == "www.reanime.to") {
                             view?.let { pollReAnimeDecryptedM3u8(it) }
                             // Re:ANIME can fire onPageFinished several times. Select a server only once
                             // so HD-2 does not get clicked again after every page-finished callback.
@@ -474,60 +532,18 @@ fun StreamUrlExtractor(
                     }
                 }
 
-                // Re:ANIME: resolve the FlixCloud player for THIS anime/episode first.
-                // Never reuse a FlixCloud /e/... URL from another episode.
-                val isReAnime = targetHost == "reanime.to" || targetHost == "www.reanime.to"
-                if (isReAnime && reAnimeAnilistId != null && reAnimeEpisodeNumber != null) {
-                    val webView = this
-                    val resolverClient = OkHttpClient.Builder()
-                        .followRedirects(true)
-                        .followSslRedirects(true)
-                        .connectTimeout(10, TimeUnit.SECONDS)
-                        .readTimeout(15, TimeUnit.SECONDS)
-                        .build()
-                    thread(name = "ReAnimeFlixResolve", isDaemon = true) {
-                        try {
-                            val apiUrl = "https://reanime.to/api/flix/$reAnimeAnilistId/$reAnimeEpisodeNumber"
-                            val request = Request.Builder()
-                                .url(apiUrl)
-                                .header("User-Agent", capturedWebViewUserAgent)
-                                .header("Accept", "application/json")
-                                .header("Referer", "https://reanime.to/")
-                                .build()
-                            resolverClient.newCall(request).execute().use { response ->
-                                val body = response.body?.string().orEmpty()
-                                if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
-                                val root = JSONObject(body)
-                                val servers = root.optJSONArray("servers") ?: throw IllegalStateException("servers missing")
-                                var hd2: String? = null
-                                var hd1: String? = null
-                                for (i in 0 until servers.length()) {
-                                    val item = servers.optJSONObject(i) ?: continue
-                                    val link = item.optString("dataLink").trim()
-                                    if (link.isBlank()) continue
-                                    val name = item.optString("serverName").uppercase()
-                                    if (name.contains("HD-2")) hd2 = link
-                                    if (name.contains("HD-1")) hd1 = link
-                                }
-                                val flixUrl = hd2 ?: hd1 ?: (0 until servers.length())
-                                    .asSequence()
-                                    .mapNotNull { servers.optJSONObject(it)?.optString("dataLink")?.trim() }
-                                    .firstOrNull { it.startsWith("https://flixcloud.cc/e/", true) }
-                                    ?: throw IllegalStateException("No FlixCloud dataLink")
-                                Log.d("ReAnimeStream", "FLIX_RESOLVED episode=$reAnimeEpisodeNumber url=$flixUrl")
-                                mainHandler.post {
-                                    webView.loadUrl(flixUrl)
-                                }
-                            }
-                        } catch (t: Throwable) {
-                            Log.e("ReAnimeStream", "FLIX_RESOLVE_FAILED episode=$reAnimeEpisodeNumber", t)
-                            mainHandler.post { webView.loadUrl(targetUrl) }
-                        }
-                    }
+                // Re:ANIME 테스트용: watch 페이지를 거치지 않고 실제 FlixCloud
+                // 플레이어를 직접 열어 m3u8/__pk를 WebView에서 수집한다.
+                // 다른 소스는 기존 targetUrl 흐름을 그대로 유지한다.
+                val initialLoadUrl = if (
+                    targetHost == "reanime.to" || targetHost == "www.reanime.to"
+                ) {
+                    "https://flixcloud.cc/e/j97hr75qclsm?v=1"
                 } else {
-                    Log.d("ReAnimeStream", "INITIAL_WEBVIEW_URL $targetUrl")
-                    loadUrl(targetUrl)
+                    targetUrl
                 }
+                Log.d("ReAnimeStream", "INITIAL_WEBVIEW_URL $initialLoadUrl")
+                loadUrl(initialLoadUrl)
             }
         },
         modifier = Modifier.size(0.dp)
