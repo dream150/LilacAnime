@@ -1,4 +1,4 @@
 #v2
 1
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/StreamUrlExtractor.kt	9785	219	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/network/FlixCloudHlsProxy.kt	457	1	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/network/FlixCloudHlsProxy.kt	457	10	text
