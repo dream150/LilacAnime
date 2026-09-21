@@ -47,6 +47,11 @@ fun SearchScreen(
     val searchList = remember(vm.homeAnime, vm.allAnime) {
         (vm.allAnime + vm.homeAnime).distinctBy { it.id }
     }
+    val isReAnime = vm.playerSettings.videoSourcePreference == "reanime"
+
+    LaunchedEffect(query, isReAnime) {
+        if (isReAnime) vm.searchReAnime(query)
+    }
 
     AppScaffold(selected = "search", onSelect = onNavigate) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp)) {
@@ -71,8 +76,18 @@ fun SearchScreen(
 
             Spacer(Modifier.height(20.dp))
 
-            val results = searchList.filter {
-                query.isBlank() || it.title.contains(query, true) || it.genres.any { genre -> genre.contains(query, true) }
+            val results = if (isReAnime && query.isNotBlank()) {
+                vm.reAnimeSearchResults
+            } else {
+                searchList.filter {
+                    query.isBlank() || it.title.contains(query, true) || it.genres.any { genre -> genre.contains(query, true) }
+                }
+            }
+
+            if (isReAnime && vm.reAnimeSearchLoading) {
+                Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
             }
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -26,7 +26,10 @@ import com.lilac.anime.data.*
 data class StreamQuality(
     val label: String,
     val url: String,
-    val referer: String? = null
+    val referer: String? = null,
+    // Headers captured from the WebView request that produced this stream.
+    // Protected HLS providers may require the same User-Agent/Cookie as the browser.
+    val headers: String? = null
 )
 
 data class PlayerSettings(

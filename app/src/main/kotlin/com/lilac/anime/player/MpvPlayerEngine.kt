@@ -185,7 +185,7 @@ class MpvPlayerEngine(private val context: Context) {
         mpv.setOptionString("config", "no")
         mpv.setOptionString("load-auto-profiles", "no")
         mpv.setOptionString("terminal", "no")
-        mpv.setOptionString("msg-level", "all=warn")
+        mpv.setOptionString("msg-level", "all=info")
         mpv.setOptionString("vo", "gpu")
         mpv.setOptionString("hwdec", "mediacodec")
         mpv.setOptionString("force-window", "no")
@@ -253,24 +253,34 @@ class MpvPlayerEngine(private val context: Context) {
         // A newline-delimited value can be ignored by the native HTTP client,
         // which is especially visible with protected VTT files.
         if (headers.isNotBlank()) {
-            val normalized = headers
+            val lines = headers
                 .lineSequence()
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
-                .joinToString(",")
-            // These are mpv options rather than ordinary observed properties.
-            // setPropertyString() can silently fail on some libmpv builds, which
-            // leaves protected Linkkf HLS requests without the required Referer.
+                .toList()
+            val normalized = lines.joinToString(",")
+            val userAgent = lines
+                .firstOrNull { it.startsWith("User-Agent:", true) }
+                ?.substringAfter(":")
+                ?.trim()
+            // Send the captured browser UA both through the explicit mpv option and
+            // the header list. Some libmpv builds handle one path more reliably.
             runCatching {
                 mpv.setOptionString("http-header-fields", normalized)
             }.onFailure {
                 Log.w(TAG, "HTTP_HEADERS_OPTION_FAILED", it)
             }
+            runCatching {
+                mpv.setOptionString("user-agent", userAgent.orEmpty())
+            }.onFailure {
+                Log.w(TAG, "HTTP_USER_AGENT_OPTION_FAILED", it)
+            }
         } else {
             runCatching { mpv.setOptionString("http-header-fields", "") }
+            runCatching { mpv.setOptionString("user-agent", "") }
         }
         runCatching {
-            mpv.setOptionString("http-referrer", referer.orEmpty())
+            mpv.setOptionString("referrer", referer.orEmpty())
         }.onFailure {
             Log.w(TAG, "HTTP_REFERRER_OPTION_FAILED", it)
         }

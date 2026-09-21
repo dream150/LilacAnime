@@ -70,6 +70,12 @@ class AnimeViewModel : ViewModel() {
     var loading by mutableStateOf(false)
         private set
 
+    var reAnimeSearchResults by mutableStateOf<List<Anime>>(emptyList())
+        private set
+    var reAnimeSearchLoading by mutableStateOf(false)
+        private set
+    private var reAnimeSearchJob: Job? = null
+
     var isAllAnimeLoading by mutableStateOf(false)
         private set
 
@@ -215,6 +221,30 @@ class AnimeViewModel : ViewModel() {
             _downloadedIds.value.contains(episode.id) ||
             (episode.displayNumber == episode.number.toString() &&
                 _downloadedIds.value.contains("${animeId}_${episode.number}"))
+    }
+
+    fun searchReAnime(query: String) {
+        if (playerSettings.videoSourcePreference != "reanime") return
+        val q = query.trim()
+        reAnimeSearchJob?.cancel()
+        if (q.isEmpty()) {
+            reAnimeSearchResults = emptyList()
+            reAnimeSearchLoading = false
+            return
+        }
+        reAnimeSearchJob = viewModelScope.launch {
+            delay(250L)
+            reAnimeSearchLoading = true
+            try {
+                val results = withContext(Dispatchers.IO) { repository.searchAnime(q, "reanime") }
+                reAnimeSearchResults = results
+            } catch (e: Exception) {
+                Log.e("ReAnimeSearch", "SEARCH_FAILED query=$q", e)
+                reAnimeSearchResults = emptyList()
+            } finally {
+                reAnimeSearchLoading = false
+            }
+        }
     }
 
     fun loadAnime(context: Context) {

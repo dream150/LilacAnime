@@ -411,9 +411,39 @@ object CsoraSubtitleService {
         // Return the requested episode when present. All other numbered subtitle
         // files remain in the anime directory for later episodes.
         val requested = extracted.filter { episodeNumberFromName(it.nameWithoutExtension) == episode }
-        val selected = requested.ifEmpty { extracted }
+        val selected = if (requested.isNotEmpty()) requested else selectEpisodeFiles(extracted, episode)
         Log.d(TAG, "ZIP_EXTRACT_DONE all=${extracted.map { it.name }} selected=${selected.map { it.name }}")
         return selected.map { it.absolutePath }
+    }
+
+    /**
+     * Choose subtitle files from an extracted archive when the archive contains
+     * multiple episodes and an exact requested-episode file was not found.
+     * Prefer the closest explicit episode number; if no episode number can be
+     * detected, only accept a single subtitle file to avoid attaching the wrong
+     * episode.
+     */
+    private fun selectEpisodeFiles(files: List<File>, episode: Int): List<File> {
+        if (files.isEmpty()) return emptyList()
+
+        val numbered = files.mapNotNull { file ->
+            episodeNumberFromName(file.nameWithoutExtension)?.let { ep -> file to ep }
+        }
+
+        numbered.filter { it.second == episode }
+            .map { it.first }
+            .takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        // Do not guess between multiple numbered episodes. A wrong subtitle is
+        // worse than reporting that no matching subtitle was found.
+        if (numbered.size > 1) return emptyList()
+
+        // A single subtitle with no usable episode marker can safely be used
+        // only when the archive itself yielded exactly one subtitle.
+        if (files.size == 1 && numbered.isEmpty()) return files
+
+        return emptyList()
     }
 
     private fun episodeNumberFromName(name: String): Int? {

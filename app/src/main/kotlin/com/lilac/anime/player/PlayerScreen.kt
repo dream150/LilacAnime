@@ -386,6 +386,7 @@ fun PlayerScreen(
     var streamUrl by remember { mutableStateOf<String?>(null) }
     // Referer captured from the actual Linkkf WebView M3U8 request.
     var streamReferer by remember { mutableStateOf<String?>(null) }
+    var streamHttpHeaders by remember { mutableStateOf<String?>(null) }
     var resolvedVideoPageUrl by remember { mutableStateOf<String?>(null) }
     var subtitlesUrl by remember { mutableStateOf<String?>(null) }
     // Exact Referer captured from the VTT resource request. This is intentionally
@@ -761,6 +762,7 @@ fun PlayerScreen(
         streamReferer = withContext(Dispatchers.IO) {
             LinkkfRequestContextStore.get(context, anime.id, currentEpisode.id)
         }
+        streamHttpHeaders = null
         subtitleReferer = withContext(Dispatchers.IO) {
             LinkkfRequestContextStore.getSubtitle(context, anime.id, currentEpisode.id)
         }
@@ -1384,19 +1386,23 @@ fun PlayerScreen(
                 } else null
             }
         }.getOrNull()
-        val referer = if (vm.playerSettings.videoSourcePreference == "linkkf") {
-            streamReferer?.takeIf { it.isNotBlank() }
+        val referer = when (vm.playerSettings.videoSourcePreference) {
+            "linkkf" -> streamReferer?.takeIf { it.isNotBlank() }
                 ?: LinkkfRequestContextStore.get(context, anime.id, currentEpisode.id)
-        } else if (vm.playerSettings.videoSourcePreference == "animenosub") {
-            actualUrl
-        } else {
-            playbackOrigin?.let { "$it/" }
+            "animenosub" -> actualUrl
+            "reanime" -> "https://reanime.to/"
+            else -> playbackOrigin?.let { "$it/" }
         }
         // Origin must follow the Referer's origin for protected Linkkf streams.
         // Using the M3U8 host here can be wrong when play.sub3.top generated a
         // playv2.sub3.top media URL (or vice versa).
         val origin = when {
             vm.playerSettings.videoSourcePreference == "animenosub" -> null
+            // Re:ANIME/FlixCloud can use a different origin from the watch page.
+            // Do not force https://reanime.to here; if Chromium captured an Origin
+            // header for the actual M3U8 request it is already present in
+            // streamHttpHeaders and will be forwarded to mpv below.
+            vm.playerSettings.videoSourcePreference == "reanime" -> null
             !referer.isNullOrBlank() -> runCatching {
                 java.net.URI(referer).let { uri ->
                     if (uri.scheme.equals("http", true) || uri.scheme.equals("https", true)) {
@@ -1407,10 +1413,14 @@ fun PlayerScreen(
             else -> playbackOrigin
         }
         val headers = buildList {
-            referer?.takeIf { it.isNotBlank() }?.let { add("Referer: $it") }
+            streamHttpHeaders?.lineSequence()?.map { it.trim() }?.filter { it.isNotBlank() }?.forEach { add(it) }
+            referer?.takeIf { it.isNotBlank() && !streamHttpHeaders.orEmpty().lineSequence().any { line -> line.startsWith("Referer:", true) } }?.let { add("Referer: $it") }
             origin?.let { add("Origin: $it") }
         }.joinToString("\n")
-        android.util.Log.d("LilacMpv", "STREAM_HEADERS hostOrigin=$playbackOrigin referer=$referer origin=$origin url=$actualUrl")
+        android.util.Log.d("LilacMpv", "STREAM_HEADERS hostOrigin=$playbackOrigin referer=$referer origin=$origin captured=${streamHttpHeaders?.replace("\n", " | ") ?: "<none>"} url=$actualUrl")
+        if (actualUrl.contains("flixcloud.cc", ignoreCase = true) && actualUrl.contains(".m3u8", ignoreCase = true)) {
+            android.util.Log.d("LilacMpv", "FLIXCLOUD_HLS_LOAD urlHost=${runCatching { java.net.URI(actualUrl).host }.getOrNull()} headersPresent=${headers.isNotBlank()} refererPresent=${!referer.isNullOrBlank()}")
+        }
 
         withContext(Dispatchers.Main) {
             mpvEngine.configureNetworkHeaders(headers, referer)
@@ -2000,6 +2010,8 @@ fun PlayerScreen(
                             }
                             val selected = qualities.first()
                             selectedStreamingQuality = selected
+                            streamHttpHeaders = selected.headers
+                            Log.d("MpvEpisode", "STREAM_CAPTURED_HEADERS episode=${currentEpisode.displayNumber} headers=${selected.headers?.replace("\n", " | ") ?: "<none>"}")
                             selected.referer?.let { referer ->
                                 streamReferer = referer
                                 if (vm.playerSettings.videoSourcePreference == "linkkf") {

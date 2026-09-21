@@ -32,22 +32,28 @@ import kotlinx.coroutines.flow.flowOn
 class AnimeRepository {
     private val linkkfClient = LinkkfClient()
     private val animenosubClient = AnimenosubHttpClient()
+    private val reAnimeClient = ReAnimeClient()
 
     companion object {
         private const val LINKKF_BASE_URL = "https://linkkf.tv"
         private const val LINKKF_LIST_URL = "$LINKKF_BASE_URL/list/2/"
         private const val ANIMENOSUB_BASE_URL = "https://animenosub.to"
+        private const val REANIME_BASE_URL = "https://reanime.to"
         private const val BATCH_SIZE = 5
     }
 
 
     suspend fun getHomeAnimeList(source: String = "linkkf"): List<Anime> {
-        return if (source == "animenosub") {
-            val document = animenosubClient.getDocument(ANIMENOSUB_BASE_URL, ANIMENOSUB_BASE_URL + "/")
-            AnimenosubParser.parseAnimeList(document)
-        } else {
+        return when (source) {
+            "animenosub" -> {
+                val document = animenosubClient.getDocument(ANIMENOSUB_BASE_URL, ANIMENOSUB_BASE_URL + "/")
+                AnimenosubParser.parseAnimeList(document)
+            }
+            "reanime" -> ReAnimeParser.parseAnimeApi(reAnimeClient.catalogAnime(36, 0))
+            else -> {
             val document = linkkfClient.getDocument(LINKKF_LIST_URL)
             LinkkfGenreIndexRepository.enrich(LinkkfParser.parseAnimeList(document))
+            }
         }
     }
 
@@ -77,6 +83,54 @@ class AnimeRepository {
                 }
                 kotlinx.coroutines.delay(250L)
             }
+            return@flow
+        }
+
+        if (source == "reanime") {
+            var offset = 0
+            var emptyPages = 0
+
+            while (emptyPages < 2 && offset < 5000) {
+                val page = try {
+                    ReAnimeParser.parseAnimeApi(
+                        reAnimeClient.catalogAnime(
+                            limit = 36,
+                            offset = offset
+                        )
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e(
+                        "ReAnime",
+                        "CATALOG_FAILED offset=" + offset,
+                        e
+                    )
+                    emptyList()
+                }
+
+                android.util.Log.d(
+                    "ReAnime",
+                    "CATALOG_RESULT offset=" + offset +
+                        " count=" + page.size
+                )
+
+                if (page.isEmpty()) {
+                    emptyPages++
+                } else {
+                    emptyPages = 0
+                    page.forEach { anime ->
+                        result[anime.id] = anime
+                    }
+                    emit(result.values.toList())
+
+                    if (page.size < 36) {
+                        break
+                    }
+                }
+
+                offset += 36
+                kotlinx.coroutines.delay(150L)
+            }
+
             return@flow
         }
 
@@ -111,7 +165,21 @@ class AnimeRepository {
         }
     }.flowOn(Dispatchers.IO)
 
+    suspend fun searchAnime(query: String, source: String = "linkkf"): List<Anime> {
+        if (source != "reanime") return emptyList()
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        return ReAnimeParser.parseAnimeApi(reAnimeClient.searchAnime(trimmed, 36, 0))
+    }
+
     suspend fun getAnimeDetail(anime: Anime, source: String = "linkkf"): Anime {
+        if (source == "reanime") {
+            android.util.Log.d("ReAnime", "DETAIL_REQUEST id=" + anime.id + " detailUrl=" + anime.detailUrl)
+            return ReAnimeParser.parseAnimeDetail(
+                reAnimeClient.getDocument(anime.detailUrl, REANIME_BASE_URL + "/"),
+                anime
+            ).copy(episodes = getEpisodes(anime, source))
+        }
         val document = if (source == "animenosub") animenosubClient.getDocument(anime.detailUrl, ANIMENOSUB_BASE_URL + "/") else linkkfClient.getDocument(anime.detailUrl, "https://linkkf.tv/")
         return if (source == "animenosub") {
             val parsed = AnimenosubParser.parseAnimeDetail(document, anime)
@@ -131,12 +199,38 @@ class AnimeRepository {
     }
 
     suspend fun getEpisodes(anime: Anime, source: String = "linkkf"): List<Episode> {
+        if (source == "reanime") {
+            // Re:ANIME's /anime/{slug} page contains the metadata, while the
+            // rendered episode list is available on /watch/{slug}?ep=1.
+            // Use the watch page as the episode index source.
+            val slug = anime.detailUrl
+                .substringAfter("/anime/", "")
+                .substringBefore("?")
+                .substringBefore("/")
+                .trim()
+
+            if (slug.isBlank()) return emptyList()
+
+            val episodeUrl = REANIME_BASE_URL + "/watch/" + slug + "?ep=1"
+            android.util.Log.d("ReAnime", "EPISODES_REQUEST url=" + episodeUrl)
+
+            val document = reAnimeClient.getDocument(episodeUrl, anime.detailUrl)
+            val episodes = ReAnimeParser.parseEpisodes(document, anime)
+
+            android.util.Log.d(
+                "ReAnime",
+                "EPISODES_RESULT slug=" + slug + " count=" + episodes.size
+            )
+
+            return episodes
+        }
         val document = if (source == "animenosub") animenosubClient.getDocument(anime.detailUrl, ANIMENOSUB_BASE_URL + "/") else linkkfClient.getDocument(anime.detailUrl, "https://linkkf.tv/")
         return if (source == "animenosub") AnimenosubParser.parseEpisodes(document, anime)
         else LinkkfParser.parseEpisodes(document, anime)
     }
 
     suspend fun getDubEpisodes(anime: Anime, source: String = "linkkf"): List<Episode> {
+        if (source == "reanime") return emptyList()
         val document = if (source == "animenosub") animenosubClient.getDocument(anime.detailUrl, ANIMENOSUB_BASE_URL + "/") else linkkfClient.getDocument(anime.detailUrl, "https://linkkf.tv/")
         return if (source == "animenosub") AnimenosubParser.parseDubEpisodes(document, anime)
         else LinkkfParser.parseDubEpisodes(document, anime)

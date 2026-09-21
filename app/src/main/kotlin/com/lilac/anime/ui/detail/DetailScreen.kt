@@ -1063,9 +1063,11 @@ fun DetailScreen(
                             }
                             currentExtractDeferred?.complete(Pair(enriched, extractedVtt))
                         },
-                        allowedHosts = if (vm.playerSettings.videoSourcePreference == "animenosub") {
-                            setOf("animenosub.to", "www.animenosub.to")
-                        } else emptySet()
+                        allowedHosts = when (vm.playerSettings.videoSourcePreference) {
+                            "animenosub" -> setOf("animenosub.to", "www.animenosub.to")
+                            "reanime" -> setOf("reanime.to", "www.reanime.to", "flixcloud.cc", "www.flixcloud.cc")
+                            else -> emptySet()
+                        }
                     )
                 }
             } else {
