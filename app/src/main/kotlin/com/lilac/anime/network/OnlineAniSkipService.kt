@@ -66,7 +66,8 @@ object OnlineAniSkipService {
     suspend fun getSkipSegments(
         title: String,
         episodeNumber: Int,
-        episodeLengthSeconds: Int = 0
+        episodeLengthSeconds: Int = 0,
+        anilistId: Int? = null
     ): List<ChapterSkipSegment> {
         Log.d(TAG, "GET_SKIP_START title=\"$title\" episode=$episodeNumber length=$episodeLengthSeconds")
         if (title.isBlank() || episodeNumber <= 0) {
@@ -74,9 +75,13 @@ object OnlineAniSkipService {
             return emptyList()
         }
 
-        val malId = resolveMalId(title)
+        val malId = if (anilistId != null && anilistId > 0) {
+            resolveMalIdFromAniListId(anilistId)
+        } else {
+            resolveMalId(title)
+        }
         if (malId == null) {
-            Log.w(TAG, "MAL_ID_NOT_FOUND title=\"$title\"")
+            Log.w(TAG, "MAL_ID_NOT_FOUND title=\"$title\" anilistId=$anilistId")
             return emptyList()
         }
         Log.d(TAG, "MAL_ID_RESOLVED title=\"$title\" malId=$malId")
@@ -174,6 +179,58 @@ object OnlineAniSkipService {
         }.getOrElse { emptyList<ChapterSkipSegment>() }
     }
 
+    private suspend fun resolveMalIdFromAniListId(anilistId: Int): Int? {
+        val cacheKey = "anilist:$anilistId"
+        malIdCache[cacheKey]?.let { cached ->
+            Log.d(TAG, "MAL_CACHE_HIT anilistId=$anilistId malId=$cached")
+            return cached
+        }
+
+        val query = """
+            query (${'$'}id: Int) {
+                Media(id: ${'$'}id, type: ANIME) {
+                    id
+                    idMal
+                    title { romaji english native }
+                }
+            }
+        """.trimIndent()
+
+        val body = JSONObject()
+            .put("query", query)
+            .put("variables", JSONObject().put("id", anilistId))
+            .toString()
+
+        return runCatching {
+            val request = Request.Builder()
+                .url(ANILIST_GRAPHQL_URL)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("User-Agent", "LilacAnime Android")
+                .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body))
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string().orEmpty()
+                Log.d(TAG, "ANILIST_ID_LOOKUP id=$anilistId code=${response.code} bodyLength=${responseBody.length}")
+                if (!response.isSuccessful || responseBody.isBlank()) return@use null
+
+                val root = JSONObject(responseBody)
+                val media = root.optJSONObject("data")?.optJSONObject("Media") ?: return@use null
+                val malId = media.optInt("idMal", 0).takeIf { it > 0 }
+                if (malId != null) {
+                    malIdCache[cacheKey] = malId
+                    Log.d(TAG, "ANILIST_ID_RESOLVED anilistId=$anilistId malId=$malId")
+                } else {
+                    Log.w(TAG, "ANILIST_ID_HAS_NO_MAL anilistId=$anilistId")
+                }
+                malId
+            }
+        }.onFailure {
+            Log.e(TAG, "ANILIST_ID_LOOKUP_ERROR anilistId=$anilistId ${it.javaClass.simpleName}: ${it.message}", it)
+        }.getOrNull()
+    }
+
     private suspend fun resolveMalId(title: String): Int? {
         // Only BD tags are removed. Season information (e.g. "2기") is kept
         // exactly as supplied and is included in the NamuWiki title search.
@@ -185,6 +242,54 @@ object OnlineAniSkipService {
             Log.d(TAG, "MAL_CACHE_HIT searchTitle=\"$searchTitle\" malId=$cachedId")
             return cachedId
         }
+
+        // Prefer a direct AniList title search first. AniList exposes idMal
+        // directly, so the offline download path no longer depends on NamuWiki
+        // being reachable or on extracting a Japanese title from its HTML.
+        // This is especially important for Linkkf titles, which are commonly
+        // Korean/English mixed titles rather than the exact NamuWiki page title.
+        val directQueries = listOf(
+            searchTitle,
+            separateKoreanTitle(searchTitle),
+            title
+        ).map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        val directCandidates = directQueries.flatMap { query ->
+            val body = searchAniListCandidates(query, 1)
+            parseAniListCandidates(
+                body = body,
+                query = query,
+                rankingTitles = directQueries
+            )
+        }
+            .filter { it.malId != null }
+            .associateBy { it.malId!! }
+            .values
+            .sortedByDescending { it.score }
+
+        val directBest = directCandidates.firstOrNull()
+        val directSecondScore = directCandidates.getOrNull(1)?.score ?: 0
+        val directMargin = (directBest?.score ?: 0) - directSecondScore
+
+        if (directBest?.malId != null && directBest.score >= 7000 &&
+            (directSecondScore == 0 || directMargin >= 300)
+        ) {
+            malIdCache[searchTitle] = directBest.malId
+            Log.d(
+                TAG,
+                "MAL_SEARCH_DONE title=\"$searchTitle\" malId=${directBest.malId} " +
+                    "source=anilist-direct score=${directBest.score} margin=$directMargin query=\"${directBest.query}\""
+            )
+            return directBest.malId
+        }
+
+        Log.w(
+            TAG,
+            "ANILIST_DIRECT_NO_STRONG_MATCH title=\"$searchTitle\" " +
+                "best=${directBest?.malId}:${directBest?.score} margin=$directMargin; falling back to NamuWiki"
+        )
 
         // Search NamuWiki twice: first with the original title (BD removed only),
         // then with the same title with trailing Romanized text removed.

@@ -801,6 +801,18 @@ object LinkkfChapterService {
             var duration = episodeDurationSeconds.toDouble()
             status("FINGERPRINT_ANALYSIS_START episode=${currentEpisode.number} duration=${duration}s")
 
+            // AniSkip timestamps persisted during offline download always win.
+            // This analyzer is only the fallback for episodes without them.
+            val savedAniSkip = OfflineStore.getChapterSkipSegments(
+                context,
+                animeId,
+                currentEpisode.id
+            )
+            if (savedAniSkip.isNotEmpty()) {
+                status("FINGERPRINT_ANALYSIS_SKIP_ANISKIP episode=${currentEpisode.number} segments=${savedAniSkip.size}")
+                return@runCatching savedAniSkip
+            }
+
             val savedResult = OfflineOpEdFingerprintStore.loadAnalysis(context, animeId, currentEpisode.id)
             if (savedResult != null) {
                 status("FINGERPRINT_ANALYSIS_CACHE_HIT episode=${currentEpisode.number} segments=${savedResult.size}")

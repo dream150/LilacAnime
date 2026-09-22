@@ -85,15 +85,33 @@ fun StreamUrlExtractor(
                 val inferredHosts = when {
                     targetHost == "animenosub.to" || targetHost == "www.animenosub.to" ->
                         setOf("animenosub.to", "www.animenosub.to")
-                    targetHost == "linkkf.tv" || targetHost == "www.linkkf.tv" || targetHost == "linkkf.tckopke.com" ->
-                        setOf("linkkf.tv", "www.linkkf.tv", "linkkf.tckopke.com", "tckopke.com", "www.tckopke.com")
+                    targetHost == "linkkf.tv" || targetHost == "www.linkkf.tv" ||
+                        targetHost == "linkkf.tckopke.com" || targetHost == "linkkf.app" ||
+                        targetHost == "www.linkkf.app" || targetHost == "kf.carsstore365.com" ->
+                        setOf(
+                            "linkkf.tv", "www.linkkf.tv",
+                            "linkkf.app", "www.linkkf.app",
+                            "kf.carsstore365.com",
+                            "linkkf.tckopke.com", "tckopke.com", "www.tckopke.com"
+                        )
                     targetHost == "reanime.to" || targetHost == "www.reanime.to" ->
                         setOf("reanime.to", "www.reanime.to", "flixcloud.cc", "www.flixcloud.cc")
                     else -> emptySet()
                 }
                 val safeHosts = (allowedHosts + inferredHosts + listOfNotNull(targetHost) +
-                    if (targetHost == "linkkf.tckopke.com" || targetHost == "linkkf.tv" || targetHost == "www.linkkf.tv")
-                        setOf("play.sub3.top", "playv2.sub3.top", "k1.sub1.top") else emptySet()
+                    if (
+                        targetHost == "linkkf.tckopke.com" ||
+                        targetHost == "linkkf.tv" || targetHost == "www.linkkf.tv" ||
+                        targetHost == "linkkf.app" || targetHost == "www.linkkf.app" ||
+                        targetHost == "kf.carsstore365.com"
+                    )
+                        setOf(
+                            "play.sub3.top",
+                            "playv2.sub3.top",
+                            "emdlinkkf.5imgdarr.top",
+                            "linkkf1.5imgdarr.top",
+                            "linkkfep1.5imgdarr.top"
+                        ) else emptySet()
                     ).map { it.lowercase() }.toSet()
                 var iframeHosts = emptySet<String>()
                 var playerPageNavigated = false
@@ -108,6 +126,7 @@ fun StreamUrlExtractor(
                 var reanimeMasterFallbackPosted = false
                 var flixCloudPk: String? = null
                 var flixPkPollStarted = false
+                var linkkfPlayerResolved = false
 
                 fun observePlayHd(url: String?) {
                     val value = url?.trim().orEmpty()
@@ -281,6 +300,78 @@ fun StreamUrlExtractor(
                 }
 
 
+                fun resolveLinkkfPlayer(view: WebView, pageUrl: String?) {
+                    if (linkkfPlayerResolved) return
+                    val host = runCatching { android.net.Uri.parse(pageUrl.orEmpty()).host?.lowercase() }.getOrNull()
+                    if (host != "linkkf.app" && host != "www.linkkf.app" && host != "kf.carsstore365.com") return
+
+                    val uri = runCatching { android.net.Uri.parse(pageUrl.orEmpty()) }.getOrNull() ?: return
+                    val path = uri.path.orEmpty()
+                    if (!path.contains("/up/") || !path.contains("/watch")) return
+
+                    val parts = path.trimEnd('/').split("/")
+                    val postId = parts.indexOfLast { it == "up" }.let { index ->
+                        if (index >= 0 && index + 1 < parts.size) parts[index + 1] else ""
+                    }.trim()
+                    val slugRaw = uri.getQueryParameter("slug").orEmpty().trim()
+                    if (postId.isBlank() || slugRaw.isBlank()) return
+
+                    val slug = slugRaw.toIntOrNull()?.toString() ?: slugRaw.lowercase()
+                    val token = "$postId" + "v" + slug
+
+                    linkkfPlayerResolved = true
+                    thread(name = "LinkkfPlayerResolve", isDaemon = true) {
+                        try {
+                            val apiUrl =
+                                "https://emdlinkkf.5imgdarr.top/apilink2.php?data=" +
+                                    java.net.URLEncoder.encode(token, "UTF-8")
+                            val request = Request.Builder()
+                                .url(apiUrl)
+                                .header("User-Agent", capturedWebViewUserAgent)
+                                .header("Accept", "application/json")
+                                .header("Referer", "https://kf.carsstore365.com/")
+                                .build()
+                            val resolverClient = OkHttpClient.Builder()
+                                .followRedirects(true)
+                                .followSslRedirects(true)
+                                .connectTimeout(10, TimeUnit.SECONDS)
+                                .readTimeout(15, TimeUnit.SECONDS)
+                                .build()
+
+                            resolverClient.newCall(request).execute().use { response ->
+                                val body = response.body?.string().orEmpty()
+                                if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+                                val root = JSONObject(body)
+                                val data = root.optJSONArray("data")
+                                    ?: throw IllegalStateException("Linkkf player data missing")
+
+                                var preferred: String? = null
+                                var fallback: String? = null
+                                for (i in 0 until data.length()) {
+                                    val item = data.optJSONObject(i) ?: continue
+                                    val server = item.optString("server").trim().uppercase()
+                                    val link = item.optString("link").trim()
+                                    if (link.isBlank()) continue
+                                    if (server == "NR-HD") preferred = link
+                                    if (fallback == null) fallback = link
+                                }
+                                val playerUrl = preferred ?: fallback
+                                    ?: throw IllegalStateException("Linkkf player link missing")
+
+                                Log.d("AnimenosubStream", "LINKKF_PLAYER_RESOLVED token=$token url=$playerUrl")
+                                mainHandler.post {
+                                    // Loading the player after the watch page has been opened
+                                    // preserves the browser's normal Referer chain.
+                                    view.loadUrl(playerUrl)
+                                }
+                            }
+                        } catch (t: Throwable) {
+                            Log.e("AnimenosubStream", "LINKKF_PLAYER_RESOLVE_FAILED token=$token", t)
+                            linkkfPlayerResolved = false
+                        }
+                    }
+                }
+
                 webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                         observePlayHd(url)
@@ -384,6 +475,9 @@ fun StreamUrlExtractor(
 
                     override fun onPageFinished(view: WebView?, url: String?) {
                         observePlayHd(url)
+                        if (view != null) {
+                            resolveLinkkfPlayer(view, url)
+                        }
                         val finishedHost = runCatching {
                             android.net.Uri.parse(url.orEmpty()).host?.lowercase()
                         }.getOrNull()

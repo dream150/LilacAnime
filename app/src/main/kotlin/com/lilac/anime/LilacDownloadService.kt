@@ -108,18 +108,36 @@ class LilacDownloadService : Service() {
     }
 
     private fun enqueue(intent: Intent, recovering: Boolean = false) {
+        scope.launch { enqueueInternal(intent, recovering) }
+    }
+
+    private suspend fun enqueueInternal(intent: Intent, recovering: Boolean = false) {
         val animeId = intent.getStringExtra(EXTRA_ANIME_ID) ?: return
         val episodeId = intent.getStringExtra(EXTRA_EPISODE_ID) ?: return
         val sourceUrl = intent.getStringExtra(EXTRA_URL)?.takeIf { it.isNotBlank() }
             ?: MpvOfflineStore.findStatus(applicationContext, "$animeId::$episodeId")?.sourceUrl
             ?: return
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
+        val animeTitle = intent.getStringExtra(EXTRA_ANIME_TITLE)
+            ?: OfflineStore.getAnime(applicationContext, animeId)?.title
+            ?: title.substringBefore(" - ").trim()
         val referer = intent.getStringExtra(EXTRA_REFERER)
         val requestedSubtitleUrl = intent.getStringExtra(EXTRA_SUBTITLE_URL)
         val requestedSubtitleReferer = intent.getStringExtra(EXTRA_SUBTITLE_REFERER)
         val episodeNumber = intent.getIntExtra(EXTRA_EPISODE_NUMBER, 0)
         val episodeKey = intent.getStringExtra(EXTRA_EPISODE_KEY) ?: episodeNumber.toString()
         val key = "$animeId::$episodeId"
+
+        // Resolve Linkkf's AniList ID before creating the download coroutine.
+        // enqueueInternal is already suspend, so this value is available to
+        // runDownload and cannot fall out of scope at the call site.
+        val resolvedAnilistId = OfflineStore.getAnime(applicationContext, animeId)?.anilistId
+            ?: try {
+                com.lilac.anime.data.LinkkfApiClient().getAnime(animeId)?.anilistId
+            } catch (t: Throwable) {
+                android.util.Log.w("AniSkip", "LINKKF_ANILIST_LOOKUP_FAILED anime=$animeId", t)
+                null
+            }
 
         synchronized(lock) {
             if (jobs[key]?.isActive == true) return
@@ -172,10 +190,12 @@ class LilacDownloadService : Service() {
                         animeId = animeId,
                         episodeId = episodeId,
                         title = title.ifBlank { old?.title.orEmpty() },
+                        animeTitle = animeTitle,
                         sourceUrl = sourceUrl,
                         referer = referer ?: old?.referer,
                         episodeNumber = episodeNumber,
                         episodeKey = episodeKey,
+                        anilistId = resolvedAnilistId,
                         subtitleUrl = requestedSubtitleUrl,
                         subtitleReferer = requestedSubtitleReferer
                     )
@@ -216,10 +236,12 @@ class LilacDownloadService : Service() {
         animeId: String,
         episodeId: String,
         title: String,
+        animeTitle: String,
         sourceUrl: String,
         referer: String?,
         episodeNumber: Int,
         episodeKey: String,
+        anilistId: Int?,
         subtitleUrl: String?,
         subtitleReferer: String?
     ) {
@@ -283,6 +305,43 @@ class LilacDownloadService : Service() {
                 animeId,
                 stored.copy(videoUrl = file.absolutePath, vttUrl = localSubtitle ?: stored.vttUrl)
             )
+        }
+
+        // Prefer AniSkip timestamps when they are available. A failed/empty
+        // lookup is deliberately not stored as a timestamp, so the offline
+        // fingerprint analyzer can fill that episode later.
+        if (episodeNumber > 0 && animeTitle.isNotBlank()) {
+            runCatching {
+                val aniSkipSegments = OnlineAniSkipService.getSkipSegments(
+                    title = animeTitle,
+                    episodeNumber = episodeNumber,
+                    episodeLengthSeconds = 0,
+                    anilistId = anilistId
+                )
+                if (aniSkipSegments.isNotEmpty()) {
+                    OfflineStore.saveChapterSkipSegments(
+                        applicationContext,
+                        animeId,
+                        episodeId,
+                        aniSkipSegments
+                    )
+                    android.util.Log.d(
+                        "AniSkip",
+                        "OFFLINE_TIMESTAMP_SAVED anime=$animeId episode=$episodeNumber segments=${aniSkipSegments.size}"
+                    )
+                } else {
+                    android.util.Log.d(
+                        "AniSkip",
+                        "OFFLINE_TIMESTAMP_NONE anime=$animeId episode=$episodeNumber; offline analysis remains eligible"
+                    )
+                }
+            }.onFailure {
+                android.util.Log.w(
+                    "AniSkip",
+                    "OFFLINE_TIMESTAMP_LOOKUP_FAILED anime=$animeId episode=$episodeNumber",
+                    it
+                )
+            }
         }
 
         updateState(
@@ -454,6 +513,7 @@ class LilacDownloadService : Service() {
         const val EXTRA_ANIME_ID = "animeId"
         const val EXTRA_EPISODE_ID = "episodeId"
         const val EXTRA_TITLE = "title"
+        const val EXTRA_ANIME_TITLE = "animeTitle"
         const val EXTRA_URL = "url"
         const val EXTRA_EPISODE_NUMBER = "episodeNumber"
         const val EXTRA_EPISODE_KEY = "episodeKey"

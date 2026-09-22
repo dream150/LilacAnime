@@ -18,6 +18,7 @@ import com.lilac.anime.ui.theme.*
 import com.lilac.anime.viewmodel.*
 
 import android.content.Context
+import java.io.File
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -119,6 +120,85 @@ object OfflineStore {
         )
     }
 
+
+    /**
+     * Persist AniSkip OP/ED timestamps with the actual offline episode.
+     *
+     * Primary storage is aniskip.json next to episode.mp4. The SharedPreferences
+     * copy is kept as a compatibility fallback for episodes saved by older builds.
+     */
+    suspend fun saveChapterSkipSegments(
+        context: Context,
+        animeId: String,
+        episodeId: String,
+        segments: List<com.lilac.anime.core.model.ChapterSkipSegment>
+    ) = withContext(Dispatchers.IO) {
+        val array = JSONArray()
+        segments.forEach { segment ->
+            array.put(JSONObject().apply {
+                put("type", segment.type)
+                put("startTime", segment.startTime)
+                put("endTime", segment.endTime)
+                put("episodeLength", segment.episodeLength)
+            })
+        }
+        val raw = array.toString()
+
+        val dir = MpvOfflineStore.episodeDir(context, animeId, episodeId)
+        dir.mkdirs()
+        val target = File(dir, "aniskip.json")
+        val temp = File(dir, "aniskip.json.part")
+        runCatching {
+            temp.writeText(raw, Charsets.UTF_8)
+            if (target.exists()) target.delete()
+            if (!temp.renameTo(target)) {
+                target.writeText(raw, Charsets.UTF_8)
+                temp.delete()
+            }
+        }.getOrThrow()
+
+        // Legacy/quick lookup copy. This also preserves compatibility with
+        // builds that already created chapter_skip_* entries.
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit().putString("chapter_skip_${animeId}_${episodeId}", raw).apply()
+    }
+
+    suspend fun getChapterSkipSegments(
+        context: Context,
+        animeId: String,
+        episodeId: String
+    ): List<com.lilac.anime.core.model.ChapterSkipSegment> = withContext(Dispatchers.IO) {
+        val file = File(MpvOfflineStore.episodeDir(context, animeId, episodeId), "aniskip.json")
+        val raw = if (file.isFile && file.length() > 0L) {
+            runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
+        } else {
+            context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                .getString("chapter_skip_${animeId}_${episodeId}", null)
+        } ?: return@withContext emptyList()
+
+        runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val json = array.optJSONObject(i) ?: continue
+                    val type = json.optString("type")
+                    val start = json.optDouble("startTime", Double.NaN)
+                    val end = json.optDouble("endTime", Double.NaN)
+                    val length = json.optDouble("episodeLength", 0.0)
+                    if (type.isNotBlank() && start.isFinite() && end.isFinite() && end > start) {
+                        add(com.lilac.anime.core.model.ChapterSkipSegment(type, start, end, length))
+                    }
+                }
+            }
+        }.getOrElse { emptyList() }
+    }
+
+    suspend fun removeChapterSkipSegments(context: Context, animeId: String, episodeId: String) = withContext(Dispatchers.IO) {
+        File(MpvOfflineStore.episodeDir(context, animeId, episodeId), "aniskip.json").delete()
+        File(MpvOfflineStore.episodeDir(context, animeId, episodeId), "aniskip.json.part").delete()
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit().remove("chapter_skip_${animeId}_${episodeId}").apply()
+    }
 
     suspend fun saveEpisodeSortOrder(context: Context, animeId: String, newestFirst: Boolean) = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -243,6 +323,7 @@ object OfflineStore {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val json = JSONObject().apply {
             put("id", anime.id)
+            anime.anilistId?.let { put("anilistId", it) }
             put("title", anime.title)
             put("poster", anime.poster)
             put("backdrop", anime.backdrop)
@@ -266,6 +347,7 @@ object OfflineStore {
             }
             Anime(
                 id = json.getString("id"),
+                anilistId = json.optInt("anilistId", 0).takeIf { it > 0 },
                 title = json.getString("title"),
                 poster = json.optString("poster", ""),
                 backdrop = json.optString("backdrop", ""),

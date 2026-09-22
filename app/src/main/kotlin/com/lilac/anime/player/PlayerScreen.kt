@@ -415,12 +415,10 @@ fun PlayerScreen(
     var showLockedButton by remember { mutableStateOf(false) }
     var lockedButtonRequest by remember { mutableIntStateOf(0) }
     var chapterSkipSegments by remember { mutableStateOf<List<ChapterSkipSegment>>(emptyList()) }
-    var activeChapterSkipSegment by remember { mutableStateOf<ChapterSkipSegment?>(null) }
     var chapterAnalysisStatus by remember { mutableStateOf<String?>(null) }
     var chapterAnalysisVisible by remember { mutableStateOf(false) }
-    var buttonChapterSkipSegment by remember { mutableStateOf<ChapterSkipSegment?>(null) }
     var chapterSkipEnteredAtMs by remember { mutableLongStateOf(-1L) }
-    var skippedChapterSkipKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var autoSkippedChapterKey by remember { mutableStateOf<String?>(null) }
     var skipEpisodeKey by remember { mutableStateOf<String?>(null) }
     var suppressProgressSaveForEpisode by remember { mutableStateOf<Int?>(null) }
 
@@ -775,12 +773,9 @@ fun PlayerScreen(
         selectedStreamingQuality = null
         pendingSeekPositionMs = -1L
         chapterSkipSegments = emptyList()
-        activeChapterSkipSegment = null
-        buttonChapterSkipSegment = null
         chapterAnalysisStatus = null
         chapterAnalysisVisible = false
         chapterSkipEnteredAtMs = -1L
-        skippedChapterSkipKeys = emptySet()
         skipEpisodeKey = null
         suppressProgressSaveForEpisode = null
         
@@ -1230,10 +1225,7 @@ fun PlayerScreen(
     // 갱신 타이밍이 어긋나도 OP/ED 구간에 들어오면 버튼이 즉시 나타난다.
     val visibleChapterSkipSegment = chapterSkipSegments.firstOrNull { segment ->
         val positionSeconds = uiPositionMs / 1000.0
-        val key = "${segment.type}:${segment.startTime}:${segment.endTime}"
-        positionSeconds >= segment.startTime &&
-            positionSeconds < segment.endTime &&
-            key !in skippedChapterSkipKeys
+        positionSeconds >= segment.startTime && positionSeconds < segment.endTime
     }
 
     fun switchEpisode(target: Episode) {
@@ -1686,14 +1678,35 @@ fun PlayerScreen(
     // trigger could prevent analysis from starting entirely.
     LaunchedEffect(currentEpisode.id, currentEpisode.number, isDownloaded, vm.playerSettings.offlineOpEdAnalysisEnabled) {
         chapterSkipSegments = emptyList()
-        activeChapterSkipSegment = null
-        buttonChapterSkipSegment = null
         chapterSkipEnteredAtMs = -1L
-        skippedChapterSkipKeys = emptySet()
         chapterAnalysisStatus = null
         chapterAnalysisVisible = false
 
-        if (!isDownloaded || !vm.playerSettings.offlineOpEdAnalysisEnabled) {
+        // AniSkip timestamps saved at download time are the primary offline source.
+        // Read them BEFORE relying on the ViewModel's download-state cache. This is
+        // important when entering an offline player directly: the video file can
+        // already exist while the ViewModel has not refreshed its in-memory state yet.
+        val savedAniSkipSegments = withContext(Dispatchers.IO) {
+            OfflineStore.getChapterSkipSegments(context, anime.id, currentEpisode.id)
+        }
+        if (savedAniSkipSegments.isNotEmpty()) {
+            chapterSkipSegments = savedAniSkipSegments
+            skipEpisodeKey = "${anime.id}_${currentEpisode.displayNumber}"
+            Log.d(
+                "AniChapters",
+                "OFFLINE_TIMESTAMP_LOADED episode=${currentEpisode.number} count=${savedAniSkipSegments.size}"
+            )
+            chapterAnalysisStatus = null
+            chapterAnalysisVisible = false
+            return@LaunchedEffect
+        }
+
+        if (!isDownloaded) {
+            skipEpisodeKey = null
+            return@LaunchedEffect
+        }
+
+        if (!vm.playerSettings.offlineOpEdAnalysisEnabled) {
             skipEpisodeKey = null
             return@LaunchedEffect
         }
@@ -1745,7 +1758,18 @@ fun PlayerScreen(
                 if (next != null && vm.playerSettings.offlineOpEdAnalysisEnabled &&
                     LinkkfChapterService.isOfflineEpisodeCompleted(context, anime.id, next)
                 ) {
-                    val nextResult = LinkkfChapterService.detectSkipSegmentsOffline(
+                    val nextSavedAniSkip = OfflineStore.getChapterSkipSegments(
+                        context,
+                        anime.id,
+                        next.id
+                    )
+                    if (nextSavedAniSkip.isNotEmpty()) {
+                        Log.d(
+                            "AniChapters",
+                            "NEXT_TIMESTAMP_ALREADY_SAVED episode=${next.number} count=${nextSavedAniSkip.size}"
+                        )
+                    } else {
+                        val nextResult = LinkkfChapterService.detectSkipSegmentsOffline(
                         context = context,
                         animeId = anime.id,
                         currentEpisode = next,
@@ -1754,6 +1778,7 @@ fun PlayerScreen(
                         onStatus = chapterStatus
                     )
                         Log.d("AniChapters", "NEXT_LOADED episode=${next.number} count=${nextResult.size}")
+                    }
                     }
                 } finally {
                     OpEdAnalysisForegroundService.stop(context)
@@ -1827,25 +1852,37 @@ fun PlayerScreen(
         )
     }
 
+    // AniSkip 스킵은 "현재 재생 위치"를 유일한 표시 기준으로 사용한다.
+    // 한 번 스킵했다는 이유로 timestamp 자체를 소모하지 않는다. 따라서 사용자가
+    // OP/ED로 다시 seek하면 버튼도 다시 나타난다.
     LaunchedEffect(mpvEngine, currentEpisode.number, chapterSkipSegments, isAutoSkipEnabled) {
         val segments = chapterSkipSegments
-        if (segments.isEmpty()) {
-            activeChapterSkipSegment = null
-            return@LaunchedEffect
-        }
+        chapterSkipEnteredAtMs = -1L
+        autoSkippedChapterKey = null
+
+        if (segments.isEmpty()) return@LaunchedEffect
+
+        var previousActiveKey: String? = null
 
         while (isActive) {
             val positionSeconds = mpvEngine.currentPosition / 1000.0
             val active = segments.firstOrNull {
                 positionSeconds >= it.startTime && positionSeconds < it.endTime
             }
+            val activeKey = active?.let {
+                "${it.type}:${it.startTime}:${it.endTime}"
+            }
 
-            if (active != activeChapterSkipSegment) {
-                activeChapterSkipSegment = active
-                buttonChapterSkipSegment = active
+            if (activeKey != previousActiveKey) {
+                previousActiveKey = activeKey
                 chapterSkipEnteredAtMs = if (active != null) System.currentTimeMillis() else -1L
 
-                if (active != null) {
+                if (active == null) {
+                    // 구간을 벗어나면 다음 재진입을 새로운 스킵 기회로 취급한다.
+                    autoSkippedChapterKey = null
+                } else {
+                    // 새로운 진입이므로 자동 스킵 타이머를 다시 시작한다.
+                    autoSkippedChapterKey = null
                     Log.d(
                         "AniChapters",
                         "ENTER type=${active.type} position=$positionSeconds range=${active.startTime}-${active.endTime}"
@@ -1853,22 +1890,16 @@ fun PlayerScreen(
                 }
             }
 
-            if (active == null) {
-                buttonChapterSkipSegment = null
-                chapterSkipEnteredAtMs = -1L
-            } else if (isAutoSkipEnabled) {
-                val key = "${active.type}:${active.startTime}:${active.endTime}"
+            if (active != null && isAutoSkipEnabled && autoSkippedChapterKey != activeKey) {
                 val elapsedMs = if (chapterSkipEnteredAtMs >= 0L) {
                     System.currentTimeMillis() - chapterSkipEnteredAtMs
                 } else {
                     0L
                 }
 
-                // 버튼이 잠깐 보인 뒤 자동 스킵되도록 한다. 자동 스킵을 끄면
-                // 구간 전체에서 버튼으로 직접 넘길 수 있다.
-                if (key !in skippedChapterSkipKeys && elapsedMs >= 2500L) {
+                if (elapsedMs >= 2500L) {
                     val duration = mpvEngine.duration
-                    val targetSeconds = if (duration > 0L && duration > 0L) {
+                    val targetSeconds = if (duration > 0L) {
                         minOf(active.endTime, duration / 1000.0 - 0.5)
                     } else {
                         active.endTime
@@ -1879,16 +1910,13 @@ fun PlayerScreen(
                             "AniChapters",
                             "AUTO_SKIP type=${active.type} position=$positionSeconds target=$targetSeconds elapsedMs=$elapsedMs"
                         )
-                        skippedChapterSkipKeys = skippedChapterSkipKeys + key
+                        autoSkippedChapterKey = activeKey
                         mpvEngine.seekTo((targetSeconds * 1000.0).toLong().coerceAtLeast(0L))
-                        activeChapterSkipSegment = null
-                        buttonChapterSkipSegment = null
-                        chapterSkipEnteredAtMs = -1L
                     }
                 }
             }
 
-            delay(200L)
+            delay(100L)
         }
     }
 
@@ -3176,7 +3204,7 @@ fun PlayerScreen(
         // mpv 컨트롤 위에 독립적으로 떠 있는 스킵 pill. 재생 컨트롤이 숨겨져도
         // OP/ED 구간에 들어오면 바로 표시한다.
         if (vm.playerSettings.showChapterSkipButton && !isPlayerLocked) {
-            (visibleChapterSkipSegment ?: buttonChapterSkipSegment)?.let { segment ->
+            visibleChapterSkipSegment?.let { segment ->
             val isOp = segment.type == "op" || segment.type == "mixed-op"
             val label = if (isOp) "OP 건너뛰기" else "ED 건너뛰기"
             val accent = Lilac
@@ -3205,11 +3233,9 @@ fun PlayerScreen(
                                 "BUTTON_SKIP type=${segment.type} position=$positionSeconds target=$targetSeconds"
                             )
 
-                            skippedChapterSkipKeys = skippedChapterSkipKeys +
-                                "${segment.type}:${segment.startTime}:${segment.endTime}"
-                            activeChapterSkipSegment = null
-                            buttonChapterSkipSegment = null
-                            chapterSkipEnteredAtMs = -1L
+                            // timestamp를 소모하지 않는다. 다시 해당 구간으로 seek하면
+                            // 같은 스킵 버튼이 다시 표시되어야 한다.
+                            autoSkippedChapterKey = "${segment.type}:${segment.startTime}:${segment.endTime}"
                             if (targetSeconds > positionSeconds) {
                                 mpvEngine.seekTo((targetSeconds * 1000.0).toLong().coerceAtLeast(0L))
                             }

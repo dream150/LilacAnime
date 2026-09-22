@@ -74,7 +74,126 @@ class AnimeViewModel : ViewModel() {
         private set
     var reAnimeSearchLoading by mutableStateOf(false)
         private set
+    var linkkfSchedule by mutableStateOf<Map<Int, List<Anime>>>(emptyMap())
+        private set
+    var linkkfScheduleLoading by mutableStateOf(false)
+        private set
+
+    var linkkfFormatTags by mutableStateOf<List<LinkkfApiClient.FilterTag>>(emptyList())
+        private set
+    var linkkfGenreTags by mutableStateOf<List<LinkkfApiClient.FilterTag>>(emptyList())
+        private set
+    var linkkfYearTags by mutableStateOf<List<LinkkfApiClient.FilterTag>>(emptyList())
+        private set
+    var linkkfFilterResults by mutableStateOf<List<Anime>>(emptyList())
+        private set
+    var linkkfFilterPage by mutableIntStateOf(1)
+        private set
+    var linkkfFilterTotalPages by mutableIntStateOf(1)
+        private set
+    var linkkfFilterTotalResults by mutableIntStateOf(0)
+        private set
+    var linkkfFilterLoading by mutableStateOf(false)
+        private set
+
+    var linkkfPvTrailers by mutableStateOf<List<Anime>>(emptyList())
+        private set
+    var linkkfMovies by mutableStateOf<List<Anime>>(emptyList())
+        private set
+    var linkkf16Plus by mutableStateOf<List<Anime>>(emptyList())
+        private set
+    var linkkfHomeSectionsLoading by mutableStateOf(false)
+        private set
+
     private var reAnimeSearchJob: Job? = null
+
+    fun loadLinkkfHomeSchedule(force: Boolean = false) {
+        if (linkkfScheduleLoading) return
+        if (!force && linkkfSchedule.isNotEmpty()) return
+        linkkfScheduleLoading = true
+        viewModelScope.launch {
+            val ids = listOf(21189, 21190, 21191, 21192, 21193, 21194, 21195)
+            try {
+                val loaded = withContext(Dispatchers.IO) {
+                    ids.map { id -> id to repository.getLinkkfSchedule(id, 50) }.toMap()
+                }
+                linkkfSchedule = loaded
+            } catch (e: Exception) {
+                Log.e("LinkkfAPI", "SCHEDULE_FAILED", e)
+            } finally {
+                linkkfScheduleLoading = false
+            }
+        }
+    }
+
+    fun loadLinkkfFilterTags() {
+        if (linkkfFormatTags.isNotEmpty() || linkkfGenreTags.isNotEmpty() || linkkfYearTags.isNotEmpty()) return
+        viewModelScope.launch {
+            try {
+                // Keep this sequential: it works with the lightweight coroutine
+                // environment used by CodeAssist and avoids an unnecessary
+                // dependency on coroutineScope/async here.
+                val format = withContext(Dispatchers.IO) {
+                    repository.getLinkkfFilterTags("anime-seasontype")
+                }
+                val genres = withContext(Dispatchers.IO) {
+                    repository.getLinkkfFilterTags("anigenres")
+                }
+                val years = withContext(Dispatchers.IO) {
+                    repository.getLinkkfFilterTags("anime-seasonys")
+                }
+                linkkfFormatTags = format
+                linkkfGenreTags = genres
+                linkkfYearTags = years.reversed()
+            } catch (e: Exception) {
+                Log.e("LinkkfAPI", "FILTER_TAGS_FAILED", e)
+            }
+        }
+    }
+
+    fun loadLinkkfHomeSections(force: Boolean = false) {
+        if (linkkfHomeSectionsLoading) return
+        if (!force && (linkkfPvTrailers.isNotEmpty() || linkkfMovies.isNotEmpty() || linkkf16Plus.isNotEmpty())) return
+        linkkfHomeSectionsLoading = true
+        viewModelScope.launch {
+            try {
+                val pv = withContext(Dispatchers.IO) { repository.getLinkkfSeasonType(5086, 4) }
+                val movies = withContext(Dispatchers.IO) { repository.getLinkkfSeasonType(5061, 4) }
+                val adult16 = withContext(Dispatchers.IO) { repository.getLinkkfSeasonType(5085, 4) }
+                linkkfPvTrailers = pv
+                linkkfMovies = movies
+                linkkf16Plus = adult16
+            } catch (e: Exception) {
+                Log.e("LinkkfAPI", "HOME_SECTIONS_FAILED", e)
+            } finally {
+                linkkfHomeSectionsLoading = false
+            }
+        }
+    }
+
+    fun loadLinkkfFilteredAnime(
+        page: Int = 1,
+        formatIds: List<Int> = emptyList(),
+        genreIds: List<Int> = emptyList(),
+        yearIds: List<Int> = emptyList()
+    ) {
+        if (linkkfFilterLoading) return
+        linkkfFilterLoading = true
+        viewModelScope.launch {
+            try {
+                val result = repository.getLinkkfFilteredAnime(page, 20, formatIds, genreIds, yearIds)
+                linkkfFilterResults = result.items
+                linkkfFilterPage = result.page
+                linkkfFilterTotalPages = result.totalPages
+                linkkfFilterTotalResults = result.totalResults
+            } catch (e: Exception) {
+                Log.e("LinkkfAPI", "FILTER_FAILED", e)
+                linkkfFilterResults = emptyList()
+            } finally {
+                linkkfFilterLoading = false
+            }
+        }
+    }
 
     var isAllAnimeLoading by mutableStateOf(false)
         private set

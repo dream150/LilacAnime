@@ -43,6 +43,7 @@ object OfflineDownloadManager {
             putExtra(LilacDownloadService.EXTRA_ANIME_ID, request.animeId)
             putExtra(LilacDownloadService.EXTRA_EPISODE_ID, request.episode.id)
             putExtra(LilacDownloadService.EXTRA_TITLE, "${request.animeTitle} - ${request.episode.displayNumber}화")
+            putExtra(LilacDownloadService.EXTRA_ANIME_TITLE, request.animeTitle)
             putExtra(LilacDownloadService.EXTRA_URL, request.streamUrl)
             putExtra(LilacDownloadService.EXTRA_EPISODE_NUMBER, request.episode.number)
             putExtra(LilacDownloadService.EXTRA_EPISODE_KEY, request.episode.displayNumber)

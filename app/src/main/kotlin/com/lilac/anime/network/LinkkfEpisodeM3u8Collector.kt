@@ -34,6 +34,10 @@ import com.lilac.anime.Episode
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 /**
  * Collects Linkkf's real stream URLs from episode watch pages.
@@ -244,6 +248,80 @@ object LinkkfEpisodeM3u8Collector {
                             observePlayerUrl(url)
                             Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_PAGE_FINISHED episode=${episode.number} url=$url")
                             onStatus("M3U8_WEBVIEW_${index + 1}_PAGE_FINISHED episode=${episode.number} url=$url")
+
+                            // linkkf.app's watch page does not embed the player URL in the
+                            // DOM. Resolve the episode token through apilink2.php, then load
+                            // the generated playhd3.php page. This mirrors the real browser
+                            // chain: linkkf.app -> kf.carsstore365.com -> playhd3.php -> m3u8.
+                            val finishedHost = runCatching {
+                                Uri.parse(url.orEmpty()).host?.lowercase()
+                            }.getOrNull()
+                            if (!playerPageNavigated &&
+                                (finishedHost == "linkkf.app" ||
+                                    finishedHost == "www.linkkf.app" ||
+                                    finishedHost == "kf.carsstore365.com")
+                            ) {
+                                val uri = runCatching { Uri.parse(url.orEmpty()) }.getOrNull()
+                                val path = uri?.path.orEmpty()
+                                val parts = path.trimEnd('/').split("/")
+                                val upIndex = parts.indexOfLast { it == "up" }
+                                val postId = if (upIndex >= 0 && upIndex + 1 < parts.size) parts[upIndex + 1] else ""
+                                val slugRaw = uri?.getQueryParameter("slug").orEmpty().trim()
+                                val slug = slugRaw.toIntOrNull()?.toString() ?: slugRaw.lowercase()
+
+                                if (postId.isNotBlank() && slug.isNotBlank()) {
+                                    playerPageNavigated = true
+                                    val token = "$postId" + "v" + slug
+                                    Thread {
+                                        try {
+                                            val resolver = OkHttpClient.Builder()
+                                                .followRedirects(true)
+                                                .followSslRedirects(true)
+                                                .connectTimeout(10, TimeUnit.SECONDS)
+                                                .readTimeout(15, TimeUnit.SECONDS)
+                                                .build()
+                                            val apiUrl =
+                                                "https://emdlinkkf.5imgdarr.top/apilink2.php?data=" +
+                                                    java.net.URLEncoder.encode(token, "UTF-8")
+                                            val request = Request.Builder()
+                                                .url(apiUrl)
+                                                .header("User-Agent", UA)
+                                                .header("Accept", "application/json")
+                                                .header("Referer", "https://kf.carsstore365.com/")
+                                                .build()
+                                            resolver.newCall(request).execute().use { response ->
+                                                val root = JSONObject(response.body?.string().orEmpty())
+                                                val data = root.optJSONArray("data")
+                                                var playerUrl: String? = null
+                                                var fallback: String? = null
+                                                if (data != null) {
+                                                    for (i in 0 until data.length()) {
+                                                        val item = data.optJSONObject(i) ?: continue
+                                                        val server = item.optString("server").trim().uppercase()
+                                                        val link = item.optString("link").trim()
+                                                        if (link.isBlank()) continue
+                                                        if (server == "NR-HD") playerUrl = link
+                                                        if (fallback == null) fallback = link
+                                                    }
+                                                }
+                                                val resolved = playerUrl ?: fallback
+                                                if (response.isSuccessful && !resolved.isNullOrBlank()) {
+                                                    lastPlayHdUrl = resolved
+                                                    Log.d(TAG, "M3U8_WEBVIEW_${index + 1}_PLAYHD_API episode=${episode.number} url=$resolved")
+                                                    onStatus("M3U8_WEBVIEW_${index + 1}_PLAYHD_API episode=${episode.number} url=$resolved")
+                                                    mainHandler.post { view?.loadUrl(resolved) }
+                                                } else {
+                                                    playerPageNavigated = false
+                                                }
+                                            }
+                                        } catch (t: Throwable) {
+                                            playerPageNavigated = false
+                                            Log.e(TAG, "M3U8_WEBVIEW_${index + 1}_PLAYER_RESOLVE_FAILED episode=${episode.number}", t)
+                                        }
+                                    }.start()
+                                }
+                            }
+
                             // Some Linkkf pages inject the player after onPageFinished.
                             // Poll the DOM, performance resource list, and HTML for a short
                             // period so we don't miss the generated playhd3.php URL.

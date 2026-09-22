@@ -531,7 +531,7 @@ fun DetailScreen(
                     ?: LinkkfRequestContextStore.get(context, currentAnime.id, ep.id)
                 // 서비스가 즉시 실행될 수 있으므로 회차 메타데이터를 먼저 기록한다.
                 withContext(Dispatchers.IO) {
-                    OfflineStore.saveAnime(context, anime)
+                    OfflineStore.saveAnime(context, currentAnime)
                     OfflineStore.saveEpisode(
                         context = context,
                         animeId = currentAnime.id,
@@ -555,7 +555,7 @@ fun DetailScreen(
                 withContext(Dispatchers.IO) {
                     // 영상 메타데이터는 다운로드 큐 등록 직후 저장한다. 자막 서버가 실패/지연되어도
                     // 영상 다운로드 자체와 오프라인 회차 상태가 영향을 받지 않게 한다.
-                    OfflineStore.saveAnime(context, anime)
+                    OfflineStore.saveAnime(context, currentAnime)
                     OfflineStore.saveEpisode(
                         context = context,
                         animeId = currentAnime.id,
