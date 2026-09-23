@@ -60,13 +60,12 @@ fun SearchScreen(
     }
 
     val keywordResults = remember(query, vm.allAnime, vm.homeAnime) {
-        if (query.isBlank()) emptyList()
-        else (vm.allAnime + vm.homeAnime)
-            .distinctBy { it.id }
-            .filter { anime ->
-                anime.title.contains(query.trim(), ignoreCase = true) ||
-                    anime.genres.any { it.contains(query.trim(), ignoreCase = true) }
-            }
+        val catalog = (vm.allAnime + vm.homeAnime).distinctBy { it.id }
+        if (query.isBlank()) catalog
+        else catalog.filter { anime ->
+            anime.title.contains(query.trim(), ignoreCase = true) ||
+                anime.genres.any { it.contains(query.trim(), ignoreCase = true) }
+        }
     }
 
     val results = when {

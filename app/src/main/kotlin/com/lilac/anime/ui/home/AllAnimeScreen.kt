@@ -20,6 +20,9 @@ import com.lilac.anime.viewmodel.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -46,6 +49,54 @@ fun AllAnimeScreen(
 ) {
     LaunchedEffect(Unit) {
         vm.loadAllAnime()
+    }
+
+    val gridState = rememberLazyGridState()
+    var pullDistance by remember { mutableFloatStateOf(0f) }
+    var refreshing by remember { mutableStateOf(false) }
+
+    LaunchedEffect(vm.isAllAnimeLoading) {
+        if (!vm.isAllAnimeLoading) refreshing = false
+    }
+
+    val pullModifier = Modifier.pointerInput(vm.isAllAnimeLoading, vm.playerSettings.videoSourcePreference) {
+        awaitPointerEventScope {
+            while (true) {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                pullDistance = 0f
+                var lastY = down.position.y
+                var triggered = false
+
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull() ?: break
+                    if (!change.pressed) {
+                        if (triggered && pullDistance > 120f &&
+                            gridState.firstVisibleItemIndex == 0 &&
+                            gridState.firstVisibleItemScrollOffset == 0 &&
+                            !vm.isAllAnimeLoading && !refreshing
+                        ) {
+                            refreshing = true
+                            vm.refreshAnime()
+                        }
+                        pullDistance = 0f
+                        break
+                    }
+
+                    val dy = change.position.y - lastY
+                    lastY = change.position.y
+                    if (dy > 0f &&
+                        gridState.firstVisibleItemIndex == 0 &&
+                        gridState.firstVisibleItemScrollOffset == 0
+                    ) {
+                        pullDistance += dy
+                        if (pullDistance > 120f) triggered = true
+                    } else if (dy < 0f) {
+                        pullDistance = 0f
+                    }
+                }
+            }
+        }
     }
 
     AppScaffold(selected = "all", onSelect = onNavigate) { padding ->
@@ -75,8 +126,9 @@ fun AllAnimeScreen(
             }
 
             LazyVerticalGrid(
+                state = gridState,
                 columns = GridCells.Adaptive(minSize = 200.dp),
-                modifier = Modifier.weight(1f),
+                modifier = pullModifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 contentPadding = PaddingValues(bottom = 20.dp)

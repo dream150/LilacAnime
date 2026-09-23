@@ -46,6 +46,7 @@ import kotlin.concurrent.thread
 @Composable
 fun StreamUrlExtractor(
     targetUrl: String,
+    modifier: Modifier = Modifier,
     onQualitiesFound: (List<StreamQuality>) -> Unit,
     onSubtitleFound: (String) -> Unit,
     onSubtitleRefererFound: (String, String) -> Unit = { _, _ -> },
@@ -63,6 +64,7 @@ fun StreamUrlExtractor(
 
     key(targetUrl, restartKey) {
         AndroidView(
+        modifier = modifier,
         factory = { ctx ->
             WebView(ctx).apply {
                 CookieManager.getInstance().setAcceptCookie(true)
@@ -623,8 +625,7 @@ fun StreamUrlExtractor(
                     loadUrl(targetUrl)
                 }
             }
-        },
-        modifier = Modifier.size(0.dp)
+        }
         )
     }
 }

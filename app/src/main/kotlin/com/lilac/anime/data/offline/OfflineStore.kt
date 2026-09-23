@@ -33,6 +33,9 @@ import org.json.JSONObject
 object OfflineStore {
     private const val PREF_NAME = "lilac_offline_store"
 
+    // Full catalog TTL: avoid requesting hundreds of catalog pages on every app launch.
+    const val ANIME_LIST_CACHE_TTL_MS = 12L * 60L * 60L * 1000L
+
     suspend fun savePlayerSettings(context: Context, settings: PlayerSettings) = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         prefs.edit().apply {
@@ -270,7 +273,12 @@ object OfflineStore {
         }
     }
 
-    suspend fun saveAnimeList(context: Context, list: List<Anime>, source: String = "linkkf") = withContext(Dispatchers.IO) {
+    suspend fun saveAnimeList(
+        context: Context,
+        list: List<Anime>,
+        source: String = "linkkf",
+        markFresh: Boolean = false
+    ) = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val array = JSONArray()
         list.forEach { anime ->
@@ -284,7 +292,11 @@ object OfflineStore {
             }
             array.put(json)
         }
-        prefs.edit().putString("cached_anime_list_$source", array.toString()).apply()
+        val editor = prefs.edit().putString("cached_anime_list_$source", array.toString())
+        if (markFresh) {
+            editor.putLong("cached_anime_list_time_$source", System.currentTimeMillis())
+        }
+        editor.apply()
     }
 
     suspend fun getSavedAnimeList(context: Context, source: String = "linkkf"): List<Anime> = withContext(Dispatchers.IO) {
@@ -331,6 +343,14 @@ object OfflineStore {
             put("genres", JSONArray(anime.genres))
         }
         prefs.edit().putString("anime_${anime.id}", json.toString()).apply()
+    }
+
+    suspend fun isAnimeListCacheFresh(context: Context, source: String = "linkkf"): Boolean = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val cachedAt = prefs.getLong("cached_anime_list_time_$source", 0L)
+        if (cachedAt <= 0L) return@withContext false
+        val age = System.currentTimeMillis() - cachedAt
+        age in 0..ANIME_LIST_CACHE_TTL_MS
     }
 
     suspend fun getAnime(context: Context, animeId: String): Anime? = withContext(Dispatchers.IO) {

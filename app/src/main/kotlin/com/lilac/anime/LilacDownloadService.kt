@@ -312,12 +312,24 @@ class LilacDownloadService : Service() {
         // fingerprint analyzer can fill that episode later.
         if (episodeNumber > 0 && animeTitle.isNotBlank()) {
             runCatching {
-                val aniSkipSegments = OnlineAniSkipService.getSkipSegments(
+                var aniSkipSegments = OnlineAniSkipService.getSkipSegments(
                     title = animeTitle,
                     episodeNumber = episodeNumber,
                     episodeLengthSeconds = 0,
                     anilistId = anilistId
                 )
+                // AniSkip can briefly return no result during API/network
+                // hiccups. A download should make a second attempt before we
+                // give up and leave the episode without its timestamp file.
+                if (aniSkipSegments.isEmpty()) {
+                    kotlinx.coroutines.delay(500L)
+                    aniSkipSegments = OnlineAniSkipService.getSkipSegments(
+                        title = animeTitle,
+                        episodeNumber = episodeNumber,
+                        episodeLengthSeconds = 0,
+                        anilistId = anilistId
+                    )
+                }
                 if (aniSkipSegments.isNotEmpty()) {
                     OfflineStore.saveChapterSkipSegments(
                         applicationContext,

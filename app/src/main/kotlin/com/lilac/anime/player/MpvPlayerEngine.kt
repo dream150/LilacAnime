@@ -188,12 +188,36 @@ class MpvPlayerEngine(private val context: Context) {
         mpv.setOptionString("msg-level", "all=info")
         mpv.setOptionString("vo", "gpu")
         mpv.setOptionString("hwdec", "mediacodec")
+
+        // Android TV performance profile. TV devices vary widely, but avoiding
+        // software-heavy video processing and keeping a small demuxer cache
+        // gives libmpv more predictable frame delivery on remote HLS playback.
+        val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+            android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+        if (isTv) {
+            mpv.setOptionString("video-sync", "audio")
+            mpv.setOptionString("interpolation", "no")
+            mpv.setOptionString("deband", "no")
+            mpv.setOptionString("sigmoid-upscaling", "no")
+            mpv.setOptionString("scale", "bilinear")
+            mpv.setOptionString("cscale", "bilinear")
+            mpv.setOptionString("dscale", "bilinear")
+            mpv.setOptionString("framedrop", "vo")
+            mpv.setOptionString("cache", "yes")
+            mpv.setOptionString("demuxer-max-bytes", "32MiB")
+            mpv.setOptionString("demuxer-max-back-bytes", "8MiB")
+            mpv.setOptionString("cache-secs", "20")
+        }
         mpv.setOptionString("force-window", "no")
         mpv.setOptionString("idle", "once")
         mpv.setOptionString("sub-auto", "no")
         mpv.setOptionString("sub-fonts-dir", fontsDir.absolutePath)
         mpv.setOptionString("sub-use-margins", "yes")
         mpv.setOptionString("sub-ass-override", "no")
+        // Must be set before mpv.init(): demuxer-lavf-o is consumed when
+        // libavformat opens an HLS demuxer. This also makes the fix apply to
+        // LinkKF HLS without changing Re:ANIME/other source URLs.
+        configureHlsSegmentCompatibility()
 
         mpv.init()
         mpv.addObserver(observer)
@@ -245,6 +269,40 @@ class MpvPlayerEngine(private val context: Context) {
         runCatching {
             mpv.setOptionString("force-window", "no")
             mpv.detachSurface()
+        }
+    }
+
+    /**
+     * LinkKF's current HLS manifest uses MPEG-TS segments whose URLs end in
+     * ".jpg". The bytes are actually MPEG-TS, but FFmpeg/libavformat's HLS
+     * demuxer rejects the segment before probing it unless that extension is
+     * allowed.
+     *
+     * FFmpeg versions bundled with libmpv differ: newer builds expose
+     * allowed_segment_extensions separately; older builds used
+     * allowed_extensions for the same HLS extension check.
+     */
+    private fun configureHlsSegmentCompatibility() {
+        val modern = mpv.setOptionString(
+            "demuxer-lavf-o",
+            "allowed_segment_extensions=ALL"
+        )
+        if (modern >= 0) {
+            Log.d(TAG, "HLS_SEGMENT_COMPAT enabled modern allowed_segment_extensions=ALL")
+            return
+        }
+
+        val legacy = mpv.setOptionString(
+            "demuxer-lavf-o",
+            "allowed_extensions=ALL"
+        )
+        if (legacy >= 0) {
+            Log.d(TAG, "HLS_SEGMENT_COMPAT enabled legacy allowed_extensions=ALL")
+        } else {
+            Log.e(
+                TAG,
+                "HLS_SEGMENT_COMPAT failed modernResult=$modern legacyResult=$legacy"
+            )
         }
     }
 
@@ -339,6 +397,10 @@ class MpvPlayerEngine(private val context: Context) {
 
     fun setSubtitleDelay(offsetMs: Long) {
         runCatching { mpv.setPropertyDouble("sub-delay", offsetMs / 1000.0) }
+    }
+
+    fun setSubtitleVisible(visible: Boolean) {
+        runCatching { mpv.setPropertyBoolean("sub-visibility", visible) }
     }
 
     fun setSpeed(speed: Float) {

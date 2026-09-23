@@ -30,7 +30,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 
 class AnimeRepository {
-    private val linkkfClient = LinkkfClient()
     private val linkkfApi = LinkkfApiClient()
     private val animenosubClient = AnimenosubHttpClient()
     private val reAnimeClient = ReAnimeClient()
@@ -82,9 +81,12 @@ class AnimeRepository {
         if (source == "reanime") {
             var offset = 0
             var emptyPages = 0
-            while (emptyPages < 2 && offset < 5000) {
+            while (emptyPages < 2) {
                 val page = try {
-                    ReAnimeParser.parseAnimeApi(reAnimeClient.catalogAnime(limit = 36, offset = offset))
+                    android.util.Log.d("ReAnime", "CATALOG_REQUEST offset=$offset limit=36")
+                    val parsed = ReAnimeParser.parseAnimeApi(reAnimeClient.catalogAnime(limit = 36, offset = offset))
+                    android.util.Log.d("ReAnime", "CATALOG_PAGE offset=$offset size=${parsed.size}")
+                    parsed
                 } catch (e: Exception) {
                     android.util.Log.e("ReAnime", "CATALOG_FAILED offset=$offset", e)
                     emptyList()
@@ -102,12 +104,15 @@ class AnimeRepository {
         }
 
         // linkkf.app exposes the full catalog through filter.php pagination.
-        // Do not scrape /list/ pages: the site no longer uses the old linkkf.tv
+        // Do not scrape /list/ pages: the site no longer uses the old the previous site markup
         // HTML card structure.
         var page = 1
         while (page <= 351) {
             val items = try {
-                linkkfApi.getHome(page = page, limit = 12)
+                android.util.Log.d("LinkkfAPI", "CATALOG_REQUEST page=$page limit=12")
+                val parsed = linkkfApi.getHome(page = page, limit = 12)
+                android.util.Log.d("LinkkfAPI", "CATALOG_PAGE page=$page size=${parsed.size}")
+                parsed
             } catch (e: Exception) {
                 android.util.Log.e("LinkkfAPI", "CATALOG_FAILED page=$page", e)
                 emptyList()
@@ -177,6 +182,20 @@ class AnimeRepository {
             dubEpisodes = emptyList()
         )
     }
+
+    suspend fun getLinkkfEpisodeServers(postId: String): List<LinkkfApiClient.EpisodeServer> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) { linkkfApi.getEpisodeServers(postId) }
+
+    suspend fun getLinkkfViewStats(postId: String): LinkkfApiClient.ViewStats? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) { linkkfApi.getViewStats(postId) }
+
+    suspend fun recordLinkkfView(postId: String): Boolean =
+        kotlinx.coroutines.withContext(Dispatchers.IO) { linkkfApi.recordView(postId) }
+
+    suspend fun getLinkkfRelatedSeries(anime: Anime): List<LinkkfApiClient.RelatedSeries> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            linkkfApi.getRelatedSeries(anime.seriesTagIds, anime.id)
+        }
 
     suspend fun getEpisodes(anime: Anime, source: String = "linkkf"): List<Episode> {
         if (source == "reanime") {

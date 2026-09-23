@@ -52,8 +52,12 @@ object OnlineAniSkipService {
         .callTimeout(25, TimeUnit.SECONDS)
         .build()
 
-    private val malIdCache = ConcurrentHashMap<String, Int>()
-    private val segmentCache = ConcurrentHashMap<String, List<ChapterSkipSegment>>()
+    private data class TimedInt(val value: Int, val savedAt: Long)
+    private data class TimedSegments(val value: List<ChapterSkipSegment>, val savedAt: Long)
+    private const val CACHE_TTL_MS = 24L * 60L * 60L * 1000L
+
+    private val malIdCache = ConcurrentHashMap<String, TimedInt>()
+    private val segmentCache = ConcurrentHashMap<String, TimedSegments>()
 
     /**
      * Returns emptyList() on any network/matching/API failure.
@@ -76,7 +80,10 @@ object OnlineAniSkipService {
         }
 
         val malId = if (anilistId != null && anilistId > 0) {
-            resolveMalIdFromAniListId(anilistId)
+            // AniList occasionally has no MAL mapping. Do not stop there;
+            // fall back to title matching so offline downloads and streaming
+            // can still obtain AniSkip timestamps.
+            resolveMalIdFromAniListId(anilistId) ?: resolveMalId(title)
         } else {
             resolveMalId(title)
         }
@@ -93,8 +100,12 @@ object OnlineAniSkipService {
         val cacheKey = "$malId:$episodeNumber:0"
 
         segmentCache[cacheKey]?.let { cached ->
-            Log.d(TAG, "CACHE_HIT key=$cacheKey segments=${cached.size}")
-            return cached
+            if (System.currentTimeMillis() - cached.savedAt <= CACHE_TTL_MS) {
+                Log.d(TAG, "CACHE_HIT key=$cacheKey segments=${cached.value.size}")
+                return cached.value
+            }
+            segmentCache.remove(cacheKey)
+            Log.d(TAG, "CACHE_EXPIRED key=$cacheKey")
         }
         Log.d(TAG, "CACHE_MISS key=$cacheKey")
 
@@ -134,7 +145,7 @@ object OnlineAniSkipService {
             .distinctBy { "${it.type}:${it.startTime}:${it.endTime}" }
             .sortedBy { it.startTime }
 
-        segmentCache[cacheKey] = cleaned
+        segmentCache[cacheKey] = TimedSegments(cleaned, System.currentTimeMillis())
         Log.d(TAG, "GET_SKIP_DONE malId=$malId episode=$episodeNumber segments=${cleaned.size} " +
             cleaned.joinToString(prefix = "[", postfix = "]") { "${it.type}:${it.startTime}-${it.endTime}" })
         return cleaned
@@ -182,8 +193,11 @@ object OnlineAniSkipService {
     private suspend fun resolveMalIdFromAniListId(anilistId: Int): Int? {
         val cacheKey = "anilist:$anilistId"
         malIdCache[cacheKey]?.let { cached ->
-            Log.d(TAG, "MAL_CACHE_HIT anilistId=$anilistId malId=$cached")
-            return cached
+            if (System.currentTimeMillis() - cached.savedAt <= CACHE_TTL_MS) {
+                Log.d(TAG, "MAL_CACHE_HIT anilistId=$anilistId malId=${cached.value}")
+                return cached.value
+            }
+            malIdCache.remove(cacheKey)
         }
 
         val query = """
@@ -219,7 +233,7 @@ object OnlineAniSkipService {
                 val media = root.optJSONObject("data")?.optJSONObject("Media") ?: return@use null
                 val malId = media.optInt("idMal", 0).takeIf { it > 0 }
                 if (malId != null) {
-                    malIdCache[cacheKey] = malId
+                    malIdCache[cacheKey] = TimedInt(malId, System.currentTimeMillis())
                     Log.d(TAG, "ANILIST_ID_RESOLVED anilistId=$anilistId malId=$malId")
                 } else {
                     Log.w(TAG, "ANILIST_ID_HAS_NO_MAL anilistId=$anilistId")
@@ -239,8 +253,11 @@ object OnlineAniSkipService {
         if (searchTitle.isBlank()) return null
 
         malIdCache[searchTitle]?.let { cachedId ->
-            Log.d(TAG, "MAL_CACHE_HIT searchTitle=\"$searchTitle\" malId=$cachedId")
-            return cachedId
+            if (System.currentTimeMillis() - cachedId.savedAt <= CACHE_TTL_MS) {
+                Log.d(TAG, "MAL_CACHE_HIT searchTitle=\"$searchTitle\" malId=${cachedId.value}")
+                return cachedId.value
+            }
+            malIdCache.remove(searchTitle)
         }
 
         // Prefer a direct AniList title search first. AniList exposes idMal
@@ -276,7 +293,7 @@ object OnlineAniSkipService {
         if (directBest?.malId != null && directBest.score >= 7000 &&
             (directSecondScore == 0 || directMargin >= 300)
         ) {
-            malIdCache[searchTitle] = directBest.malId
+            malIdCache[searchTitle] = TimedInt(directBest.malId, System.currentTimeMillis())
             Log.d(
                 TAG,
                 "MAL_SEARCH_DONE title=\"$searchTitle\" malId=${directBest.malId} " +
@@ -351,7 +368,7 @@ object OnlineAniSkipService {
         if (best.malId != null && best.score >= 7000 &&
             (secondScore == 0 || margin >= 300)
         ) {
-            malIdCache[searchTitle] = best.malId
+            malIdCache[searchTitle] = TimedInt(best.malId, System.currentTimeMillis())
             Log.d(TAG, "MAL_SEARCH_DONE title=\"$searchTitle\" malId=${best.malId} source=namu")
             return best.malId
         }

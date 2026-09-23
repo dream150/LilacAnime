@@ -105,7 +105,21 @@ class AnimeViewModel : ViewModel() {
     var linkkfHomeSectionsLoading by mutableStateOf(false)
         private set
 
+    var linkkfDetailAnimeId by mutableStateOf<String?>(null)
+        private set
+    var linkkfEpisodeServers by mutableStateOf<List<LinkkfApiClient.EpisodeServer>>(emptyList())
+        private set
+    var linkkfSelectedServerId by mutableIntStateOf(-1)
+        private set
+    var linkkfViewStats by mutableStateOf<LinkkfApiClient.ViewStats?>(null)
+        private set
+    var linkkfRelatedSeries by mutableStateOf<List<LinkkfApiClient.RelatedSeries>>(emptyList())
+        private set
+    var linkkfDetailExtrasLoading by mutableStateOf(false)
+        private set
+
     private var reAnimeSearchJob: Job? = null
+    private var linkkfDetailExtrasJob: Job? = null
 
     fun loadLinkkfHomeSchedule(force: Boolean = false) {
         if (linkkfScheduleLoading) return
@@ -200,6 +214,7 @@ class AnimeViewModel : ViewModel() {
 
     private var isAllAnimeFullyLoaded = false
     private var allAnimeLoadJob: Job? = null
+    private var catalogLoadGeneration: Long = 0L
     var sourceRevision by mutableIntStateOf(0)
         private set
 
@@ -371,7 +386,9 @@ class AnimeViewModel : ViewModel() {
             val lib = OfflineStore.getLibrary(context)
             val history = OfflineStore.getWatchHistory(context)
             val settings = OfflineStore.getPlayerSettings(context)
-            val cachedList = OfflineStore.getSavedAnimeList(context, settings.videoSourcePreference)
+            val source = settings.videoSourcePreference
+            val cachedList = OfflineStore.getSavedAnimeList(context, source)
+            val cacheFresh = cachedList.isNotEmpty() && OfflineStore.isAnimeListCacheFresh(context, source)
 
             withContext(Dispatchers.Main) {
                 library = lib
@@ -379,6 +396,7 @@ class AnimeViewModel : ViewModel() {
                 watchHistoryLoaded = true
                 playerSettings = settings
                 if (cachedList.isNotEmpty() && homeAnime.isEmpty()) {
+                    // Show local data immediately. Even a stale cache is useful while refreshing.
                     homeAnime = cachedList.take(10)
                     allAnime = cachedList
                     cachedList.forEach { animeCache[it.id] = it }
@@ -389,39 +407,35 @@ class AnimeViewModel : ViewModel() {
                 error = null
             }
 
-            if (!_isOffline.value) {
-                try {
-                    val firstPageList = repository.getHomeAnimeList(playerSettings.videoSourcePreference)
-                    if (firstPageList.isNotEmpty()) {
-                        withContext(Dispatchers.Main) {
-                            homeAnime = firstPageList.take(10)
-                            if (allAnime.isEmpty()) allAnime = firstPageList
-                            firstPageList.forEach { animeCache[it.id] = it }
-                        }
-                        OfflineStore.saveAnimeList(context, firstPageList, playerSettings.videoSourcePreference)
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        if (homeAnime.isEmpty()) {
-                            error = e.message ?: "목록을 불러오지 못했습니다."
-                        }
-                    }
-                } finally {
-                    withContext(Dispatchers.Main) {
-                        loading = false
-                    }
-                }
-            } else {
-                withContext(Dispatchers.Main) {
-                    loading = false
-                }
+            // A fresh cache is enough only when it actually contains the full catalog.
+            // Older builds could have stored the home preview (12/36 items) with a fresh timestamp.
+            val minimumFullCatalogSize = if (source == "reanime") 37 else 13
+            val cacheLooksComplete = cachedList.size >= minimumFullCatalogSize
+            if ((cacheFresh && cacheLooksComplete) || _isOffline.value) {
+                withContext(Dispatchers.Main) { loading = false }
+                return@launch
             }
 
-            // Load the complete catalog in the background so SearchScreen does
-            // not depend on the user visiting the All Anime tab first.
-            if (!_isOffline.value) {
-                loadAllAnime()
+            try {
+                val firstPageList = repository.getHomeAnimeList(source)
+                if (firstPageList.isNotEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        homeAnime = firstPageList.take(10)
+                        // The home page is only a preview. Never put it into allAnime here.
+                        firstPageList.forEach { animeCache[it.id] = it }
+                    }
+                    // Preview cache only; the TTL is advanced after the full catalog succeeds.
+                    OfflineStore.saveAnimeList(context, firstPageList, source, markFresh = false)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    if (homeAnime.isEmpty()) error = e.message ?: "목록을 불러오지 못했습니다."
+                }
+            } finally {
+                withContext(Dispatchers.Main) { loading = false }
             }
+
+            if (!_isOffline.value) loadAllAnime(source)
         }
     }
 
@@ -452,7 +466,7 @@ class AnimeViewModel : ViewModel() {
                     val first = repository.getHomeAnimeList(newSettings.videoSourcePreference)
                     withContext(Dispatchers.Main) {
                         homeAnime = first.take(10)
-                        allAnime = first
+                        // Keep the full-catalog state separate from the home preview.
                         first.forEach { animeCache[it.id] = it }
                         loading = false
                     }
@@ -468,23 +482,200 @@ class AnimeViewModel : ViewModel() {
         }
     }
 
-    fun loadAllAnime(source: String = playerSettings.videoSourcePreference) {
-        if (isAllAnimeLoading || isAllAnimeFullyLoaded) return
+    /**
+     * Loads the catalog using the existing Linkkf/Re:Anime repository path.
+     * Normal entry uses the persisted catalog while its 12-hour TTL is valid.
+     * A forced refresh deliberately bypasses that TTL and goes back to the source.
+     */
+    /**
+     * Loads the full catalog using the existing repository implementation.
+     * A normal load respects the 12-hour cache. A forced load always goes to
+     * the source, which is used by pull-to-refresh.
+     */
+    fun loadAllAnime(
+        source: String = playerSettings.videoSourcePreference,
+        forceRefresh: Boolean = false
+    ) {
+        if (!forceRefresh && (isAllAnimeLoading || isAllAnimeFullyLoaded)) return
+
+        if (forceRefresh) {
+            catalogLoadGeneration++
+            allAnimeLoadJob?.cancel()
+            allAnimeLoadJob = null
+            isAllAnimeLoading = false
+            isAllAnimeFullyLoaded = false
+        }
+
+        val generation = catalogLoadGeneration
         isAllAnimeLoading = true
-        allAnimeLoadJob?.cancel()
-        allAnimeLoadJob = viewModelScope.launch {
+
+        val job = viewModelScope.launch {
             try {
-                repository.getAllAnimeListFlow(source).collect { list ->
-                    allAnime = list
-                    list.forEach { animeCache[it.id] = it }
+                val cached = withContext(Dispatchers.IO) {
+                    OfflineStore.getSavedAnimeList(appContext, source)
                 }
-                isAllAnimeFullyLoaded = true
-            } catch (_: Exception) {
+                val fresh = cached.isNotEmpty() && withContext(Dispatchers.IO) {
+                    OfflineStore.isAnimeListCacheFresh(appContext, source)
+                }
+
+                // A previous build could have marked the home preview as fresh.
+                // Treat a 12/36-item cache as preview data, not as a full catalog.
+                val minimumFullCatalogSize = if (source == "reanime") 37 else 13
+                val cacheLooksComplete = cached.size >= minimumFullCatalogSize
+
+                if (cached.isNotEmpty() && (allAnime.isEmpty() || forceRefresh)) {
+                    withContext(Dispatchers.Main) {
+                        if (generation == catalogLoadGeneration) {
+                            allAnime = cached
+                            cached.forEach { animeCache[it.id] = it }
+                        }
+                    }
+                }
+
+                if (!forceRefresh && fresh && cacheLooksComplete) {
+                    Log.d(
+                        "AnimeCatalog",
+                        "CACHE_HIT source=$source size=${cached.size}"
+                    )
+                    if (generation == catalogLoadGeneration) {
+                        isAllAnimeFullyLoaded = true
+                    }
+                    return@launch
+                }
+
+                Log.d(
+                    "AnimeCatalog",
+                    "NETWORK_REQUEST source=$source force=$forceRefresh cached=${cached.size} fresh=$fresh complete=$cacheLooksComplete"
+                )
+
+                var latestList: List<Anime> = emptyList()
+                repository.getAllAnimeListFlow(source).collect { list ->
+                    latestList = list
+                    if (generation == catalogLoadGeneration) {
+                        withContext(Dispatchers.Main) {
+                            if (generation == catalogLoadGeneration) {
+                                allAnime = list
+                                list.forEach { animeCache[it.id] = it }
+                            }
+                        }
+                    }
+                }
+
+                if (generation != catalogLoadGeneration) return@launch
+
+                if (latestList.size >= minimumFullCatalogSize) {
+                    OfflineStore.saveAnimeList(
+                        appContext,
+                        latestList,
+                        source,
+                        markFresh = true
+                    )
+                    Log.d(
+                        "AnimeCatalog",
+                        "NETWORK_SUCCESS source=$source size=${latestList.size}"
+                    )
+                    isAllAnimeFullyLoaded = true
+                } else {
+                    Log.w(
+                        "AnimeCatalog",
+                        "NETWORK_INCOMPLETE source=$source size=${latestList.size}; keeping cache if available"
+                    )
+                    // Do not mark an incomplete preview as a fresh full catalog.
+                    if (cached.isNotEmpty() && cached.size > latestList.size) {
+                        withContext(Dispatchers.Main) {
+                            if (generation == catalogLoadGeneration) allAnime = cached
+                        }
+                    }
+                    isAllAnimeFullyLoaded = false
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (generation == catalogLoadGeneration) {
+                    Log.e("AnimeCatalog", "NETWORK_FAILED source=$source", e)
+                    isAllAnimeFullyLoaded = allAnime.isNotEmpty()
+                }
             } finally {
-                isAllAnimeLoading = false
-                allAnimeLoadJob = null
+                if (generation == catalogLoadGeneration) {
+                    isAllAnimeLoading = false
+                    allAnimeLoadJob = null
+                }
             }
         }
+        allAnimeLoadJob = job
+    }
+
+    /** Pull-to-refresh. It bypasses the cache TTL but keeps the old list visible. */
+    fun refreshAnime(@Suppress("UNUSED_PARAMETER") context: Context? = null) {
+        if (_isOffline.value) return
+        val source = playerSettings.videoSourcePreference
+        Log.d("AnimeCatalog", "MANUAL_REFRESH source=$source")
+        loadAllAnime(source = source, forceRefresh = true)
+    }
+
+    fun loadLinkkfEpisodeServers(anime: Anime, force: Boolean = false) {
+        if (playerSettings.videoSourcePreference != "linkkf") return
+        if (!force && linkkfDetailAnimeId == anime.id && linkkfEpisodeServers.isNotEmpty()) return
+        viewModelScope.launch {
+            try {
+                val servers = withContext(Dispatchers.IO) { repository.getLinkkfEpisodeServers(anime.id) }
+                if (servers.isNotEmpty()) {
+                    linkkfEpisodeServers = servers
+                    if (linkkfSelectedServerId <= 0 || servers.none { it.id == linkkfSelectedServerId }) {
+                        linkkfSelectedServerId = servers.first().id
+                    }
+                    episodeCache[anime.id] = servers.firstOrNull { it.id == linkkfSelectedServerId }?.episodes
+                        ?: servers.first().episodes
+                    isOfflineOnlyCache[anime.id] = false
+                }
+            } catch (e: Exception) {
+                Log.w("LinkkfDetail", "EPISODE_SERVERS_FAILED id=${anime.id}", e)
+            }
+        }
+    }
+
+    fun selectLinkkfEpisodeServer(anime: Anime, serverId: Int) {
+        val server = linkkfEpisodeServers.firstOrNull { it.id == serverId } ?: return
+        linkkfSelectedServerId = serverId
+        episodeCache[anime.id] = server.episodes
+        isOfflineOnlyCache[anime.id] = false
+    }
+
+    fun getLinkkfEpisodeServers(animeId: String): List<LinkkfApiClient.EpisodeServer> =
+        if (linkkfDetailAnimeId == animeId) linkkfEpisodeServers else emptyList()
+
+    fun loadLinkkfDetailExtras(anime: Anime, force: Boolean = false) {
+        if (playerSettings.videoSourcePreference != "linkkf") return
+        if (!force && linkkfDetailAnimeId == anime.id) return
+        linkkfDetailExtrasJob?.cancel()
+        linkkfDetailExtrasLoading = true
+        linkkfDetailAnimeId = anime.id
+        linkkfViewStats = null
+        linkkfRelatedSeries = emptyList()
+        linkkfDetailExtrasJob = viewModelScope.launch {
+            try {
+                val stats = withContext(Dispatchers.IO) { repository.getLinkkfViewStats(anime.id) }
+                val related = withContext(Dispatchers.IO) { repository.getLinkkfRelatedSeries(anime) }
+                linkkfViewStats = stats
+                linkkfRelatedSeries = related
+                // Match the web page: record the view after the page has been visible
+                // for a short period, then refresh the counters.
+                delay(9000L)
+                if (isActive) {
+                    withContext(Dispatchers.IO) { repository.recordLinkkfView(anime.id) }
+                    linkkfViewStats = withContext(Dispatchers.IO) { repository.getLinkkfViewStats(anime.id) }
+                }
+            } catch (e: Exception) {
+                Log.w("LinkkfDetail", "DETAIL_EXTRAS_FAILED id=${anime.id}", e)
+            } finally {
+                linkkfDetailExtrasLoading = false
+            }
+        }
+    }
+
+    fun cacheAnime(anime: Anime) {
+        animeCache[anime.id] = anime
+        detailCache[anime.id] = anime
     }
 
     fun loadAnimeDetail(
@@ -592,7 +783,12 @@ class AnimeViewModel : ViewModel() {
                     }
                 }
 
-                val result = repository.getEpisodes(targetAnime, playerSettings.videoSourcePreference)
+                val result = if (playerSettings.videoSourcePreference == "linkkf" && linkkfEpisodeServers.isNotEmpty()) {
+                    linkkfEpisodeServers.firstOrNull { it.id == linkkfSelectedServerId }?.episodes
+                        ?: linkkfEpisodeServers.first().episodes
+                } else {
+                    repository.getEpisodes(targetAnime, playerSettings.videoSourcePreference)
+                }
                 
                 withContext(Dispatchers.Main) {
                     if (result.isNotEmpty()) {

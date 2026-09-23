@@ -24,6 +24,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,6 +57,45 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.net.URL
 import kotlinx.coroutines.CompletableDeferred
+/**
+ * Finds an already-downloaded Kairan ASS/SSA subtitle for the requested episode.
+ * Supports both the current SubtitleStore registration and the older title-based
+ * Kairan cache so existing downloads survive the player/detail refactor.
+ */
+private suspend fun findLocalKairanAssSubtitle(
+    context: Context,
+    title: String,
+    episodeNumber: Int,
+    storedPath: String?
+): String? = withContext(Dispatchers.IO) {
+    fun isAss(path: String?): Boolean {
+        if (path.isNullOrBlank()) return false
+        val file = File(path)
+        return file.isFile && file.extension.lowercase(java.util.Locale.ROOT) in setOf("ass", "ssa")
+    }
+
+    if (isAss(storedPath)) return@withContext storedPath
+
+    val titleKey = KairanSubtitleService.normalizeTitleForFile(title)
+
+    SubtitleStore.get(
+        context = context,
+        animeId = titleKey,
+        episodeKey = episodeNumber.toString(),
+        episodeNumber = episodeNumber,
+        source = "kairan"
+    )?.takeIf(::isAss)?.let { return@withContext it }
+
+    val titleRoot = context.filesDir.resolve("kairan_subtitles").resolve(titleKey)
+    if (!titleRoot.isDirectory) return@withContext null
+
+    titleRoot.walkTopDown()
+        .filter { it.isFile && it.extension.lowercase(java.util.Locale.ROOT) in setOf("ass", "ssa") }
+        .filter { SubtitleStore.subtitleMatchesEpisode(it.absolutePath, episodeNumber) }
+        .maxByOrNull { it.lastModified() }
+        ?.absolutePath
+}
+
 /**
  * Copies every subtitle asset already discovered by each provider into the
  * anime-id keyed offline store used by the player. Provider stores use their
@@ -170,11 +210,48 @@ private suspend fun persistOfflineSubtitleAssets(
 }
 
 @Composable
+private fun DetailStat(label: String, value: Int) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(java.text.NumberFormat.getIntegerInstance().format(value), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f))
+    }
+}
+
+@Composable
+private fun DetailInfoContent(anime: Anime) {
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        val rows = listOf(
+            "방영" to anime.airedDate,
+            "형식" to anime.format,
+            "연도" to anime.year,
+            "제작" to anime.studios.joinToString(", "),
+            "원어" to anime.native,
+            "영어" to anime.english,
+            "로마자" to anime.romaji,
+            "동의어" to anime.synonyms,
+            "출처" to anime.source,
+            "진행" to anime.note
+        )
+        rows.filter { it.second.isNotBlank() }.forEach { (label, value) ->
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text(label, modifier = Modifier.width(58.dp), fontSize = 12.sp, color = Lilac, fontWeight = FontWeight.Bold)
+                Text(value, modifier = Modifier.weight(1f), fontSize = 13.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f))
+            }
+        }
+        if (anime.genres.isNotEmpty()) {
+            Text("장르", fontSize = 12.sp, color = Lilac, fontWeight = FontWeight.Bold)
+            Text(anime.genres.joinToString(" · "), fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
 fun DetailScreen(
     vm: AnimeViewModel,
     anime: Anime,
     back: () -> Unit,
-    playEpisode: (Episode) -> Unit
+    playEpisode: (Episode) -> Unit,
+    openRelated: (Anime) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -192,6 +269,12 @@ fun DetailScreen(
 
     val currentAnime = detailAnime
     val saved = vm.isInLibrary(currentAnime.id)
+    val isLinkkf = vm.playerSettings.videoSourcePreference == "linkkf"
+    val viewStats = vm.linkkfViewStats
+    val relatedSeries = vm.linkkfRelatedSeries
+    var detailTab by remember(currentAnime.id) { mutableIntStateOf(0) }
+    var episodeQuery by remember(currentAnime.id) { mutableStateOf("") }
+    var showCover by remember(currentAnime.id) { mutableStateOf(false) }
     val episodes = vm.episodes(currentAnime)
     val episodesLoading = vm.isEpisodesLoading(currentAnime)
 
@@ -203,6 +286,14 @@ fun DetailScreen(
     LaunchedEffect(currentAnime.id) {
         newestFirst = OfflineStore.getEpisodeSortOrder(context, currentAnime.id)
         episodePage = 0
+        episodeQuery = ""
+    }
+
+    LaunchedEffect(currentAnime.id, vm.sourceRevision) {
+        if (isLinkkf && !isOffline) {
+            vm.loadLinkkfEpisodeServers(currentAnime, force = true)
+            vm.loadLinkkfDetailExtras(currentAnime, force = true)
+        }
     }
 
     val sortedEpisodes = remember(episodes, newestFirst) {
@@ -235,10 +326,12 @@ fun DetailScreen(
     LaunchedEffect(sortedEpisodes.size, newestFirst) {
         episodePage = episodePage.coerceIn(0, (episodePageCount - 1).coerceAtLeast(0))
     }
-    val visibleEpisodes = remember(sortedEpisodes, episodePage) {
+    val visibleEpisodes = remember(sortedEpisodes, episodePage, episodeQuery) {
         val from = (episodePage * episodePageSize).coerceAtMost(sortedEpisodes.size)
         val to = (from + episodePageSize).coerceAtMost(sortedEpisodes.size)
-        sortedEpisodes.subList(from, to)
+        sortedEpisodes.subList(from, to).filter { ep ->
+            episodeQuery.isBlank() || ep.displayNumber.contains(episodeQuery.trim(), ignoreCase = true) || ep.title.contains(episodeQuery.trim(), ignoreCase = true)
+        }
     }
 
     val downloadProgressMap by vm.downloadProgressMap.collectAsState()
@@ -366,6 +459,7 @@ fun DetailScreen(
         }
 
         val videoReferer = result.referers[ep.id]
+        val videoHeaders = result.headers[ep.id]
         val subtitleUrl = result.subtitleUrls[ep.id]
             ?: LinkkfRequestContextStore.getSubtitleUrl(context, currentAnime.id, ep.id)
             ?: ep.vttUrl
@@ -382,7 +476,7 @@ fun DetailScreen(
                 "subtitle=$subtitleUrl subtitleReferer=${subtitleReferer ?: "<none>"}"
         )
 
-        return listOf(StreamQuality("자동", video, videoReferer)) to subtitleUrl
+        return listOf(StreamQuality("자동", video, videoReferer, videoHeaders)) to subtitleUrl
     }
 
     // 이미 영상이 다운로드된 에피소드에도 Linkkf VTT와 Kairan ASS를 모두 보충한다.
@@ -427,7 +521,7 @@ fun DetailScreen(
                 }
             }
 
-            var kairanPath = kairanReady
+            var kairanPath: String? = kairanReady
             if (kairanPath == null) {
                 kairanPath = try {
                     when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
@@ -778,14 +872,21 @@ fun DetailScreen(
                         AnimeImage(
                             model = currentAnime.poster,
                             contentDescription = currentAnime.title,
-                            modifier = Modifier.size(width = 110.dp, height = 160.dp).clip(RoundedCornerShape(16.dp)),
+                            modifier = Modifier
+                                .size(width = 110.dp, height = 160.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable { showCover = true },
                             contentScale = ContentScale.Crop
                         )
                         Spacer(Modifier.width(16.dp))
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(currentAnime.title, fontSize = 23.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
                             Spacer(Modifier.height(8.dp))
                             Text("${episodes.size}화", color = LilacDark)
+                            if (currentAnime.note.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(currentAnime.note, color = Lilac, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 currentAnime.genres.joinToString(" · "),
@@ -848,8 +949,86 @@ fun DetailScreen(
                         }
                     }
 
+                    if (isLinkkf && viewStats != null) {
+                        Spacer(Modifier.height(12.dp))
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                DetailStat("오늘", viewStats.day)
+                                DetailStat("이번 주", viewStats.week)
+                                DetailStat("이번 달", viewStats.month)
+                                DetailStat("전체", viewStats.total)
+                            }
+                        }
+                    }
+
                     Spacer(Modifier.height(18.dp))
-                    Text(currentAnime.description, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Lilac.copy(alpha = 0.08f)),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { detailTab = 0 }, modifier = Modifier.weight(1f)) {
+                            Text("정보", color = if (detailTab == 0) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontWeight = if (detailTab == 0) FontWeight.Bold else FontWeight.Normal)
+                        }
+                        TextButton(onClick = { detailTab = 1 }, modifier = Modifier.weight(1f)) {
+                            Text("스토리", color = if (detailTab == 1) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontWeight = if (detailTab == 1) FontWeight.Bold else FontWeight.Normal)
+                        }
+                        TextButton(onClick = { detailTab = 2 }, modifier = Modifier.weight(1f)) {
+                            Text("관련 작품", color = if (detailTab == 2) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontWeight = if (detailTab == 2) FontWeight.Bold else FontWeight.Normal)
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    when (detailTab) {
+                        0 -> DetailInfoContent(currentAnime)
+                        1 -> Text(
+                            currentAnime.description.replace("\r\n", "\n").trim().ifBlank { "설명이 없습니다." },
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
+                            lineHeight = 22.sp
+                        )
+                        else -> {
+                            if (relatedSeries.isNotEmpty() && isLinkkf) {
+                                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                    relatedSeries.forEach { series ->
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            if (relatedSeries.size > 1) {
+                                                Text(series.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                            }
+                                            LazyRow(
+                                                contentPadding = PaddingValues(horizontal = 2.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                            ) {
+                                                items(series.items.take(12)) { related ->
+                                                    Column(
+                                                        modifier = Modifier.width(120.dp).clickable {
+                                                            vm.cacheAnime(related)
+                                                            openRelated(related)
+                                                        }
+                                                    ) {
+                                                        AnimeImage(
+                                                            model = related.poster,
+                                                            contentDescription = related.title,
+                                                            modifier = Modifier.fillMaxWidth().height(165.dp).clip(RoundedCornerShape(12.dp)),
+                                                            contentScale = ContentScale.Crop
+                                                        )
+                                                        Spacer(Modifier.height(6.dp))
+                                                        Text(related.title, maxLines = 2, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                                        Text(
+                                                            listOfNotNull(related.year.takeIf { it.isNotBlank() }, related.format.takeIf { it.isNotBlank() }).joinToString(" · "),
+                                                            maxLines = 1, fontSize = 10.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text("관련 작품 정보가 없습니다.", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f), modifier = Modifier.padding(vertical = 16.dp))
+                            }
+                        }
+                    }
                 }
             }
 
@@ -907,6 +1086,40 @@ fun DetailScreen(
                             }
                         }
                     }
+                }
+
+                if (isLinkkf && vm.linkkfEpisodeServers.size > 1) {
+                    item {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 20.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                        ) {
+                            items(vm.linkkfEpisodeServers) { server ->
+                                FilterChip(
+                                    selected = vm.linkkfSelectedServerId == server.id,
+                                    onClick = {
+                                        episodePage = 0
+                                        episodeQuery = ""
+                                        vm.selectLinkkfEpisodeServer(currentAnime, server.id)
+                                    },
+                                    label = { Text(server.name) }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    OutlinedTextField(
+                        value = episodeQuery,
+                        onValueChange = { episodeQuery = it },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+                        singleLine = true,
+                        placeholder = { Text("회차 검색") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        shape = RoundedCornerShape(12.dp)
+                    )
                 }
 
                 item {
@@ -1035,6 +1248,29 @@ fun DetailScreen(
             } else {
                 item {
                     Text("에피소드가 없습니다.", modifier = Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onBackground)
+                }
+            }
+
+        }
+
+        if (showCover) {
+            androidx.compose.ui.window.Dialog(onDismissRequest = { showCover = false }) {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(Color.Black),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AnimeImage(
+                        model = currentAnime.backdrop.ifBlank { currentAnime.poster },
+                        contentDescription = currentAnime.title,
+                        modifier = Modifier.fillMaxWidth(),
+                        contentScale = ContentScale.Fit
+                    )
+                    IconButton(
+                        onClick = { showCover = false },
+                        modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "닫기", tint = Color.White)
+                    }
                 }
             }
         }

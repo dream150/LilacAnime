@@ -20,6 +20,7 @@ import android.net.Uri
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import android.widget.Toast
 import android.webkit.WebView
@@ -41,6 +42,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -56,11 +60,48 @@ import kotlinx.coroutines.launch
 @Composable
 fun Modifier.clickableNoIndication(onClick: () -> Unit): Modifier {
     val interactionSource = remember { MutableInteractionSource() }
-    return this.clickable(
-        interactionSource = interactionSource,
-        indication = null,
-        onClick = onClick
-    )
+    val context = LocalContext.current
+    val isTv = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+        Configuration.UI_MODE_TYPE_TELEVISION
+    var focused by remember { mutableStateOf(false) }
+
+    return this
+        .onFocusChanged { focused = it.isFocused }
+        .focusable(enabled = isTv)
+        .drawBehind {
+            if (isTv && focused) {
+                drawRoundRect(
+                    color = Color.White,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(10.dp.toPx())
+                )
+            }
+        }
+        .clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = onClick
+        )
+}
+
+@Composable
+fun Modifier.tvFocusable(): Modifier {
+    val context = LocalContext.current
+    val isTv = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+        Configuration.UI_MODE_TYPE_TELEVISION
+    var focused by remember { mutableStateOf(false) }
+    return this
+        .onFocusChanged { focused = it.isFocused }
+        .focusable(enabled = isTv)
+        .drawBehind {
+            if (isTv && focused) {
+                drawRoundRect(
+                    color = Color.White,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(10.dp.toPx())
+                )
+            }
+        }
 }
 
 // ==========================================
@@ -213,6 +254,10 @@ fun LilacApp(vm: AnimeViewModel = viewModel()) {
                             back = { nav.popBackStack() },
                             playEpisode = { ep ->
                                 nav.navigate("player/${currentItem.id}/${Uri.encode(ep.id)}")
+                            },
+                            openRelated = { related ->
+                                vm.cacheAnime(related)
+                                nav.navigate("detail/${related.id}")
                             }
                         )
                     }
