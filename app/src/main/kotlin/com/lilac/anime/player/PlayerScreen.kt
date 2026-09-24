@@ -2,8 +2,17 @@ package com.lilac.anime.player
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.net.Uri
+import android.graphics.Typeface
+import android.widget.Toast
+import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,11 +24,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Pause
@@ -31,12 +45,18 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -49,13 +69,29 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.lilac.anime.Anime
 import com.lilac.anime.ui.navigation.tvFocusable
 import com.lilac.anime.Episode
@@ -65,6 +101,10 @@ import com.lilac.anime.core.model.StreamQuality
 import com.lilac.anime.data.offline.MpvOfflineStore
 import com.lilac.anime.data.offline.OfflineStore
 import com.lilac.anime.data.subtitle.SubtitleStore
+import com.lilac.anime.data.subtitle.SubtitleAssetUtil
+import com.lilac.anime.data.subtitle.KairanSubtitleService
+import com.lilac.anime.data.subtitle.CsoraSubtitleService
+import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.StreamUrlExtractor
 import com.lilac.anime.data.subtitle.downloadSubtitleFile
 import com.lilac.anime.network.LinkkfPlayerResolver
@@ -76,6 +116,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
 
 /**
@@ -110,9 +151,26 @@ fun PlayerScreen(
 
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
-    var controlsVisible by rememberSaveable { mutableStateOf(false) }
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    var controlsVisible by rememberSaveable { mutableStateOf(isTv) }
+    val tvPreviousRequester = remember { FocusRequester() }
+    val tvRewindRequester = remember { FocusRequester() }
+    val tvPlayRequester = remember { FocusRequester() }
+    val tvForwardRequester = remember { FocusRequester() }
+    val tvNextRequester = remember { FocusRequester() }
+    val tvBackRequester = remember { FocusRequester() }
+    val tvSettingsRequester = remember { FocusRequester() }
+    val tvSkipRequester = remember { FocusRequester() }
+    val tvLockRequester = remember { FocusRequester() }
+    val tvRootRequester = remember { FocusRequester() }
     var locked by rememberSaveable { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var tvUiInteractionMode by rememberSaveable { mutableStateOf(false) }
+    var tvNavRow by rememberSaveable { mutableStateOf(1) }
+    var tvNavCol by rememberSaveable { mutableStateOf(2) }
+    var tvSettingsIndex by rememberSaveable { mutableStateOf(0) }
+    val focusManager = LocalFocusManager.current
     var subtitleSettingsOpen by remember { mutableStateOf(false) }
     var subtitleSize by rememberSaveable { mutableFloatStateOf(vm.playerSettings.subtitleSize) }
     var subtitleSyncMs by rememberSaveable { mutableLongStateOf(vm.playerSettings.syncOffsetMs) }
@@ -135,6 +193,70 @@ fun PlayerScreen(
     var chapters by remember { mutableStateOf<List<ChapterSkipSegment>>(emptyList()) }
     var subtitleEnabled by rememberSaveable { mutableStateOf(true) }
     var surfaceAttached by remember { mutableStateOf(false) }
+    var vttOutlineWidth by rememberSaveable { mutableFloatStateOf(vm.playerSettings.vttOutlineWidth) }
+    var customFontName by remember { mutableStateOf<String?>(null) }
+    var selectedSubtitleFontPath by remember(anime.id) { mutableStateOf(vm.playerSettings.subtitleFontPath) }
+    var discoveredSubtitleFonts by remember { mutableStateOf<List<SubtitleAssetUtil.FontInfo>>(emptyList()) }
+    var savedSubtitles by remember { mutableStateOf<List<SubtitleStore.SavedSubtitle>>(emptyList()) }
+    var userSubtitles by remember { mutableStateOf<List<SubtitleStore.SavedSubtitle>>(emptyList()) }
+    var showSubtitleManager by remember { mutableStateOf(false) }
+    var showUserSubtitleManager by remember { mutableStateOf(false) }
+
+    LaunchedEffect(anime.title, subtitleSource, localSubtitle) {
+        discoveredSubtitleFonts = withContext(Dispatchers.IO) {
+            val source = when (subtitleSource) { "kairan" -> "kairan"; "csora" -> "csora"; else -> subtitleSource }
+            if (source == "kairan" || source == "csora") SubtitleAssetUtil.listFonts(context, anime.title, source) else emptyList()
+        }
+    }
+
+    LaunchedEffect(anime.id, currentEpisode.displayNumber, currentEpisode.number) {
+        savedSubtitles = SubtitleStore.list(context, anime.id, currentEpisode.displayNumber, currentEpisode.number)
+        userSubtitles = SubtitleStore.listUser(context, anime.id, currentEpisode.displayNumber, currentEpisode.number)
+    }
+
+    val fontPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        playerScope.launch(Dispatchers.IO) {
+            try {
+                val mime = context.contentResolver.getType(uri)?.lowercase(Locale.ROOT)
+                val ext = if (mime == "font/otf" || uri.toString().contains(".otf", true)) "otf" else "ttf"
+                val dir = File(context.filesDir, "custom_fonts").apply { mkdirs() }
+                val target = File(dir, "player_custom_font.$ext")
+                context.contentResolver.openInputStream(uri)?.use { input -> FileOutputStream(target).use { output -> input.copyTo(output) } }
+                    ?: error("font stream null")
+                customFontName = target.name
+                vm.updatePlayerSettings(context, vm.playerSettings.copy(customFontPath = target.absolutePath))
+                withContext(kotlinx.coroutines.Dispatchers.Main) { Toast.makeText(context, "커스텀 폰트를 적용했습니다.", Toast.LENGTH_SHORT).show() }
+            } catch (e: Exception) {
+                Log.e("Subtitle", "CUSTOM_FONT_IMPORT_FAILED", e)
+                withContext(kotlinx.coroutines.Dispatchers.Main) { Toast.makeText(context, "폰트를 불러오지 못했습니다.", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    val subtitleFilePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        playerScope.launch(Dispatchers.IO) {
+            try {
+                val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "subtitle"
+                val lower = name.lowercase(Locale.ROOT)
+                val ext = listOf("ass","ssa","srt","vtt","smi").firstOrNull { lower.endsWith(".$it") } ?: error("unsupported")
+                val dir = File(context.filesDir, "user_subtitles").apply { mkdirs() }
+                val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val target = File(dir, "${anime.id}_${currentEpisode.displayNumber}_$safe")
+                context.contentResolver.openInputStream(uri)?.use { input -> FileOutputStream(target).use { output -> input.copyTo(output) } } ?: error("subtitle stream null")
+                SubtitleStore.save(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, "user", target.absolutePath)
+                userSubtitles = SubtitleStore.listUser(context, anime.id, currentEpisode.displayNumber, currentEpisode.number)
+                localSubtitle = target.absolutePath
+                engine.replaceSubtitleTrack(target.absolutePath)
+                engine.setSubtitleVisible(true)
+                withContext(kotlinx.coroutines.Dispatchers.Main) { Toast.makeText(context, "사용자 자막을 적용했습니다.", Toast.LENGTH_SHORT).show() }
+            } catch (e: Exception) {
+                Log.e("Subtitle", "USER_SUBTITLE_IMPORT_FAILED", e)
+                withContext(kotlinx.coroutines.Dispatchers.Main) { Toast.makeText(context, "자막 파일을 불러오지 못했습니다.", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
 
     val orderedEpisodes = remember(anime.episodes) {
         anime.episodes.sortedWith(compareBy<Episode> { it.number }.thenBy { it.displayNumber })
@@ -184,14 +306,43 @@ fun PlayerScreen(
         back()
     }
 
-    BackHandler { leave() }
+    BackHandler {
+        if (isTv) {
+            when {
+                settingsOpen -> settingsOpen = false
+                controlsVisible -> { controlsVisible = false; tvUiInteractionMode = false }
+                else -> leave()
+            }
+        } else {
+            leave()
+        }
+    }
 
     // Playback is always landscape while this screen owns the player.
-    DisposableEffect(activity) {
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    // Hide the Android status/navigation bars (including the gesture handle) only
+    // while the mobile player is on screen. They are restored when leaving it.
+    DisposableEffect(activity, isTv) {
+        val host = activity
+        if (host != null) {
+            host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+
+            if (!isTv) {
+                val controller = WindowCompat.getInsetsController(host.window, host.window.decorView)
+                controller.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+
         onDispose {
-            if (activity?.isChangingConfigurations != true) {
-                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            if (host != null) {
+                if (!isTv && host.isFinishing.not()) {
+                    val controller = WindowCompat.getInsetsController(host.window, host.window.decorView)
+                    controller.show(WindowInsetsCompat.Type.systemBars())
+                }
+                if (host.isChangingConfigurations != true) {
+                    host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
             }
         }
     }
@@ -209,6 +360,75 @@ fun PlayerScreen(
             duration = engine.duration
             isPlaying = engine.isPlaying
             delay(100)
+        }
+    }
+
+    suspend fun resolveCachedSubtitle(episode: Episode, source: String): String? {
+        if (source == "user") {
+            return withContext(Dispatchers.IO) {
+                SubtitleStore.getUser(context, anime.id, episode.id, episode.number)
+            }?.takeIf { File(it).isFile }
+        }
+        if (source !in setOf("kairan", "csora")) return null
+        return withContext(Dispatchers.IO) {
+            SubtitleStore.get(context, anime.id, episode.id, episode.number, source)
+        }?.takeIf { File(it).isFile }?.also {
+            Log.d("SubtitleSelect", "CACHE_HIT source=$source path=$it")
+        }
+    }
+
+    suspend fun resolvePreferredSubtitle(
+        episode: Episode,
+        sourceOverride: String? = null
+    ): String? {
+        val preferred = sourceOverride ?: vm.playerSettings.subtitleSourcePreference
+        Log.d(
+            "SubtitleSelect",
+            "REQUEST source=$preferred title=[${anime.title}] episode=${episode.displayNumber}"
+        )
+
+        resolveCachedSubtitle(episode, preferred)?.let { return it }
+
+        return when (preferred) {
+            "kairan" -> {
+                val result = runCatching {
+                    KairanSubtitleService.findSubtitle(
+                        context,
+                        anime.title,
+                        episode.number,
+                        episode.displayNumber
+                    )
+                }.onFailure {
+                    Log.w("SubtitleSelect", "SEARCH_FAILED source=kairan", it)
+                }.getOrNull()
+
+                val path = (result as? KairanSubtitleResult.DirectFile)?.path
+                    ?.takeIf { File(it).isFile }
+
+                Log.d("SubtitleSelect", "RESULT source=kairan path=$path")
+                path
+            }
+
+            "csora" -> {
+                val result = runCatching {
+                    CsoraSubtitleService.findSubtitle(
+                        context,
+                        anime.title,
+                        episode.number,
+                        episode.displayNumber
+                    )
+                }.onFailure {
+                    Log.w("SubtitleSelect", "SEARCH_FAILED source=csora", it)
+                }.getOrNull()
+
+                val path = (result as? KairanSubtitleResult.DirectFile)?.path
+                    ?.takeIf { File(it).isFile }
+
+                Log.d("SubtitleSelect", "RESULT source=csora path=$path")
+                path
+            }
+
+            else -> null
         }
     }
 
@@ -232,12 +452,12 @@ fun PlayerScreen(
             streamReferer = null
             subtitleUrl = null
             subtitleReferer = null
-            localSubtitle = withContext(Dispatchers.IO) {
+            localSubtitle = resolveCachedSubtitle(
+                currentEpisode,
+                vm.playerSettings.subtitleSourcePreference
+            ) ?: withContext(Dispatchers.IO) {
                 SubtitleStore.list(
-                    context,
-                    anime.id,
-                    currentEpisode.id,
-                    currentEpisode.number
+                    context, anime.id, currentEpisode.id, currentEpisode.number
                 ).firstOrNull { !it.ignored }?.path
                     ?: currentEpisode.vttUrl?.takeIf { File(it).isFile }
             }
@@ -250,6 +470,7 @@ fun PlayerScreen(
                     ?: vm.playerSettings.customFontPath,
                 autoPlay = false
             )
+            engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled)
             engine.setSpeed(speed)
             engine.setSubtitleDelay(vm.playerSettings.syncOffsetMs)
             engine.applySubtitleStyle(
@@ -312,12 +533,12 @@ fun PlayerScreen(
         // Never block video startup on a remote subtitle download. Reuse an already
         // cached subtitle immediately, then download a missing one in parallel and
         // attach it to the running mpv instance when it arrives.
-        localSubtitle = withContext(Dispatchers.IO) {
+        localSubtitle = resolveCachedSubtitle(
+            currentEpisode,
+            vm.playerSettings.subtitleSourcePreference
+        ) ?: withContext(Dispatchers.IO) {
             SubtitleStore.list(
-                context,
-                anime.id,
-                currentEpisode.id,
-                currentEpisode.number
+                context, anime.id, currentEpisode.id, currentEpisode.number
             ).firstOrNull { !it.ignored }?.path
         }
 
@@ -334,6 +555,7 @@ fun PlayerScreen(
                 ?: vm.playerSettings.customFontPath,
             autoPlay = false
         )
+        engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled)
         engine.setSpeed(speed)
         engine.setSubtitleDelay(vm.playerSettings.syncOffsetMs)
         engine.applySubtitleStyle(
@@ -459,6 +681,44 @@ fun PlayerScreen(
         )
     }
 
+    // Kairan/Csora are searched in the background for BOTH LinkKF and Re:ANIME.
+    // Never block video startup on a blog search/download. If a subtitle was already
+    // cached it is attached immediately; otherwise the blog search runs in parallel
+    // and the resulting ASS file is attached to the running mpv instance.
+    LaunchedEffect(
+        anime.id,
+        currentEpisode.id,
+        currentEpisode.number,
+        vm.playerSettings.subtitleSourcePreference
+    ) {
+        val preferred = vm.playerSettings.subtitleSourcePreference
+        if (preferred !in setOf("kairan", "csora")) return@LaunchedEffect
+
+        Log.d(
+            "SubtitleSelect",
+            "BACKGROUND_SEARCH source=$preferred title=[${anime.title}] episode=${currentEpisode.displayNumber}"
+        )
+
+        val path = resolvePreferredSubtitle(currentEpisode, preferred)
+        if (!isActive) return@LaunchedEffect
+
+        if (!path.isNullOrBlank() && File(path).isFile) {
+            localSubtitle = path
+            Log.d(
+                "SubtitleSelect",
+                "BACKGROUND_ATTACH source=$preferred path=$path"
+            )
+            engine.replaceSubtitleTrack(path)
+            engine.setSubtitleDelay(vm.playerSettings.syncOffsetMs)
+            engine.setSubtitleVisible(subtitleEnabled)
+        } else {
+            Log.d(
+                "SubtitleSelect",
+                "BACKGROUND_NONE source=$preferred episode=${currentEpisode.displayNumber}"
+            )
+        }
+    }
+
     // Once the Re:ANIME extractor has produced the decrypted/proxied HLS URL,
     // hand it to libmpv. This is separate from the page resolver because the WebView
     // callback is asynchronous.
@@ -481,6 +741,7 @@ fun PlayerScreen(
                 ?: vm.playerSettings.customFontPath,
             autoPlay = false
         )
+        engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled)
         engine.setSpeed(speed)
         engine.setSubtitleDelay(vm.playerSettings.syncOffsetMs)
         engine.applySubtitleStyle(
@@ -507,39 +768,40 @@ fun PlayerScreen(
         MainActivity.isVideoPlaying = true
     }
 
-    // Load persisted AniSkip timestamps first. If this episode has no local
-    // timestamp file (streaming, or an older offline download), resolve them
-    // online as a fallback so the same skip button works in every playback path.
+    // OP/ED resolution is deliberately split by playback mode.
+    // Streaming -> AniSkip only.
+    // Offline -> saved AniSkip first, then local audio analysis when AniSkip
+    // was unavailable at download time (or this is an older offline file).
     LaunchedEffect(currentEpisode.id, anime.id, anime.title, anime.anilistId) {
-        val saved = withContext(Dispatchers.IO) {
-            OfflineStore.getChapterSkipSegments(
-                context,
-                anime.id,
-                currentEpisode.id
-            )
+        chapters = emptyList()
+        val offlineEpisodes = withContext(Dispatchers.IO) {
+            val localPath = MpvOfflineStore.completedPath(context, anime.id, currentEpisode.id)
+            if (localPath != null) OfflineStore.getEpisodesForAnime(context, anime.id) else emptyList()
         }
-        if (saved.isNotEmpty()) {
-            chapters = saved
-            android.util.Log.d("AniSkip", "PLAYER_LOCAL_TIMESTAMP_HIT anime=${anime.id} episode=${currentEpisode.number} segments=${saved.size}")
+
+        if (offlineEpisodes.isNotEmpty()) {
+            val resolved = com.lilac.anime.network.OpEdSkipResolver.resolveOffline(
+                context = context,
+                animeId = anime.id,
+                episode = currentEpisode,
+                episodes = offlineEpisodes
+            )
+            chapters = resolved
+            android.util.Log.d(
+                "AniSkip",
+                "PLAYER_OFFLINE_RESOLVED anime=${anime.id} episode=${currentEpisode.number} segments=${resolved.size}"
+            )
         } else {
-            chapters = emptyList()
-            val online = runCatching {
-                com.lilac.anime.network.OnlineAniSkipService.getSkipSegments(
-                    title = anime.title,
-                    episodeNumber = currentEpisode.number,
-                    episodeLengthSeconds = 0,
-                    anilistId = anime.anilistId
-                )
-            }.getOrElse {
-                android.util.Log.w("AniSkip", "PLAYER_TIMESTAMP_LOOKUP_FAILED anime=${anime.id} episode=${currentEpisode.number}", it)
-                emptyList()
-            }
-            if (online.isNotEmpty()) {
-                chapters = online
-                android.util.Log.d("AniSkip", "PLAYER_ONLINE_TIMESTAMP_HIT anime=${anime.id} episode=${currentEpisode.number} segments=${online.size}")
-            } else {
-                android.util.Log.d("AniSkip", "PLAYER_TIMESTAMP_NONE anime=${anime.id} episode=${currentEpisode.number}")
-            }
+            val online = com.lilac.anime.network.OpEdSkipResolver.resolveOnline(
+                title = anime.title,
+                episodeNumber = currentEpisode.number,
+                anilistId = anime.anilistId
+            )
+            chapters = online
+            android.util.Log.d(
+                "AniSkip",
+                "PLAYER_ONLINE_RESOLVED anime=${anime.id} episode=${currentEpisode.number} segments=${online.size}"
+            )
         }
     }
 
@@ -556,6 +818,7 @@ fun PlayerScreen(
         if (ready) {
             loading = false
             controlsVisible = true
+            tvUiInteractionMode = false
         }
     }
 
@@ -628,12 +891,32 @@ fun PlayerScreen(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .focusRequester(tvRootRequester)
+            .focusable(enabled = isTv && !controlsVisible && !settingsOpen)
+            .onPreviewKeyEvent { event ->
+                if (!isTv || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                val center = event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter
+                if (event.key == Key.Back || event.key == Key.Escape) {
+                    when {
+                        settingsOpen -> { settingsOpen = false; true }
+                        controlsVisible -> { controlsVisible = false; tvRootRequester.requestFocus(); true }
+                        else -> { leave(); true }
+                    }
+                } else if (!controlsVisible && center) {
+                    controlsVisible = true
+                    if (engine.isPlaying) engine.pause() else engine.play()
+                    MainActivity.isVideoPlaying = engine.isPlaying
+                    true
+                } else false
+            }
     ) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 MpvPlayerSurfaceView(ctx, engine).apply {
-                    seekSeconds = vm.playerSettings.doubleTapSeekSeconds.coerceIn(1, 120)
+                    // On TV the video surface must not keep D-pad focus.
+                    // Focus belongs to the Compose player controls instead.
+                    seekSeconds = vm.playerSettings.doubleTapSeekSeconds.coerceAtLeast(0L)
                     gesturesLocked = locked
                     onSingleTap = {
                         if (locked) showUnlockButton = true
@@ -647,13 +930,48 @@ fun PlayerScreen(
                     // MpvPlayerSurfaceView performs the actual seek exactly once.
                     // This callback is intentionally UI-only to avoid double-seeking.
                     onDoubleTap = { _ -> }
+                    if (isTv) {
+                        isFocusable = false
+                        isFocusableInTouchMode = false
+                    }
                 }
             },
             update = { view ->
                 view.gesturesLocked = locked
-                view.seekSeconds = vm.playerSettings.doubleTapSeekSeconds.coerceIn(1, 120)
+                view.seekSeconds = vm.playerSettings.doubleTapSeekSeconds.coerceAtLeast(0L)
             }
         )
+
+        LaunchedEffect(isTv, controlsVisible, settingsOpen) {
+            if (isTv) {
+                if (controlsVisible && !settingsOpen) tvPlayRequester.requestFocus()
+                else if (!controlsVisible) tvRootRequester.requestFocus()
+            }
+        }
+
+        // TV controls should behave like an overlay, not a permanently focused
+        // menu. While playback is active they disappear automatically.
+        LaunchedEffect(isTv, controlsVisible, isPlaying, settingsOpen, locked) {
+            if (isTv && controlsVisible && isPlaying && !settingsOpen && !locked) {
+                delay(3500)
+                if (isActive && isPlaying && !settingsOpen && !locked) {
+                    controlsVisible = false
+                    tvUiInteractionMode = false
+                    tvRootRequester.requestFocus()
+                }
+            }
+        }
+
+        // Mobile controls auto-hide after exactly 2 seconds. Opening the settings
+        // menu keeps the controls alive until the menu is dismissed.
+        LaunchedEffect(isTv, controlsVisible, settingsOpen, locked) {
+            if (!isTv && controlsVisible && !settingsOpen && !locked) {
+                delay(2000)
+                if (isActive && !settingsOpen && !locked) {
+                    controlsVisible = false
+                }
+            }
+        }
 
         // Subtle cinematic scrims keep controls readable without permanently
         // darkening the actual video.
@@ -761,7 +1079,141 @@ fun PlayerScreen(
                     }
                 }
             }
-        } else if (controlsVisible) {
+        } else if (isTv && controlsVisible) {
+            // Netflix-style 10-foot player: one focus target at a time, no
+            // synthetic navigation state and no nested clickable/focusable layers.
+            val tvAccent = Color(0xFFE50914)
+            val remaining = (duration - position).coerceAtLeast(0L)
+
+            Box(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxWidth().height(220.dp).align(Alignment.TopCenter).background(Brush.verticalGradient(listOf(Color.Black.copy(.90f), Color.Transparent))))
+                Box(Modifier.fillMaxWidth().height(340.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.96f)))))
+
+                Row(Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = 52.dp, top = 38.dp, end = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TvActionButton(Icons.Default.ArrowBack, "뒤로", tvBackRequester, compact = true) { leave() }
+                    Spacer(Modifier.width(22.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(anime.title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text("${currentEpisode.number}화${currentEpisode.title.takeIf { it.isNotBlank() }?.let { "  ·  $it" } ?: ""}", color = Color.White.copy(.70f), fontSize = 14.sp, maxLines = 1)
+                    }
+                    Box {
+                        TvActionButton(Icons.Default.Settings, "설정", tvSettingsRequester, compact = true) { settingsOpen = true }
+                        TvPlayerSettingsMenu(
+                            expanded = settingsOpen,
+                            onDismiss = { settingsOpen = false },
+                            autoPlay = autoPlay,
+                            showSkipButton = showSkipButton,
+                            autoSkip = autoSkip,
+                            subtitleEnabled = subtitleEnabled,
+                            assEffectsEnabled = vm.playerSettings.assEffectsEnabled,
+                            subtitleSource = subtitleSource,
+                            subtitleSize = subtitleSize,
+                            subtitlePosition = subtitlePosition,
+                            subtitleSyncMs = subtitleSyncMs,
+                            speed = speed,
+                            onActivate = { index ->
+                                when (index) {
+                                    0 -> { autoPlay = !autoPlay; vm.updatePlayerSettings(context, vm.playerSettings.copy(autoPlay = autoPlay)) }
+                                    1 -> { showSkipButton = !showSkipButton; vm.updatePlayerSettings(context, vm.playerSettings.copy(showChapterSkipButton = showSkipButton)) }
+                                    2 -> { autoSkip = !autoSkip; vm.updatePlayerSettings(context, vm.playerSettings.copy(autoSkip = autoSkip)) }
+                                    3 -> {
+                                        subtitleEnabled = !subtitleEnabled
+                                        engine.setSubtitleVisible(subtitleEnabled)
+                                    }
+                                    4 -> {
+                                        val enabled = !vm.playerSettings.assEffectsEnabled
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(assEffectsEnabled = enabled))
+                                        engine.setAssEffectsEnabled(enabled)
+                                    }
+                                    5 -> {
+                                        val sources = listOf("linkkf", "kairan", "csora", "user")
+                                        val idx = sources.indexOf(subtitleSource).coerceAtLeast(0)
+                                        subtitleSource = sources[(idx + 1) % sources.size]
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = subtitleSource))
+                                        playerScope.launch {
+                                            val path = if (subtitleSource == "user") {
+                                                resolveCachedSubtitle(currentEpisode, "user")
+                                            } else if (subtitleSource == "kairan" || subtitleSource == "csora") {
+                                                resolvePreferredSubtitle(currentEpisode, subtitleSource)
+                                            } else {
+                                                withContext(Dispatchers.IO) {
+                                                    SubtitleStore.get(context, anime.id, currentEpisode.id, currentEpisode.number, subtitleSource)
+                                                }
+                                            }
+                                            if (!path.isNullOrBlank() && File(path).isFile) {
+                                                localSubtitle = path
+                                                engine.replaceSubtitleTrack(path)
+                                                engine.setSubtitleDelay(subtitleSyncMs)
+                                                engine.setSubtitleVisible(subtitleEnabled)
+                                            }
+                                        }
+                                    }
+                                    6 -> {
+                                        subtitleSize = (subtitleSize + 10f).let { if (it > 200f) 50f else it }
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSize = subtitleSize))
+                                        engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, vm.playerSettings.vttOutlineWidth, subtitlePosition / 100f, false)
+                                    }
+                                    7 -> {
+                                        subtitlePosition = (subtitlePosition + 5f).let { if (it > 30f) 3f else it }
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleBottomPaddingFraction = subtitlePosition / 100f))
+                                        engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, vm.playerSettings.vttOutlineWidth, subtitlePosition / 100f, false)
+                                    }
+                                    8 -> {
+                                        subtitleSyncMs += 250L
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(syncOffsetMs = subtitleSyncMs))
+                                        engine.setSubtitleDelay(subtitleSyncMs)
+                                    }
+                                    9 -> {
+                                        speed = when { speed < 1.0f -> 1.0f; speed < 1.25f -> 1.25f; speed < 1.5f -> 1.5f; speed < 2.0f -> 2.0f; else -> 0.5f }
+                                        engine.setSpeed(speed)
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(playbackSpeed = speed))
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+
+                Row(Modifier.align(Alignment.Center), horizontalArrangement = Arrangement.spacedBy(34.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TvActionButton(Icons.Default.SkipPrevious, "이전 화", tvPreviousRequester) { previousEpisode?.let(::switchEpisode) }
+                    TvActionButton(Icons.Default.FastRewind, "${vm.playerSettings.seekButtonSeekSeconds}초 뒤로", tvRewindRequester) { engine.seekBy(-vm.playerSettings.seekButtonSeekSeconds.toDouble()) }
+                    TvActionButton(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "일시정지" else "재생", tvPlayRequester, large = true) {
+                        if (engine.isPlaying) engine.pause() else engine.play()
+                        MainActivity.isVideoPlaying = engine.isPlaying
+                    }
+                    TvActionButton(Icons.Default.FastForward, "${vm.playerSettings.seekButtonSeekSeconds}초 앞으로", tvForwardRequester) { engine.seekBy(vm.playerSettings.seekButtonSeekSeconds.toDouble()) }
+                    TvActionButton(Icons.Default.SkipNext, "다음 화", tvNextRequester) { nextEpisode?.let(::switchEpisode) }
+                }
+
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 52.dp, vertical = 34.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(formatTime(position), color = Color.White, fontSize = 13.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("/", color = Color.White.copy(.35f))
+                        Spacer(Modifier.width(8.dp))
+                        Text(formatTime(duration), color = Color.White.copy(.68f), fontSize = 13.sp)
+                        Spacer(Modifier.weight(1f))
+                        Text("-${formatTime(remaining)}", color = Color.White.copy(.68f), fontSize = 13.sp)
+                    }
+                    Slider(
+                        value = if (duration > 0L) position.toFloat().coerceIn(0f, duration.toFloat()) else 0f,
+                        onValueChange = { position = it.toLong(); isSeeking = true },
+                        onValueChangeFinished = { engine.seekTo(position.coerceIn(0L, duration.coerceAtLeast(0L))); isSeeking = false },
+                        valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
+                        colors = SliderDefaults.colors(thumbColor = tvAccent, activeTrackColor = tvAccent, inactiveTrackColor = Color.White.copy(.30f)),
+                        modifier = Modifier.fillMaxWidth().height(30.dp)
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        if (showSkipButton && currentChapter != null) {
+                            TvTextAction(if (currentChapter.type.contains("ed", true)) "ED 건너뛰기" else "OP 건너뛰기", tvSkipRequester) { skipCurrentChapter() }
+                            Spacer(Modifier.width(12.dp))
+                        }
+                        TvTextAction("화면 잠금", tvLockRequester) { locked = true; controlsVisible = false; tvRootRequester.requestFocus() }
+                    }
+                }
+            }
+        } else if (!isTv && controlsVisible) {
+            // Mobile/tablet player controls. TV uses the dedicated overlay above.
             // Top bar: back + episode context on the left, settings on the right.
             Row(
                 modifier = Modifier
@@ -772,6 +1224,7 @@ fun PlayerScreen(
             ) {
                 Surface(
                     onClick = { leave() },
+                    modifier = Modifier.tvFocusable(),
                     shape = CircleShape,
                     color = Color.Black.copy(alpha = .48f),
                     border = BorderStroke(1.dp, Color.White.copy(alpha = .10f))
@@ -806,33 +1259,56 @@ fun PlayerScreen(
 
                 Spacer(Modifier.weight(1f))
 
-                Surface(
-                    onClick = { settingsOpen = !settingsOpen },
-                    shape = CircleShape,
-                    color = Color.Black.copy(alpha = .48f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = .10f))
-                ) {
-                    Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Settings, "플레이어 설정", tint = Color.White, modifier = Modifier.size(21.dp))
+                Box {
+                    Surface(
+                        onClick = { settingsOpen = !settingsOpen },
+                        modifier = Modifier.tvFocusable(),
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = .48f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = .10f))
+                    ) {
+                        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Settings, "플레이어 설정", tint = Color.White, modifier = Modifier.size(21.dp))
+                        }
                     }
-                }
 
                 DropdownMenu(
                     expanded = settingsOpen,
                     onDismissRequest = { settingsOpen = false },
-                    containerColor = Color(0xFF1E1E1E),
-                    tonalElevation = 8.dp,
-                    shadowElevation = 12.dp
+                    offset = DpOffset((-350).dp, 8.dp),
+                    modifier = Modifier
+                        .widthIn(min = 340.dp, max = 390.dp)
+                        .heightIn(max = 680.dp),
+                    shape = RoundedCornerShape(22.dp),
+                    containerColor = Color(0xFF111116),
+                    tonalElevation = 10.dp,
+                    shadowElevation = 22.dp
                 ) {
                     Column(
-                        modifier = Modifier.padding(vertical = 6.dp)
+                        modifier = Modifier
+                            .padding(vertical = 6.dp)
+                            .heightIn(max = 660.dp)
+                            .verticalScroll(rememberScrollState())
                     ) {
-                        Text(
-                            "플레이어 설정",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(shape = RoundedCornerShape(10.dp), color = Color.White.copy(.10f)) {
+                                Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Settings, null, tint = Color.White, modifier = Modifier.size(19.dp))
+                                }
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("플레이어 설정", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text("재생 · 화질 · 자막", color = Color.White.copy(.50f), fontSize = 10.sp)
+                            }
+                            IconButton(onClick = { settingsOpen = false }) {
+                                Icon(Icons.Default.ArrowBack, "닫기", tint = Color.White.copy(.75f))
+                            }
+                        }
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(.10f)))
 
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
@@ -902,6 +1378,27 @@ fun PlayerScreen(
                             )
                         }
 
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                                Text("ASS 자막 효과", color = Color.White, fontSize = 13.sp)
+                                Text(
+                                    if (vm.playerSettings.assEffectsEnabled) "원본 위치·색상·효과를 유지합니다"
+                                    else "효과를 단순화해 TV 성능을 우선합니다",
+                                    color = Color.White.copy(.55f), fontSize = 11.sp
+                                )
+                            }
+                            Switch(
+                                checked = vm.playerSettings.assEffectsEnabled,
+                                onCheckedChange = { enabled ->
+                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(assEffectsEnabled = enabled))
+                                    engine.setAssEffectsEnabled(enabled)
+                                }
+                            )
+                        }
+
                         DropdownMenuItem(
                             text = {
                                 Column {
@@ -923,14 +1420,30 @@ fun PlayerScreen(
                                                 vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = source))
                                                 playerScope.launch {
                                                     val path = if (source == "user") {
-                                                        SubtitleStore.getUser(context, anime.id, currentEpisode.id, currentEpisode.number)
+                                                        resolveCachedSubtitle(currentEpisode, "user")
+                                                    } else if (source == "kairan" || source == "csora") {
+                                                        resolvePreferredSubtitle(currentEpisode, source)
                                                     } else {
-                                                        SubtitleStore.get(context, anime.id, currentEpisode.id, currentEpisode.number, source)
+                                                        withContext(Dispatchers.IO) {
+                                                            SubtitleStore.get(
+                                                                context,
+                                                                anime.id,
+                                                                currentEpisode.id,
+                                                                currentEpisode.number,
+                                                                source
+                                                            )
+                                                        }
                                                     }
-                                                    if (!path.isNullOrBlank()) {
+                                                    if (!path.isNullOrBlank() && File(path).isFile) {
+                                                        localSubtitle = path
                                                         engine.replaceSubtitleTrack(path)
                                                         engine.setSubtitleDelay(subtitleSyncMs)
                                                         engine.setSubtitleVisible(subtitleEnabled)
+                                                    } else {
+                                                        Log.d(
+                                                            "SubtitleSelect",
+                                                            "MANUAL_NONE source=$source episode=${currentEpisode.displayNumber}"
+                                                        )
                                                     }
                                                 }
                                             },
@@ -999,6 +1512,136 @@ fun PlayerScreen(
                             }
                         }
 
+                        if (parsedStreamingQualities.isNotEmpty()) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp)) {
+                                Text("화질", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("현재 스트림에서 선택 가능한 화질", color = Color.White.copy(.50f), fontSize = 10.sp)
+                                Spacer(Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    parsedStreamingQualities.forEach { quality ->
+                                        val selected = selectedStreamingQuality?.url == quality.url
+                                        Surface(
+                                            onClick = {
+                                                selectedStreamingQuality = quality
+                                                streamHeaders = quality.headers
+                                                quality.referer?.let { streamReferer = it }
+                                                streamUrl = if (!quality.flixCloudPk.isNullOrBlank() && quality.url.contains("m3u8", true)) {
+                                                    FlixCloudHlsProxy.createProxyUrl(quality.url, quality.flixCloudPk, quality.headers)
+                                                } else quality.url
+                                                loading = true
+                                                error = null
+                                                engine.load(
+                                                    streamUrl.orEmpty(),
+                                                    localSubtitle,
+                                                    vm.playerSettings.syncOffsetMs,
+                                                    null,
+                                                    autoPlay = true
+                                                )
+                                                vm.updatePlayerSettings(context, vm.playerSettings.copy(defaultQuality = quality.label))
+                                                settingsOpen = false
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = if (selected) Color.White else Color.White.copy(.08f),
+                                            border = BorderStroke(1.dp, if (selected) Color.White.copy(.75f) else Color.White.copy(.10f))
+                                        ) {
+                                            Text(quality.label, color = if (selected) Color.Black else Color.White, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Subtitle source / font / saved subtitle management / user subtitle.
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp)) {
+                            Text("자막 소스", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("현재 프로젝트에서 사용할 저장 자막을 선택합니다.", color = Color.White.copy(.50f), fontSize = 10.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf("linkkf" to "Linkkf VTT", "kairan" to "Kairan ASS", "csora" to "Csora ASS", "user" to "사용자").forEach { (key, label) ->
+                                    Surface(onClick = {
+                                        subtitleSource = key
+                                        subtitleSettingsOpen = true
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = key))
+                                    }, shape = RoundedCornerShape(9.dp), color = if (subtitleSource == key) Color.White else Color.White.copy(.08f)) {
+                                        Text(label, color = if (subtitleSource == key) Color.Black else Color.White, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp))
+                                    }
+                                }
+                            }
+                        }
+
+                        if (discoveredSubtitleFonts.isNotEmpty()) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
+                                Text("발견된 ASS 폰트", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    discoveredSubtitleFonts.forEach { font ->
+                                        val selected = selectedSubtitleFontPath == font.path
+                                        Surface(onClick = {
+                                            selectedSubtitleFontPath = font.path
+                                            vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleFontPath = font.path, subtitleFontSource = font.source))
+                                            engine.replaceSubtitleTrack(localSubtitle ?: return@Surface)
+                                        }, shape = RoundedCornerShape(9.dp), color = if (selected) Color.White else Color.White.copy(.08f)) {
+                                            Text(font.displayName, color = if (selected) Color.Black else Color.White, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("커스텀 폰트", color = Color.White, fontSize = 13.sp)
+                                Text(customFontName ?: "기본 폰트 사용 중", color = Color.White.copy(.50f), fontSize = 10.sp)
+                            }
+                            TextButton(onClick = { fontPickerLauncher.launch("font/*") }) { Text("불러오기", color = Color.White, fontSize = 11.sp) }
+                        }
+
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("사용자 자막", color = Color.White, fontSize = 13.sp)
+                                Text("ASS / SSA / SRT / VTT / SMI", color = Color.White.copy(.50f), fontSize = 10.sp)
+                            }
+                            TextButton(onClick = { subtitleFilePickerLauncher.launch(arrayOf("text/*", "application/*")) }) { Text("추가", color = Color.White, fontSize = 11.sp) }
+                        }
+
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
+                            Text("이 회차의 저장 자막", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            if (savedSubtitles.isEmpty()) Text("저장된 원본 자막이 없습니다.", color = Color.White.copy(.45f), fontSize = 10.sp)
+                            savedSubtitles.forEach { saved ->
+                                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(saved.source.uppercase(Locale.ROOT), color = if (saved.ignored) Color.Gray else Color.White, fontSize = 10.sp, modifier = Modifier.weight(1f))
+                                    TextButton(onClick = { playerScope.launch { SubtitleStore.setIgnored(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, saved.source, !saved.ignored); savedSubtitles = SubtitleStore.list(context, anime.id, currentEpisode.displayNumber, currentEpisode.number) } }) { Text(if (saved.ignored) "사용" else "제외", color = Color.White, fontSize = 9.sp) }
+                                    TextButton(onClick = { playerScope.launch { SubtitleStore.deleteOne(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, saved.source, saved.path); savedSubtitles = SubtitleStore.list(context, anime.id, currentEpisode.displayNumber, currentEpisode.number) } }) { Text("삭제", color = Color(0xFFFF8A80), fontSize = 9.sp) }
+                                }
+                            }
+                        }
+
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
+                            Text("사용자 자막 관리", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            userSubtitles.forEach { saved ->
+                                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(File(saved.path).name, color = Color.White.copy(.75f), fontSize = 9.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                                    TextButton(onClick = { playerScope.launch { localSubtitle = saved.path; subtitleSource = "user"; engine.replaceSubtitleTrack(saved.path); engine.setSubtitleVisible(true) } }) { Text("사용", color = Color.White, fontSize = 9.sp) }
+                                    TextButton(onClick = { playerScope.launch { SubtitleStore.deleteOne(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, "user", saved.path); userSubtitles = SubtitleStore.listUser(context, anime.id, currentEpisode.displayNumber, currentEpisode.number) } }) { Text("삭제", color = Color(0xFFFF8A80), fontSize = 9.sp) }
+                                }
+                            }
+                        }
+
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) { Text("VTT 원본 스타일", color = Color.White, fontSize = 12.sp); Text("원본 색상/스타일 유지", color = Color.White.copy(.50f), fontSize = 10.sp) }
+                            Switch(checked = vttStyleEnabled, onCheckedChange = { vttStyleEnabled = it; vm.updatePlayerSettings(context, vm.playerSettings.copy(vttStyleEnabled = it)) })
+                        }
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) { Text("VTT 굵게", color = Color.White, fontSize = 12.sp); Text("자막 글자를 굵게 표시", color = Color.White.copy(.50f), fontSize = 10.sp) }
+                            Switch(checked = vttBold, onCheckedChange = { vttBold = it; vm.updatePlayerSettings(context, vm.playerSettings.copy(vttBold = it)); engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, it, vttOutlineWidth, subtitlePosition / 100f, false) })
+                        }
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
+                            Text("VTT 테두리 ${String.format(Locale.US, "%.1f", vttOutlineWidth)}dp", color = Color.White.copy(.72f), fontSize = 11.sp)
+                            Slider(value = vttOutlineWidth, onValueChange = { vttOutlineWidth = it; vm.updatePlayerSettings(context, vm.playerSettings.copy(vttOutlineWidth = it)); engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, it, subtitlePosition / 100f, false) }, valueRange = 0f..6f, steps = 11)
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -1015,6 +1658,7 @@ fun PlayerScreen(
                                             engine.setSpeed(rate)
                                             vm.updatePlayerSettings(context, vm.playerSettings.copy(playbackSpeed = rate))
                                         },
+                                        modifier = Modifier.tvFocusable(),
                                         shape = RoundedCornerShape(9.dp),
                                         color = if (speed == rate) Color.White else Color.White.copy(.10f)
                                     ) {
@@ -1037,6 +1681,7 @@ fun PlayerScreen(
                         )
                     }
                 }
+                }
             }
 
             // Center transport controls: previous / rewind / play / forward / next.
@@ -1053,7 +1698,7 @@ fun PlayerScreen(
 
                 Surface(
                     onClick = { previousEpisode?.let(::switchEpisode) },
-                    modifier = Modifier.size(episodeButtonSize).tvFocusable(),
+                    modifier = Modifier.size(episodeButtonSize).focusRequester(tvPreviousRequester).focusProperties { left = tvPreviousRequester; right = tvRewindRequester }.tvFocusable(),
                     shape = CircleShape,
                     color = if (previousEpisode != null) episodeButtonColor else disabledEpisodeColor,
                     border = BorderStroke(1.dp, Color.White.copy(alpha = if (previousEpisode != null) .12f else .06f))
@@ -1069,14 +1714,14 @@ fun PlayerScreen(
                 }
 
                 Surface(
-                    onClick = { engine.seekBy(-10.0) },
-                    modifier = Modifier.size(50.dp).tvFocusable(),
+                    onClick = { engine.seekBy(-vm.playerSettings.seekButtonSeekSeconds.toDouble()) },
+                    modifier = Modifier.size(50.dp).focusRequester(tvRewindRequester).focusProperties { left = tvPreviousRequester; right = tvPlayRequester }.tvFocusable(),
                     shape = CircleShape,
                     color = episodeButtonColor,
                     border = BorderStroke(1.dp, Color.White.copy(alpha = .12f))
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Replay10, "뒤로", tint = Color.White, modifier = Modifier.size(23.dp))
+                        Icon(Icons.Default.FastRewind, "뒤로", tint = Color.White, modifier = Modifier.size(23.dp))
                     }
                 }
 
@@ -1085,7 +1730,7 @@ fun PlayerScreen(
                         if (engine.isPlaying) engine.pause() else engine.play()
                         MainActivity.isVideoPlaying = engine.isPlaying
                     },
-                    modifier = Modifier.size(68.dp).tvFocusable(),
+                    modifier = Modifier.size(68.dp).focusRequester(tvPlayRequester).focusProperties { left = tvRewindRequester; right = tvForwardRequester }.tvFocusable(),
                     shape = CircleShape,
                     color = Color.White.copy(alpha = .92f)
                 ) {
@@ -1100,20 +1745,20 @@ fun PlayerScreen(
                 }
 
                 Surface(
-                    onClick = { engine.seekBy(10.0) },
-                    modifier = Modifier.size(50.dp).tvFocusable(),
+                    onClick = { engine.seekBy(vm.playerSettings.seekButtonSeekSeconds.toDouble()) },
+                    modifier = Modifier.size(50.dp).focusRequester(tvForwardRequester).focusProperties { left = tvPlayRequester; right = tvNextRequester }.tvFocusable(),
                     shape = CircleShape,
                     color = episodeButtonColor,
                     border = BorderStroke(1.dp, Color.White.copy(alpha = .12f))
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.FastForward, "앞으로", tint = Color.White, modifier = Modifier.size(23.dp))
+                        Icon(Icons.Default.FastForward, "${vm.playerSettings.seekButtonSeekSeconds}초 앞으로", tint = Color.White, modifier = Modifier.size(23.dp))
                     }
                 }
 
                 Surface(
                     onClick = { nextEpisode?.let(::switchEpisode) },
-                    modifier = Modifier.size(episodeButtonSize).tvFocusable(),
+                    modifier = Modifier.size(episodeButtonSize).focusRequester(tvNextRequester).focusProperties { left = tvForwardRequester; right = tvNextRequester }.tvFocusable(),
                     shape = CircleShape,
                     color = if (nextEpisode != null) episodeButtonColor else disabledEpisodeColor,
                     border = BorderStroke(1.dp, Color.White.copy(alpha = if (nextEpisode != null) .12f else .06f))
@@ -1172,6 +1817,7 @@ fun PlayerScreen(
                     onClick = { skipCurrentChapter() },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
+                        .tvFocusable()
                         .padding(end = 18.dp, bottom = 78.dp),
                     shape = RoundedCornerShape(15.dp),
                     color = Color.Black.copy(alpha = .62f),
@@ -1202,13 +1848,156 @@ fun PlayerScreen(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 18.dp, bottom = 16.dp)
-                    .size(50.dp),
+                    .size(50.dp)
+                    .tvFocusable(),
                 shape = CircleShape,
                 color = Color.Black.copy(alpha = .62f),
                 border = BorderStroke(1.dp, Color.White.copy(alpha = .14f))
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(Icons.Default.Lock, "화면 잠금", tint = Color.White, modifier = Modifier.size(21.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    focusRequester: FocusRequester? = null,
+    large: Boolean = false,
+    compact: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .size(when { large -> 92.dp; compact -> 54.dp; else -> 68.dp })
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
+        shape = CircleShape,
+        color = Color.Black.copy(.58f),
+        tonalElevation = 0.dp
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription, tint = Color.White, modifier = Modifier.size(if (large) 38.dp else if (compact) 22.dp else 27.dp))
+        }
+    }
+}
+
+
+@Composable
+private fun TvTextAction(text: String, focusRequester: FocusRequester, onClick: () -> Unit) {
+    Surface(onClick = onClick, modifier = Modifier.focusRequester(focusRequester), shape = RoundedCornerShape(8.dp), color = Color.Black.copy(.62f)) {
+        Text(text, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+    }
+}
+
+@Composable
+private fun TvPlayerSettingsMenu(
+    expanded: Boolean, onDismiss: () -> Unit, autoPlay: Boolean, showSkipButton: Boolean, autoSkip: Boolean,
+    subtitleEnabled: Boolean, assEffectsEnabled: Boolean, subtitleSource: String, subtitleSize: Float,
+    subtitlePosition: Float, subtitleSyncMs: Long, speed: Float, onActivate: (Int) -> Unit
+) {
+    val rows = listOf(
+        "다음 화 자동재생" to if (autoPlay) "켜짐" else "꺼짐",
+        "OP/ED 스킵 버튼" to if (showSkipButton) "켜짐" else "꺼짐",
+        "OP/ED 자동 스킵" to if (autoSkip) "켜짐" else "꺼짐",
+        "자막" to if (subtitleEnabled) "켜짐" else "꺼짐",
+        "ASS 자막 효과" to if (assEffectsEnabled) "원본 효과" else "효과 끄기",
+        "자막 소스" to subtitleSource.uppercase(),
+        "자막 크기" to "${subtitleSize.toInt()}%",
+        "자막 위치" to "${subtitlePosition.toInt()}%",
+        "자막 싱크" to "${subtitleSyncMs}ms",
+        "재생 속도" to "${String.format(Locale.US, "%.2f", speed)}x"
+    )
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, modifier = Modifier.width(360.dp)) {
+        rows.forEachIndexed { index, row ->
+            DropdownMenuItem(text = { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(row.first, Modifier.weight(1f)); Text(row.second, color = MaterialTheme.colorScheme.onSurfaceVariant) } }, onClick = { onActivate(index) })
+        }
+    }
+}
+
+
+@Composable
+private fun TvSettingsPanel(
+    selectedIndex: Int,
+    autoPlay: Boolean,
+    showSkipButton: Boolean,
+    autoSkip: Boolean,
+    subtitleEnabled: Boolean,
+    assEffectsEnabled: Boolean,
+    subtitleSource: String,
+    subtitleSize: Float,
+    subtitlePosition: Float,
+    subtitleSyncMs: Long,
+    speed: Float,
+    onClose: () -> Unit,
+    onSettingClick: (Int) -> Unit,
+    onAdjust: (Int, Int) -> Unit,
+    onActivate: (Int) -> Unit
+) {
+    val rows = listOf(
+        "다음 화 자동재생" to if (autoPlay) "켜짐" else "꺼짐",
+        "OP/ED 스킵 버튼" to if (showSkipButton) "켜짐" else "꺼짐",
+        "OP/ED 자동 스킵" to if (autoSkip) "켜짐" else "꺼짐",
+        "자막" to if (subtitleEnabled) "켜짐" else "꺼짐",
+        "ASS 자막 효과" to if (assEffectsEnabled) "원본 효과" else "효과 끄기",
+        "자막 소스" to subtitleSource.uppercase(),
+        "자막 크기" to "${subtitleSize.toInt()}%",
+        "자막 위치" to "${subtitlePosition.toInt()}%",
+        "자막 싱크" to "${subtitleSyncMs}ms",
+        "재생 속도" to "${String.format(Locale.US, "%.2f", speed)}x",
+        "화면 잠금" to "선택"
+    )
+    val rowRequesters = remember(rows.size) { List(rows.size) { FocusRequester() } }
+
+    LaunchedEffect(selectedIndex) {
+        rowRequesters.getOrNull(selectedIndex)?.requestFocus()
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 120.dp, vertical = 50.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = Color.Black.copy(alpha = .90f),
+        border = BorderStroke(2.dp, Color.White.copy(.12f))
+    ) {
+        Column(Modifier.padding(28.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("플레이어 설정", color = Color.White, fontSize = 24.sp)
+                    Text("리모컨 ↑↓ 선택 · ←→ 변경 · OK 실행", color = Color.White.copy(.55f), fontSize = 12.sp)
+                }
+                TvActionButton(icon = Icons.Default.ArrowBack, contentDescription = "설정 닫기", compact = true, onClick = onClose)
+            }
+            Spacer(Modifier.height(18.dp))
+            rows.forEachIndexed { index, pair ->
+                Surface(
+                    onClick = { onActivate(index) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp)
+                        .focusRequester(rowRequesters[index])
+                        .onFocusChanged { if (it.isFocused) onSettingClick(index) }
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when (event.key) {
+                                Key.DirectionLeft -> { onAdjust(index, -1); true }
+                                Key.DirectionRight -> { onAdjust(index, 1); true }
+                                else -> false
+                            }
+                        },
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (selectedIndex == index) Color.Gray.copy(alpha = .28f) else Color.White.copy(alpha = .055f),
+                    border = BorderStroke(2.dp, if (selectedIndex == index) Color.Gray.copy(.72f) else Color.Transparent)
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(pair.first, color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                        Text(pair.second, color = Color.White.copy(.70f), fontSize = 13.sp)
+                    }
                 }
             }
         }

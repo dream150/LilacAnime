@@ -32,6 +32,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
 import kotlin.math.roundToInt
 import com.lilac.anime.network.OfflineOpEdFingerprintStore
@@ -233,20 +235,67 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
 
             Text(
-                "더블 탭 이동 (${settings.doubleTapSeekSeconds}초)",
+                "더블탭 이동 시간 (${settings.doubleTapSeekSeconds}초)",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onBackground
             )
-            Text("재생 화면의 왼쪽/오른쪽을 두 번 탭하면 지정한 시간만큼 뒤로/앞으로 이동합니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f))
+            Text(
+                "재생 화면의 왼쪽/오른쪽을 두 번 탭했을 때 이동할 시간을 설정합니다.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
+            )
             Spacer(Modifier.height(8.dp))
-            Slider(
-                value = settings.doubleTapSeekSeconds.toFloat(),
-                onValueChange = { value ->
-                    vm.updatePlayerSettings(context, settings.copy(doubleTapSeekSeconds = value.toInt()))
+            var doubleTapSecondsInput by remember(settings.doubleTapSeekSeconds) {
+                mutableStateOf(settings.doubleTapSeekSeconds.toString())
+            }
+            OutlinedTextField(
+                value = doubleTapSecondsInput,
+                onValueChange = { input ->
+                    if (input.all { it.isDigit() }) {
+                        doubleTapSecondsInput = input
+                        input.toLongOrNull()?.let { seconds ->
+                            vm.updatePlayerSettings(context, settings.copy(doubleTapSeekSeconds = seconds))
+                        }
+                    }
                 },
-                valueRange = 5f..60f,
-                steps = 10
+                singleLine = true,
+                suffix = { Text("초") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.width(180.dp)
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            Text(
+                "뒤로/앞으로 버튼 이동 시간 (${settings.seekButtonSeekSeconds}초)",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                "재생 화면 중앙의 뒤로/앞으로 버튼을 눌렀을 때 이동할 시간을 설정합니다. 더블탭 설정과 별도로 사용할 수 있습니다.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
+            )
+            Spacer(Modifier.height(8.dp))
+            var buttonSeekSecondsInput by remember(settings.seekButtonSeekSeconds) {
+                mutableStateOf(settings.seekButtonSeekSeconds.toString())
+            }
+            OutlinedTextField(
+                value = buttonSeekSecondsInput,
+                onValueChange = { input ->
+                    if (input.all { it.isDigit() }) {
+                        buttonSeekSecondsInput = input
+                        input.toLongOrNull()?.let { seconds ->
+                            vm.updatePlayerSettings(context, settings.copy(seekButtonSeekSeconds = seconds))
+                        }
+                    }
+                },
+                singleLine = true,
+                suffix = { Text("초") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.width(180.dp)
             )
 
             Spacer(Modifier.height(16.dp))

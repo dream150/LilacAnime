@@ -71,7 +71,7 @@ fun Modifier.clickableNoIndication(onClick: () -> Unit): Modifier {
         .drawBehind {
             if (isTv && focused) {
                 drawRoundRect(
-                    color = Color.White,
+                    color = Color.Gray.copy(alpha = 0.72f),
                     style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(10.dp.toPx())
                 )
@@ -96,7 +96,7 @@ fun Modifier.tvFocusable(): Modifier {
         .drawBehind {
             if (isTv && focused) {
                 drawRoundRect(
-                    color = Color.White,
+                    color = Color.Gray.copy(alpha = 0.72f),
                     style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(10.dp.toPx())
                 )
@@ -163,6 +163,8 @@ fun LilacApp(vm: AnimeViewModel = viewModel()) {
     }
 
     val nav = rememberNavController()
+    val isTv = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+        Configuration.UI_MODE_TYPE_TELEVISION
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -184,55 +186,36 @@ fun LilacApp(vm: AnimeViewModel = viewModel()) {
     MaterialTheme(colorScheme = colors) {
         NavHost(navController = nav, startDestination = "home") {
             composable("home") {
-                HomeScreen(
-                    vm = vm,
-                    openDetail = { nav.navigate("detail/${it.id}") },
-                    onNavigate = { nav.navigate(it) }
-                )
+                if (isTv) TvHomeScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
+                else HomeScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
             }
 
             composable("all") {
-                LaunchedEffect(Unit) {
-                    vm.loadAllAnime()
+                if (isTv) TvAllAnimeScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
+                else {
+                    LaunchedEffect(Unit) { vm.loadAllAnime() }
+                    AllAnimeScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
                 }
-                AllAnimeScreen(
-                    vm = vm,
-                    openDetail = { nav.navigate("detail/${it.id}") },
-                    onNavigate = { nav.navigate(it) }
-                )
             }
 
             composable("search") {
-                SearchScreen(
-                    vm = vm,
-                    open = { nav.navigate("detail/${it.id}") },
-                    onNavigate = { nav.navigate(it) }
-                )
+                if (isTv) TvSearchScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
+                else SearchScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
             }
 
             composable("history") {
-                WatchHistoryScreen(
-                    vm = vm,
-                    open = { nav.navigate("detail/${it.id}") },
-                    onNavigate = { nav.navigate(it) }
-                )
+                if (isTv) TvHistoryScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
+                else WatchHistoryScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
             }
 
             composable("library") {
-                LibraryScreen(
-                    vm = vm,
-                    open = { nav.navigate("detail/${it.id}") },
-                    onNavigate = { nav.navigate(it) }
-                )
+                if (isTv) TvLibraryScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
+                else LibraryScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
             }
 
             composable("settings") {
-                SettingsScreen(
-                    vm = vm,
-                    themeMode = themeMode,
-                    onThemeChange = onThemeChange, // DataStore 저장 함수 연결
-                    onNavigate = { nav.navigate(it) }
-                )
+                if (isTv) TvSettingsScreen(vm, themeMode, onThemeChange, { nav.navigate(it) })
+                else SettingsScreen(vm, themeMode, onThemeChange, { nav.navigate(it) })
             }
 
             composable("detail/{id}") { backStack ->
@@ -248,18 +231,23 @@ fun LilacApp(vm: AnimeViewModel = viewModel()) {
                 val currentItem = item
                 when {
                     currentItem != null -> {
-                        DetailScreen(
-                            vm = vm,
-                            anime = currentItem,
-                            back = { nav.popBackStack() },
-                            playEpisode = { ep ->
-                                nav.navigate("player/${currentItem.id}/${Uri.encode(ep.id)}")
-                            },
-                            openRelated = { related ->
-                                vm.cacheAnime(related)
-                                nav.navigate("detail/${related.id}")
-                            }
-                        )
+                        if (isTv) {
+                            TvDetailScreen(
+                                vm = vm,
+                                anime = currentItem,
+                                back = { nav.popBackStack() },
+                                playEpisode = { ep -> nav.navigate("player/${currentItem.id}/${Uri.encode(ep.id)}") },
+                                openRelated = { related -> vm.cacheAnime(related); nav.navigate("detail/${related.id}") }
+                            )
+                        } else {
+                            DetailScreen(
+                                vm = vm,
+                                anime = currentItem,
+                                back = { nav.popBackStack() },
+                                playEpisode = { ep -> nav.navigate("player/${currentItem.id}/${Uri.encode(ep.id)}") },
+                                openRelated = { related -> vm.cacheAnime(related); nav.navigate("detail/${related.id}") }
+                            )
+                        }
                     }
                     vm.loading -> {
                         FullScreenState(message = "불러오는 중...", isLoading = true)

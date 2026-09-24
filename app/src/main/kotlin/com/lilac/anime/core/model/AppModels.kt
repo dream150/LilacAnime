@@ -58,7 +58,9 @@ data class PlayerSettings(
     // 다운로드 완료 회차에서만 수행하는 OP/ED 자동 분석
     val offlineOpEdAnalysisEnabled: Boolean = true,
     // 좌/우 더블 탭 시 이동할 시간(초)
-    val doubleTapSeekSeconds: Int = 10,
+    val doubleTapSeekSeconds: Long = 10L,
+    // 중앙 뒤로/앞으로 버튼으로 이동할 시간(초)
+    val seekButtonSeekSeconds: Long = 10L,
     // 기본 재생 배속
     val playbackSpeed: Float = 1.0f,
     val autoPlay: Boolean = true,
@@ -66,7 +68,9 @@ data class PlayerSettings(
     val vttStyleEnabled: Boolean = true,
     // VTT 전용 표시 설정
     val vttBold: Boolean = true,
-    val vttOutlineWidth: Float = 2.0f
+    val vttOutlineWidth: Float = 2.0f,
+    // ASS/SSA effects can be disabled on lower-powered TV devices.
+    val assEffectsEnabled: Boolean = true
 )
 
 data class ExoVideoQualityOption(

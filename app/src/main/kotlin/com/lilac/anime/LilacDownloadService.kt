@@ -339,13 +339,40 @@ class LilacDownloadService : Service() {
                     )
                     android.util.Log.d(
                         "AniSkip",
-                        "OFFLINE_TIMESTAMP_SAVED anime=$animeId episode=$episodeNumber segments=${aniSkipSegments.size}"
+                        "OFFLINE_TIMESTAMP_SAVED anime=$animeId episode=$episodeNumber segments=${aniSkipSegments.size} source=ANISKIP"
                     )
                 } else {
                     android.util.Log.d(
                         "AniSkip",
-                        "OFFLINE_TIMESTAMP_NONE anime=$animeId episode=$episodeNumber; offline analysis remains eligible"
+                        "OFFLINE_TIMESTAMP_NONE anime=$animeId episode=$episodeNumber; starting local analyzer fallback"
                     )
+                    if (OfflineStore.getPlayerSettings(applicationContext).offlineOpEdAnalysisEnabled) {
+                        // The analyzer may need episodes 1..5 to build its template.
+                        // It is intentionally best-effort and never blocks a
+                        // completed download from being marked completed.
+                        scope.launch(Dispatchers.Default) {
+                            runCatching {
+                                val episodes = OfflineStore.getEpisodesForAnime(applicationContext, animeId)
+                                val current = episodes.firstOrNull { it.id == episodeId }
+                                    ?: episodes.firstOrNull { it.number == episodeNumber }
+                                    ?: return@runCatching
+                                LinkkfChapterService.detectSkipSegmentsOffline(
+                                    context = applicationContext,
+                                    animeId = animeId,
+                                    currentEpisode = current,
+                                    episodes = episodes,
+                                    episodeDurationSeconds = 0,
+                                    onStatus = { android.util.Log.d("AniSkip", it) }
+                                )
+                            }.onFailure {
+                                android.util.Log.w(
+                                    "AniSkip",
+                                    "OFFLINE_ANALYZER_AFTER_DOWNLOAD_FAILED anime=$animeId episode=$episodeNumber",
+                                    it
+                                )
+                            }
+                        }
+                    }
                 }
             }.onFailure {
                 android.util.Log.w(

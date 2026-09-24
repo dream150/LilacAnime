@@ -465,6 +465,18 @@ class MpvPlayerEngine(private val context: Context) {
 
     fun clearMediaItems() = stop()
 
+    /**
+     * ASS/SSA normally uses libass script styling, which can be expensive on
+     * lower-powered TV hardware. "strip" keeps subtitle text but removes
+     * ASS override tags/effects; "no" preserves the original ASS effects.
+     */
+    fun setAssEffectsEnabled(enabled: Boolean) {
+        mpv.setOptionString("sub-ass-override", if (enabled) "no" else "strip")
+        if (currentSubtitleIsAss && currentSubtitlePath != null) {
+            runCatching { mpv.command(arrayOf("sub-reload")) }
+        }
+    }
+
     fun applySubtitleStyle(
         textColor: Int,
         borderColor: Int,
@@ -618,7 +630,7 @@ class MpvPlayerSurfaceView(
     private val engine: MpvPlayerEngine
 ) : TextureView(context), TextureView.SurfaceTextureListener {
 
-    var seekSeconds: Int = 10
+    var seekSeconds: Long = 10L
     var gesturesLocked: Boolean = false
     var onSingleTap: (() -> Unit)? = null
     var onUnlockTap: (() -> Unit)? = null
@@ -683,7 +695,7 @@ class MpvPlayerSurfaceView(
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
-            val delta = seekSeconds.coerceAtLeast(1).toDouble()
+            val delta = seekSeconds.coerceAtLeast(0L).toDouble()
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
                     if (!gesturesLocked) engine.seekBy(-delta)

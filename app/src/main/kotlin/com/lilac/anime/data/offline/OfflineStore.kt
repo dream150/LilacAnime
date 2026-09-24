@@ -57,13 +57,15 @@ object OfflineStore {
             putString("pref_subtitle_font_source", settings.subtitleFontSource)
             putBoolean("pref_show_chapter_skip_button", settings.showChapterSkipButton)
             putBoolean("pref_offline_oped_analysis_enabled", settings.offlineOpEdAnalysisEnabled)
-            putInt("pref_double_tap_seek_seconds", settings.doubleTapSeekSeconds)
+            putLong("pref_double_tap_seek_seconds", settings.doubleTapSeekSeconds)
+            putLong("pref_seek_button_seek_seconds", settings.seekButtonSeekSeconds)
             putFloat("pref_playback_speed", settings.playbackSpeed)
             putBoolean("pref_auto_play", settings.autoPlay)
             putBoolean("pref_auto_skip", settings.autoSkip)
             putBoolean("pref_vtt_style_enabled", settings.vttStyleEnabled)
             putBoolean("pref_vtt_bold", settings.vttBold)
             putFloat("pref_vtt_outline_width", settings.vttOutlineWidth)
+            putBoolean("pref_ass_effects_enabled", settings.assEffectsEnabled)
             apply()
         }
     }
@@ -110,7 +112,23 @@ object OfflineStore {
             subtitleFontSource = prefs.getString("pref_subtitle_font_source", null),
             showChapterSkipButton = prefs.getBoolean("pref_show_chapter_skip_button", true),
             offlineOpEdAnalysisEnabled = prefs.getBoolean("pref_offline_oped_analysis_enabled", true),
-            doubleTapSeekSeconds = prefs.getInt("pref_double_tap_seek_seconds", 10).coerceIn(1, 120),
+            doubleTapSeekSeconds = run {
+                val saved = try {
+                    prefs.getLong("pref_double_tap_seek_seconds", Long.MIN_VALUE)
+                } catch (_: ClassCastException) {
+                    Long.MIN_VALUE
+                }
+                if (saved != Long.MIN_VALUE) saved
+                else prefs.getInt("pref_double_tap_seek_seconds", 10).toLong()
+            },
+            seekButtonSeekSeconds = run {
+                val saved = try {
+                    prefs.getLong("pref_seek_button_seek_seconds", Long.MIN_VALUE)
+                } catch (_: ClassCastException) {
+                    Long.MIN_VALUE
+                }
+                if (saved != Long.MIN_VALUE) saved else 10L
+            },
             playbackSpeed = prefs.getFloat("pref_playback_speed", 1.0f).let { saved ->
                 val options = floatArrayOf(0.1f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
                 options.minByOrNull { kotlin.math.abs(it - saved) } ?: 1.0f
@@ -119,7 +137,8 @@ object OfflineStore {
             autoSkip = prefs.getBoolean("pref_auto_skip", true),
             vttStyleEnabled = prefs.getBoolean("pref_vtt_style_enabled", true),
             vttBold = prefs.getBoolean("pref_vtt_bold", true),
-            vttOutlineWidth = prefs.getFloat("pref_vtt_outline_width", 2.0f).coerceIn(0.5f, 6.0f)
+            vttOutlineWidth = prefs.getFloat("pref_vtt_outline_width", 2.0f).coerceIn(0.5f, 6.0f),
+            assEffectsEnabled = prefs.getBoolean("pref_ass_effects_enabled", true)
         )
     }
 
@@ -284,11 +303,18 @@ object OfflineStore {
         list.forEach { anime ->
             val json = JSONObject().apply {
                 put("id", anime.id)
+                put("anilistId", anime.anilistId ?: JSONObject.NULL)
                 put("title", anime.title)
                 put("poster", anime.poster)
                 put("backdrop", anime.backdrop)
                 put("description", anime.description)
                 put("genres", JSONArray(anime.genres))
+                put("detailUrl", anime.detailUrl)
+                put("source", anime.source)
+                put("romaji", anime.romaji)
+                put("english", anime.english)
+                put("native", anime.native)
+                put("synonyms", anime.synonyms)
             }
             array.put(json)
         }
@@ -317,11 +343,18 @@ object OfflineStore {
                 list.add(
                     Anime(
                         id = json.getString("id"),
+                        anilistId = if (json.isNull("anilistId")) null else json.optInt("anilistId").takeIf { it > 0 },
                         title = json.getString("title"),
                         poster = json.optString("poster", ""),
                         backdrop = json.optString("backdrop", ""),
                         description = json.optString("description", ""),
-                        genres = genresList
+                        genres = genresList,
+                        detailUrl = json.optString("detailUrl", ""),
+                        source = json.optString("source", ""),
+                        romaji = json.optString("romaji", ""),
+                        english = json.optString("english", ""),
+                        native = json.optString("native", ""),
+                        synonyms = json.optString("synonyms", "")
                     )
                 )
             }

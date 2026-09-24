@@ -387,31 +387,19 @@ class AnimeViewModel : ViewModel() {
             val history = OfflineStore.getWatchHistory(context)
             val settings = OfflineStore.getPlayerSettings(context)
             val source = settings.videoSourcePreference
-            val cachedList = OfflineStore.getSavedAnimeList(context, source)
-            val cacheFresh = cachedList.isNotEmpty() && OfflineStore.isAnimeListCacheFresh(context, source)
-
+            // Home is intentionally NEVER served from the catalog cache.
+            // Every home entry/re-entry asks the source for a fresh preview.
             withContext(Dispatchers.Main) {
                 library = lib
                 watchHistory = history
                 watchHistoryLoaded = true
                 playerSettings = settings
-                if (cachedList.isNotEmpty() && homeAnime.isEmpty()) {
-                    // Show local data immediately. Even a stale cache is useful while refreshing.
-                    homeAnime = cachedList.take(10)
-                    allAnime = cachedList
-                    cachedList.forEach { animeCache[it.id] = it }
-                    loading = false
-                } else if (homeAnime.isEmpty()) {
-                    loading = true
-                }
+                homeAnime = emptyList()
+                loading = true
                 error = null
             }
 
-            // A fresh cache is enough only when it actually contains the full catalog.
-            // Older builds could have stored the home preview (12/36 items) with a fresh timestamp.
-            val minimumFullCatalogSize = if (source == "reanime") 37 else 13
-            val cacheLooksComplete = cachedList.size >= minimumFullCatalogSize
-            if ((cacheFresh && cacheLooksComplete) || _isOffline.value) {
+            if (_isOffline.value) {
                 withContext(Dispatchers.Main) { loading = false }
                 return@launch
             }
@@ -421,11 +409,7 @@ class AnimeViewModel : ViewModel() {
                 if (firstPageList.isNotEmpty()) {
                     withContext(Dispatchers.Main) {
                         homeAnime = firstPageList.take(10)
-                        // The home page is only a preview. Never put it into allAnime here.
-                        firstPageList.forEach { animeCache[it.id] = it }
                     }
-                    // Preview cache only; the TTL is advanced after the full catalog succeeds.
-                    OfflineStore.saveAnimeList(context, firstPageList, source, markFresh = false)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -435,7 +419,8 @@ class AnimeViewModel : ViewModel() {
                 withContext(Dispatchers.Main) { loading = false }
             }
 
-            if (!_isOffline.value) loadAllAnime(source)
+            // IMPORTANT: home preview is completely independent from the full catalog cache.
+            // Do not load, refresh, or write the catalog here. All/Search loads it separately.
         }
     }
 
@@ -466,12 +451,9 @@ class AnimeViewModel : ViewModel() {
                     val first = repository.getHomeAnimeList(newSettings.videoSourcePreference)
                     withContext(Dispatchers.Main) {
                         homeAnime = first.take(10)
-                        // Keep the full-catalog state separate from the home preview.
-                        first.forEach { animeCache[it.id] = it }
                         loading = false
                     }
-                    OfflineStore.saveAnimeList(context, first, newSettings.videoSourcePreference)
-                    loadAllAnime(newSettings.videoSourcePreference)
+                    // Home preview is memory-only. Do not touch the persisted full-catalog cache.
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
                         loading = false
@@ -483,20 +465,17 @@ class AnimeViewModel : ViewModel() {
     }
 
     /**
-     * Loads the catalog using the existing Linkkf/Re:Anime repository path.
-     * Normal entry uses the persisted catalog while its 12-hour TTL is valid.
-     * A forced refresh deliberately bypasses that TTL and goes back to the source.
-     */
-    /**
-     * Loads the full catalog using the existing repository implementation.
-     * A normal load respects the 12-hour cache. A forced load always goes to
-     * the source, which is used by pull-to-refresh.
+     * Loads ONLY the persisted full catalog for normal All/Search entry.
+     * The home preview is intentionally not involved in this function.
+     * Network is used only when no persisted catalog exists, or on explicit refresh.
      */
     fun loadAllAnime(
         source: String = playerSettings.videoSourcePreference,
         forceRefresh: Boolean = false
     ) {
-        if (!forceRefresh && (isAllAnimeLoading || isAllAnimeFullyLoaded)) return
+        // Loading state is in-memory, while the TTL is persisted.  Do not let
+        // isAllAnimeFullyLoaded bypass the persisted TTL after 12 hours.
+        if (!forceRefresh && isAllAnimeLoading) return
 
         if (forceRefresh) {
             catalogLoadGeneration++
@@ -518,10 +497,10 @@ class AnimeViewModel : ViewModel() {
                     OfflineStore.isAnimeListCacheFresh(appContext, source)
                 }
 
-                // A previous build could have marked the home preview as fresh.
-                // Treat a 12/36-item cache as preview data, not as a full catalog.
-                val minimumFullCatalogSize = if (source == "reanime") 37 else 13
-                val cacheLooksComplete = cached.size >= minimumFullCatalogSize
+                // A persisted timestamp is the source of truth for catalog TTL.
+                // The home preview is never timestamped, so it cannot accidentally
+                // become a TTL hit.
+                val cacheLooksComplete = cached.isNotEmpty()
 
                 if (cached.isNotEmpty() && (allAnime.isEmpty() || forceRefresh)) {
                     withContext(Dispatchers.Main) {
@@ -532,10 +511,14 @@ class AnimeViewModel : ViewModel() {
                     }
                 }
 
-                if (!forceRefresh && fresh && cacheLooksComplete) {
+                // All/Search must be cache-first. Once a persisted catalog exists,
+                // do not silently hit the network just because the TTL expired.
+                // Network refresh is reserved for the explicit refresh action
+                // (forceRefresh=true) or the very first load when no cache exists.
+                if (!forceRefresh && cacheLooksComplete) {
                     Log.d(
                         "AnimeCatalog",
-                        "CACHE_HIT source=$source size=${cached.size}"
+                        "CACHE_HIT source=$source size=${cached.size} fresh=$fresh"
                     )
                     if (generation == catalogLoadGeneration) {
                         isAllAnimeFullyLoaded = true
@@ -563,7 +546,12 @@ class AnimeViewModel : ViewModel() {
 
                 if (generation != catalogLoadGeneration) return@launch
 
-                if (latestList.size >= minimumFullCatalogSize) {
+                // getAllAnimeListFlow() is the full-catalog loader and already
+                // paginates until the source stops returning pages. Therefore a
+                // non-empty completed result is a valid TTL snapshot; do not use
+                // an arbitrary item-count threshold that can prevent the cache
+                // timestamp from ever being written (especially for Re:Anime).
+                if (latestList.isNotEmpty()) {
                     OfflineStore.saveAnimeList(
                         appContext,
                         latestList,
