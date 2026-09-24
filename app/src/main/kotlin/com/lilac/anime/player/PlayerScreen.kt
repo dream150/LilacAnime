@@ -768,39 +768,54 @@ fun PlayerScreen(
         MainActivity.isVideoPlaying = true
     }
 
-    // OP/ED resolution is deliberately split by playback mode.
-    // Streaming -> AniSkip only.
-    // Offline -> saved AniSkip first, then local audio analysis when AniSkip
-    // was unavailable at download time (or this is an older offline file).
-    LaunchedEffect(currentEpisode.id, anime.id, anime.title, anime.anilistId) {
+    // AniSkip timestamps are resolved the same way as the reference player:
+    // 1) use a locally persisted aniskip.json when it exists;
+    // 2) otherwise query AniSkip directly for streaming/older episodes.
+    // The local file is checked first so an already-saved episode never needs
+    // the network just to show the OP/ED button.
+    LaunchedEffect(currentEpisode.id, anime.id, anime.title, anime.anilistId, anime.malId) {
         chapters = emptyList()
-        val offlineEpisodes = withContext(Dispatchers.IO) {
-            val localPath = MpvOfflineStore.completedPath(context, anime.id, currentEpisode.id)
-            if (localPath != null) OfflineStore.getEpisodesForAnime(context, anime.id) else emptyList()
+
+        val saved = withContext(Dispatchers.IO) {
+            OfflineStore.getChapterSkipSegments(
+                context,
+                anime.id,
+                currentEpisode.id
+            )
         }
 
-        if (offlineEpisodes.isNotEmpty()) {
-            val resolved = com.lilac.anime.network.OpEdSkipResolver.resolveOffline(
-                context = context,
-                animeId = anime.id,
-                episode = currentEpisode,
-                episodes = offlineEpisodes
-            )
-            chapters = resolved
+        if (saved.isNotEmpty()) {
+            chapters = saved
             android.util.Log.d(
                 "AniSkip",
-                "PLAYER_OFFLINE_RESOLVED anime=${anime.id} episode=${currentEpisode.number} segments=${resolved.size}"
+                "PLAYER_LOCAL_TIMESTAMP_HIT anime=${anime.id} episode=${currentEpisode.number} segments=${saved.size}"
             )
         } else {
-            val online = com.lilac.anime.network.OpEdSkipResolver.resolveOnline(
-                title = anime.title,
-                episodeNumber = currentEpisode.number,
-                anilistId = anime.anilistId
+            android.util.Log.d(
+                "AniSkip",
+                "PLAYER_API_LOOKUP_START anime=${anime.id} title=\"${anime.title}\" episode=${currentEpisode.number} anilistId=${anime.anilistId}"
             )
+
+            val online = runCatching {
+                com.lilac.anime.network.OnlineAniSkipService.getSkipSegments(
+                    title = anime.title,
+                    episodeNumber = currentEpisode.number,
+                    episodeLengthSeconds = 0,
+                    anilistId = anime.anilistId,
+                    malId = anime.malId
+                )
+            }.onFailure { error ->
+                android.util.Log.e(
+                    "AniSkip",
+                    "PLAYER_API_LOOKUP_FAILED anime=${anime.id} episode=${currentEpisode.number} ${error.javaClass.simpleName}: ${error.message}",
+                    error
+                )
+            }.getOrElse { emptyList() }
+
             chapters = online
             android.util.Log.d(
                 "AniSkip",
-                "PLAYER_ONLINE_RESOLVED anime=${anime.id} episode=${currentEpisode.number} segments=${online.size}"
+                "PLAYER_API_LOOKUP_DONE anime=${anime.id} episode=${currentEpisode.number} segments=${online.size}"
             )
         }
     }
@@ -822,9 +837,12 @@ fun PlayerScreen(
         }
     }
 
-    // Automatic OP/ED skip is deliberately state-based: seeking back into the
-    // same chapter creates a new opportunity to skip it.
+    // Automatic OP/ED skip is deliberately state-based.  Give the visible
+    // skip button a short grace period before auto-skipping so that users can
+    // actually see/use the button even when auto-skip is enabled.
     LaunchedEffect(currentEpisode.id, chapters, autoSkip) {
+        var enteredKey: String? = null
+        var enteredAtMs = 0L
         var skippedKey: String? = null
         while (isActive) {
             if (autoSkip && chapters.isNotEmpty()) {
@@ -833,14 +851,34 @@ fun PlayerScreen(
                     seconds >= it.startTime && seconds < it.endTime
                 }
                 if (active == null) {
+                    enteredKey = null
+                    enteredAtMs = 0L
                     skippedKey = null
                 } else {
                     val key = "${active.type}:${active.startTime}:${active.endTime}"
-                    if (skippedKey != key) {
+                    if (enteredKey != key) {
+                        enteredKey = key
+                        enteredAtMs = System.currentTimeMillis()
+                        skippedKey = null
+                        android.util.Log.d(
+                            "AniSkip",
+                            "CHAPTER_ENTER type=${active.type} start=${active.startTime} end=${active.endTime} position=$seconds"
+                        )
+                    }
+
+                    // Keep the button visible for 2.5 seconds before automatic
+                    // skipping. This also makes it possible to disable/override
+                    // the automatic behavior while the OP/ED button is visible.
+                    val elapsed = System.currentTimeMillis() - enteredAtMs
+                    if (skippedKey != key && elapsed >= 2500L) {
                         val target = active.endTime
-                        if (target > seconds && target - seconds <= 30.0) {
+                        if (target > seconds) {
                             engine.seekTo((target * 1000.0).toLong())
                             skippedKey = key
+                            android.util.Log.d(
+                                "AniSkip",
+                                "AUTO_SKIP type=${active.type} position=$seconds target=$target elapsedMs=$elapsed"
+                            )
                         }
                     }
                 }
@@ -1811,33 +1849,6 @@ fun PlayerScreen(
                 }
             }
 
-            // OP/ED button remains immediately above the lock button, as in the previous UI.
-            if (showSkipButton && currentChapter != null) {
-                Surface(
-                    onClick = { skipCurrentChapter() },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .tvFocusable()
-                        .padding(end = 18.dp, bottom = 78.dp),
-                    shape = RoundedCornerShape(15.dp),
-                    color = Color.Black.copy(alpha = .62f),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = .14f))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.FastForward, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(6.dp))
-                        Text(
-                            if (currentChapter.type.contains("ed", true)) "ED 스킵" else "OP 스킵",
-                            color = Color.White,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-            }
-
             Surface(
                 onClick = {
                     locked = true
@@ -1856,6 +1867,42 @@ fun PlayerScreen(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(Icons.Default.Lock, "화면 잠금", tint = Color.White, modifier = Modifier.size(21.dp))
+                }
+            }
+        }
+
+        // Keep the OP/ED skip pill outside the normal control-fade block.
+        // It must remain visible even after the playback controls disappear.
+        if (showSkipButton && currentChapter != null) {
+            val chapter = currentChapter
+            val isEd = chapter.type.contains("ed", true)
+            Surface(
+                onClick = {
+                    android.util.Log.d(
+                        "AniSkip",
+                        "BUTTON_SKIP type=${chapter.type} position=${engine.currentPosition / 1000.0} target=${chapter.endTime}"
+                    )
+                    engine.seekTo((chapter.endTime * 1000.0).toLong())
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 18.dp, bottom = if (controlsVisible && !locked) 138.dp else 28.dp)
+                    .tvFocusable(),
+                shape = RoundedCornerShape(15.dp),
+                color = Color.Black.copy(alpha = .78f),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = .18f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.FastForward, null, tint = Color.White, modifier = Modifier.size(19.dp))
+                    Spacer(Modifier.size(7.dp))
+                    Text(
+                        if (isEd) "ED 스킵" else "OP 스킵",
+                        color = Color.White,
+                        fontSize = 12.sp
+                    )
                 }
             }
         }

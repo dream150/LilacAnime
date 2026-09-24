@@ -22,6 +22,8 @@ data class Anime(
     val id: String = "",
     /** AniList media ID supplied by Linkkf.app, when available. */
     val anilistId: Int? = null,
+    /** MyAnimeList ID supplied directly by a source, when available. */
+    val malId: Int? = null,
     val title: String = "",
     val poster: String = "",
     val backdrop: String = "",

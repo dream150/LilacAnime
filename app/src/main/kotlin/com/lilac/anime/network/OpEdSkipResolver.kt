@@ -27,14 +27,16 @@ object OpEdSkipResolver {
     suspend fun resolveOnline(
         title: String,
         episodeNumber: Int,
-        anilistId: Int?
+        anilistId: Int?,
+        malId: Int? = null
     ): List<ChapterSkipSegment> {
         return runCatching {
             OnlineAniSkipService.getSkipSegments(
                 title = title,
                 episodeNumber = episodeNumber,
                 episodeLengthSeconds = 0,
-                anilistId = anilistId
+                anilistId = anilistId,
+                malId = malId
             )
         }.onFailure {
             Log.w(TAG, "ONLINE_ANISKIP_FAILED title=$title episode=$episodeNumber", it)

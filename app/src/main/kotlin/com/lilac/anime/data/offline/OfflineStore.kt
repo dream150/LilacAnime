@@ -304,6 +304,7 @@ object OfflineStore {
             val json = JSONObject().apply {
                 put("id", anime.id)
                 put("anilistId", anime.anilistId ?: JSONObject.NULL)
+                put("malId", anime.malId ?: JSONObject.NULL)
                 put("title", anime.title)
                 put("poster", anime.poster)
                 put("backdrop", anime.backdrop)
@@ -344,6 +345,7 @@ object OfflineStore {
                     Anime(
                         id = json.getString("id"),
                         anilistId = if (json.isNull("anilistId")) null else json.optInt("anilistId").takeIf { it > 0 },
+                        malId = if (json.isNull("malId")) null else json.optInt("malId").takeIf { it > 0 },
                         title = json.getString("title"),
                         poster = json.optString("poster", ""),
                         backdrop = json.optString("backdrop", ""),
@@ -369,6 +371,7 @@ object OfflineStore {
         val json = JSONObject().apply {
             put("id", anime.id)
             anime.anilistId?.let { put("anilistId", it) }
+            anime.malId?.let { put("malId", it) }
             put("title", anime.title)
             put("poster", anime.poster)
             put("backdrop", anime.backdrop)
@@ -401,6 +404,7 @@ object OfflineStore {
             Anime(
                 id = json.getString("id"),
                 anilistId = json.optInt("anilistId", 0).takeIf { it > 0 },
+                malId = json.optInt("malId", 0).takeIf { it > 0 },
                 title = json.getString("title"),
                 poster = json.optString("poster", ""),
                 backdrop = json.optString("backdrop", ""),

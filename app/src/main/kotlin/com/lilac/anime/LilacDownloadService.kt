@@ -131,13 +131,15 @@ class LilacDownloadService : Service() {
         // Resolve Linkkf's AniList ID before creating the download coroutine.
         // enqueueInternal is already suspend, so this value is available to
         // runDownload and cannot fall out of scope at the call site.
-        val resolvedAnilistId = OfflineStore.getAnime(applicationContext, animeId)?.anilistId
+        val storedAnime = OfflineStore.getAnime(applicationContext, animeId)
+        val resolvedAnilistId = storedAnime?.anilistId
             ?: try {
                 com.lilac.anime.data.LinkkfApiClient().getAnime(animeId)?.anilistId
             } catch (t: Throwable) {
                 android.util.Log.w("AniSkip", "LINKKF_ANILIST_LOOKUP_FAILED anime=$animeId", t)
                 null
             }
+        val resolvedMalId = storedAnime?.malId
 
         synchronized(lock) {
             if (jobs[key]?.isActive == true) return
@@ -196,6 +198,7 @@ class LilacDownloadService : Service() {
                         episodeNumber = episodeNumber,
                         episodeKey = episodeKey,
                         anilistId = resolvedAnilistId,
+                        malId = resolvedMalId,
                         subtitleUrl = requestedSubtitleUrl,
                         subtitleReferer = requestedSubtitleReferer
                     )
@@ -242,6 +245,7 @@ class LilacDownloadService : Service() {
         episodeNumber: Int,
         episodeKey: String,
         anilistId: Int?,
+        malId: Int?,
         subtitleUrl: String?,
         subtitleReferer: String?
     ) {
@@ -316,7 +320,8 @@ class LilacDownloadService : Service() {
                     title = animeTitle,
                     episodeNumber = episodeNumber,
                     episodeLengthSeconds = 0,
-                    anilistId = anilistId
+                    anilistId = anilistId,
+                    malId = malId
                 )
                 // AniSkip can briefly return no result during API/network
                 // hiccups. A download should make a second attempt before we
@@ -327,7 +332,8 @@ class LilacDownloadService : Service() {
                         title = animeTitle,
                         episodeNumber = episodeNumber,
                         episodeLengthSeconds = 0,
-                        anilistId = anilistId
+                        anilistId = anilistId,
+                        malId = malId
                     )
                 }
                 if (aniSkipSegments.isNotEmpty()) {

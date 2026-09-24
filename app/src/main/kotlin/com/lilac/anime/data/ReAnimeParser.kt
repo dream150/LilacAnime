@@ -88,6 +88,17 @@ object ReAnimeParser {
             .ifBlank { stringValue(item.opt("name")) }
         if (title.isBlank()) return null
 
+        // Keep provider IDs when Re:Anime exposes them. Different API builds
+        // have used several spellings, so accept the common variants.
+        val malId = firstInt(
+            anime, item,
+            "mal_id", "malId", "myanimelist_id", "myanimelistId", "myanimelist", "mal"
+        )
+        val anilistId = firstInt(
+            anime, item,
+            "anilist_id", "anilistId", "anilist", "anilist_media_id"
+        )
+
         val finalSlug = slug ?: title
             .lowercase()
             .replace(Regex("[^a-z0-9]+"), "-")
@@ -114,11 +125,14 @@ object ReAnimeParser {
 
         android.util.Log.d(
             "ReAnime",
-            "PARSED_ANIME title=$title slug=$finalSlug detailUrl=$detailUrl"
+            "PARSED_ANIME title=$title slug=$finalSlug detailUrl=$detailUrl " +
+                "anilistId=$anilistId malId=$malId"
         )
 
         return Anime(
             id = id,
+            anilistId = anilistId,
+            malId = malId,
             title = title,
             poster = poster,
             backdrop = poster,
@@ -170,6 +184,21 @@ object ReAnimeParser {
 
     private fun firstString(obj: JSONObject, vararg keys: String): String? =
         keys.asSequence().map { stringValue(obj.opt(it)) }.firstOrNull { it.isNotBlank() }
+
+    private fun firstInt(first: JSONObject, second: JSONObject, vararg keys: String): Int? =
+        keys.asSequence()
+            .mapNotNull { key ->
+                val a = first.opt(key)
+                val b = second.opt(key)
+                sequenceOf(a, b).mapNotNull { value ->
+                    when (value) {
+                        is Number -> value.toInt()
+                        is String -> value.trim().toIntOrNull()
+                        else -> null
+                    }
+                }.firstOrNull { it > 0 }
+            }
+            .firstOrNull()
 
     private fun stringValue(value: Any?): String {
         return when (value) {
