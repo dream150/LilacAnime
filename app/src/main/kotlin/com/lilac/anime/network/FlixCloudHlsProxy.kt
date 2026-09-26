@@ -8,6 +8,7 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
+import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -43,8 +44,12 @@ object FlixCloudHlsProxy : Closeable {
 
     private data class Session(
         val pkBase64: String,
-        val headers: Map<String, String>
+        val headers: Map<String, String>,
+        val createdAtMs: Long = System.currentTimeMillis()
     )
+
+    private const val SESSION_TTL_MS = 10 * 60 * 1000L
+    private const val MAX_SESSIONS = 4
 
     private val sessions = ConcurrentHashMap<String, Session>()
     @Volatile private var server: ServerSocket? = null
@@ -81,10 +86,12 @@ object FlixCloudHlsProxy : Closeable {
         ensureStarted()
 
         val id = UUID.randomUUID().toString().replace("-", "")
+        pruneSessions()
         sessions[id] = Session(
             pkBase64 = pkBase64.trim(),
             headers = parseHeaders(headers)
         )
+        pruneSessions()
         val encoded = Base64.encodeToString(
             upstreamUrl.toByteArray(StandardCharsets.UTF_8),
             Base64.URL_SAFE or Base64.NO_WRAP
@@ -98,7 +105,8 @@ object FlixCloudHlsProxy : Closeable {
         url.startsWith("http://127.0.0.1:") && url.contains("/__flix/")
 
     private fun handle(socket: Socket) {
-        socket.use { s ->
+        try {
+            socket.use { s ->
             s.soTimeout = 30_000
             val input = BufferedInputStream(s.getInputStream())
             val output = BufferedOutputStream(s.getOutputStream())
@@ -223,6 +231,16 @@ object FlixCloudHlsProxy : Closeable {
                 )
                 Log.d(TAG, "PROXY_RESPONSE kind=$kind bytes=${decoded.size} url=$upstreamUrl")
             }
+        }
+        } catch (e: IOException) {
+            // The player is allowed to close/reconnect the local HTTP connection while
+            // changing episode, quality, or server. A reset/broken pipe here is not an
+            // application crash condition.
+            Log.d(TAG, "CLIENT_DISCONNECTED: ${e.message ?: e::class.java.simpleName}")
+        } catch (e: Exception) {
+            // Never let an unexpected per-client proxy exception escape the daemon worker
+            // thread and terminate the whole Android process.
+            Log.e(TAG, "CLIENT_HANDLER_EXCEPTION", e)
         }
     }
 
@@ -390,7 +408,7 @@ object FlixCloudHlsProxy : Closeable {
         contentType: String,
         body: ByteArray,
         extraHeaders: Map<String, String> = emptyMap()
-    ) {
+    ): Boolean {
         val reason = when (code) {
             200 -> "OK"
             206 -> "Partial Content"
@@ -409,9 +427,32 @@ object FlixCloudHlsProxy : Closeable {
             for ((k, v) in extraHeaders) append("$k: $v\r\n")
             append("\r\n")
         }.toByteArray(StandardCharsets.ISO_8859_1)
-        output.write(head)
-        output.write(body)
-        output.flush()
+        return try {
+            output.write(head)
+            if (body.isNotEmpty()) output.write(body)
+            output.flush()
+            true
+        } catch (e: IOException) {
+            // Normal when mpv/WebView abandons the current request during a stream switch.
+            Log.d(TAG, "RESPONSE_WRITE_ABORTED code=$code bytes=${body.size}: ${e.message ?: e::class.java.simpleName}")
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "RESPONSE_WRITE_EXCEPTION code=$code bytes=${body.size}", e)
+            false
+        }
+    }
+
+    private fun pruneSessions() {
+        val now = System.currentTimeMillis()
+        sessions.entries.removeIf { (_, session) ->
+            now - session.createdAtMs > SESSION_TTL_MS
+        }
+        if (sessions.size > MAX_SESSIONS) {
+            sessions.entries
+                .sortedBy { it.value.createdAtMs }
+                .take((sessions.size - MAX_SESSIONS).coerceAtLeast(0))
+                .forEach { sessions.remove(it.key, it.value) }
+        }
     }
 
     @Synchronized

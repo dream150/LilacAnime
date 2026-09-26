@@ -5,6 +5,7 @@ import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.graphics.Typeface
 import android.widget.Toast
+import android.view.WindowManager
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -56,6 +57,10 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -174,6 +179,8 @@ fun PlayerScreen(
     var subtitleSettingsOpen by remember { mutableStateOf(false) }
     var subtitleSize by rememberSaveable { mutableFloatStateOf(vm.playerSettings.subtitleSize) }
     var subtitleSyncMs by rememberSaveable { mutableLongStateOf(vm.playerSettings.syncOffsetMs) }
+    var subtitleSyncInputOpen by remember { mutableStateOf(false) }
+    var subtitleSyncInputText by remember { mutableStateOf(vm.playerSettings.syncOffsetMs.toString()) }
     var subtitlePosition by rememberSaveable { mutableFloatStateOf(vm.playerSettings.subtitleBottomPaddingFraction * 100f) }
     var vttBold by rememberSaveable { mutableStateOf(vm.playerSettings.vttBold) }
     var vttStyleEnabled by rememberSaveable { mutableStateOf(vm.playerSettings.vttStyleEnabled) }
@@ -327,6 +334,8 @@ fun PlayerScreen(
             host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
             if (!isTv) {
+                // Keep the screen awake for the entire mobile playback session.
+                host.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 val controller = WindowCompat.getInsetsController(host.window, host.window.decorView)
                 controller.systemBarsBehavior =
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -336,6 +345,9 @@ fun PlayerScreen(
 
         onDispose {
             if (host != null) {
+                if (!isTv) {
+                    host.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
                 if (!isTv && host.isFinishing.not()) {
                     val controller = WindowCompat.getInsetsController(host.window, host.window.decorView)
                     controller.show(WindowInsetsCompat.Type.systemBars())
@@ -395,6 +407,7 @@ fun PlayerScreen(
                     KairanSubtitleService.findSubtitle(
                         context,
                         anime.title,
+                        anime.romaji,
                         episode.number,
                         episode.displayNumber
                     )
@@ -414,6 +427,7 @@ fun PlayerScreen(
                     CsoraSubtitleService.findSubtitle(
                         context,
                         anime.title,
+                        anime.romaji,
                         episode.number,
                         episode.displayNumber
                     )
@@ -1197,9 +1211,9 @@ fun PlayerScreen(
                                         engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, vm.playerSettings.vttOutlineWidth, subtitlePosition / 100f, false)
                                     }
                                     8 -> {
-                                        subtitleSyncMs += 250L
-                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(syncOffsetMs = subtitleSyncMs))
-                                        engine.setSubtitleDelay(subtitleSyncMs)
+                                        subtitleSyncInputText = subtitleSyncMs.toString()
+                                        settingsOpen = false
+                                        subtitleSyncInputOpen = true
                                     }
                                     9 -> {
                                         speed = when { speed < 1.0f -> 1.0f; speed < 1.25f -> 1.25f; speed < 1.5f -> 1.5f; speed < 2.0f -> 2.0f; else -> 0.5f }
@@ -1250,7 +1264,24 @@ fun PlayerScreen(
                     }
                 }
             }
-        } else if (!isTv && controlsVisible) {
+        }
+
+        if (subtitleSyncInputOpen && isTv) {
+            TvSubtitleSyncInputDialog(
+                value = subtitleSyncInputText,
+                onValueChange = { subtitleSyncInputText = it },
+                onDismiss = { subtitleSyncInputOpen = false },
+                onApply = {
+                    val parsed = subtitleSyncInputText.toLongOrNull() ?: return@TvSubtitleSyncInputDialog
+                    subtitleSyncMs = parsed
+                    vm.updatePlayerSettings(context, vm.playerSettings.copy(syncOffsetMs = parsed))
+                    engine.setSubtitleDelay(parsed)
+                    subtitleSyncInputOpen = false
+                }
+            )
+        }
+
+        if (!isTv && controlsVisible) {
             // Mobile/tablet player controls. TV uses the dedicated overlay above.
             // Top bar: back + episode context on the left, settings on the right.
             Row(
@@ -1940,6 +1971,103 @@ private fun TvActionButton(
 private fun TvTextAction(text: String, focusRequester: FocusRequester, onClick: () -> Unit) {
     Surface(onClick = onClick, modifier = Modifier.focusRequester(focusRequester), shape = RoundedCornerShape(8.dp), color = Color.Black.copy(.62f)) {
         Text(text, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+    }
+}
+
+@Composable
+private fun TvSubtitleSyncInputDialog(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onApply: () -> Unit
+) {
+    val requester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) { requester.requestFocus() }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.widthIn(min = 420.dp, max = 560.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF15151B),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = .18f))
+        ) {
+            Column(Modifier.padding(24.dp)) {
+                Text(
+                    "자막 싱크 직접 입력",
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "밀리초(ms) 단위입니다. 양수는 자막을 늦추고, 음수는 앞당깁니다.",
+                    color = Color.White.copy(alpha = .65f),
+                    fontSize = 13.sp
+                )
+                Spacer(Modifier.height(16.dp))
+
+                BasicTextField(
+                    value = value,
+                    onValueChange = { raw ->
+                        val filtered = raw.filter { it.isDigit() || it == '-' }
+                        val normalized = when {
+                            filtered.isEmpty() -> ""
+                            filtered == "-" -> "-"
+                            filtered.count { it == '-' } > 1 -> "-" + filtered.replace("-", "")
+                            filtered.indexOf('-') > 0 -> "-" + filtered.replace("-", "")
+                            else -> filtered
+                        }
+                        onValueChange(normalized)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(requester)
+                        .background(Color.White.copy(alpha = .08f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        color = Color.White,
+                        fontSize = 20.sp
+                    ),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    decorationBox = { innerTextField ->
+                        Box {
+                            if (value.isEmpty()) {
+                                Text("예: -500 / 0 / 1000", color = Color.White.copy(alpha = .35f), fontSize = 18.sp)
+                            }
+                            innerTextField()
+                        }
+                    }
+                )
+
+                Spacer(Modifier.height(18.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = onDismiss,
+                        modifier = Modifier.tvFocusable(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color.White.copy(alpha = .10f)
+                    ) {
+                        Text("취소", color = Color.White, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Surface(
+                        onClick = onApply,
+                        enabled = value.toLongOrNull() != null,
+                        modifier = Modifier.tvFocusable(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color.White
+                    ) {
+                        Text("적용", color = Color.Black, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
+                    }
+                }
+            }
+        }
     }
 }
 

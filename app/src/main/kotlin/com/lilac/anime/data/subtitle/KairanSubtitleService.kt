@@ -43,28 +43,33 @@ object KairanSubtitleService {
     private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
 
     suspend fun findSubtitle(context: Context, title: String, episodeNumber: Int): KairanSubtitleResult? =
-        findSubtitle(context, title, episodeNumber, episodeNumber.toString())
+        findSubtitle(context, title, "", episodeNumber, episodeNumber.toString())
 
     suspend fun findSubtitle(context: Context, title: String, episodeNumber: Int, episodeKey: String): KairanSubtitleResult? =
+        findSubtitle(context, title, "", episodeNumber, episodeKey)
+
+    suspend fun findSubtitle(context: Context, title: String, searchTitle: String, episodeNumber: Int, episodeKey: String = episodeNumber.toString()): KairanSubtitleResult? =
         withContext(Dispatchers.IO) {
+            val resolvedTitle = NamuWikiTitleResolver.resolve(context, searchTitle) ?: title
             try {
                 Log.d(TAG, "BUILD_MARKER=$BUILD_MARKER")
-                Log.d(TAG, "START_SEARCH title=[$title] episode=$episodeNumber")
-                val normalizedTitle = KairanTitleNormalizer.normalize(title)
+                Log.d(TAG, "START_SEARCH title=[$title] searchTitle=[$searchTitle] episode=$episodeNumber")
+                Log.d(TAG, "SUBTITLE_SEARCH_TITLE resolved=[$resolvedTitle]")
+                val normalizedTitle = KairanTitleNormalizer.normalize(resolvedTitle)
                 Log.d(TAG, "NORMALIZED_TITLE original=[$title] normalized=[$normalizedTitle]")
 
-                SubtitleStore.get(context, normalizeTitleForFile(title), episodeKey, episodeNumber, "kairan")
+                SubtitleStore.get(context, normalizeTitleForFile(resolvedTitle), episodeKey, episodeNumber, "kairan")
                     ?.takeIf { File(it).isFile }
                     ?.let {
                         val hasFonts = hasKairanFonts(context, it)
-                        val syncedRecently = isAssetScanFresh(context, title, episodeNumber, episodeKey)
+                        val syncedRecently = isAssetScanFresh(context, resolvedTitle, episodeNumber, episodeKey)
                         Log.d(TAG, "LOCAL_SUBTITLE_HIT path=$it fonts=$hasFonts assetScanFresh=$syncedRecently")
                         if (syncedRecently) {
                             return@withContext KairanSubtitleResult.DirectFile(it)
                         }
                     }
 
-                val postUrl = findBlogPost(context, title, episodeNumber, episodeKey)
+                val postUrl = findBlogPost(context, resolvedTitle, episodeNumber, episodeKey)
                     ?: run {
                         Log.w(TAG, "POST_NOT_FOUND title=[$title] episode=$episodeNumber")
                         return@withContext null
@@ -83,7 +88,7 @@ object KairanSubtitleService {
                 // first successful download would silently ignore those later assets.
                 links.forEachIndexed { index, link ->
                     val id = extractGoogleDriveId(link) ?: return@forEachIndexed
-                    val asset = downloadGoogleDriveAsset(context, id, title, episodeNumber, episodeKey, index)
+                    val asset = downloadGoogleDriveAsset(context, id, resolvedTitle, episodeNumber, episodeKey, index)
                     fontCount += asset.fontCount
                     asset.subtitlePaths.forEach { path ->
                         val priority = asset.subtitlePriority
@@ -92,10 +97,10 @@ object KairanSubtitleService {
                     }
                 }
 
-                val selected = SubtitleAssetUtil.resolveAssCandidates(context, title, episodeNumber, subtitleCandidates)
-                markAssetScan(context, title, episodeNumber, episodeKey)
+                val selected = SubtitleAssetUtil.resolveAssCandidates(context, resolvedTitle, episodeNumber, subtitleCandidates)
+                markAssetScan(context, resolvedTitle, episodeNumber, episodeKey)
                 if (selected != null) {
-                    SubtitleStore.save(context, normalizeTitleForFile(title), episodeKey, episodeNumber, "kairan", selected)
+                    SubtitleStore.save(context, normalizeTitleForFile(resolvedTitle), episodeKey, episodeNumber, "kairan", selected)
                     Log.d(TAG, "SUBTITLE_READY path=$selected fonts=$fontCount candidates=${subtitleCandidates.size}")
                     return@withContext KairanSubtitleResult.DirectFile(selected)
                 }

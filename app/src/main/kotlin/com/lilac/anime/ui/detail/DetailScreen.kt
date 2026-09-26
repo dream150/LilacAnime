@@ -524,7 +524,7 @@ fun DetailScreen(
             var kairanPath: String? = kairanReady
             if (kairanPath == null) {
                 kairanPath = try {
-                    when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                    when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, currentAnime.romaji, ep.number, ep.displayNumber)) {
                         is KairanSubtitleResult.DirectFile -> result.path
                         null -> null
                     }
@@ -537,7 +537,7 @@ fun DetailScreen(
             var csoraPath = csoraReady
             if (csoraPath == null) {
                 csoraPath = try {
-                    when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                    when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, currentAnime.romaji, ep.number, ep.displayNumber)) {
                         is KairanSubtitleResult.DirectFile -> result.path
                         null -> null
                     }
@@ -671,7 +671,7 @@ fun DetailScreen(
                         null
                     }
                     val localKairanPath = try {
-                        when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                        when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, currentAnime.romaji, ep.number, ep.displayNumber)) {
                             is KairanSubtitleResult.DirectFile -> result.path
                             null -> null
                         }
@@ -680,7 +680,7 @@ fun DetailScreen(
                         null
                     }
                     val localCsoraPath = try {
-                        when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                        when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, currentAnime.romaji, ep.number, ep.displayNumber)) {
                             is KairanSubtitleResult.DirectFile -> result.path
                             null -> null
                         }
@@ -786,7 +786,7 @@ fun DetailScreen(
                                 null
                             }
                             val localKairanPath = try {
-                                when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                                when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, currentAnime.romaji, ep.number, ep.displayNumber)) {
                                     is KairanSubtitleResult.DirectFile -> result.path
                                     null -> null
                                 }
@@ -795,7 +795,7 @@ fun DetailScreen(
                                 null
                             }
                             val localCsoraPath = try {
-                                when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                                when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, currentAnime.romaji, ep.number, ep.displayNumber)) {
                                     is KairanSubtitleResult.DirectFile -> result.path
                                     null -> null
                                 }

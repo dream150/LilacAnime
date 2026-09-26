@@ -52,30 +52,40 @@ object CsoraSubtitleService {
         context: Context,
         title: String,
         episodeNumber: Int
-    ): KairanSubtitleResult? = findSubtitle(context, title, episodeNumber, episodeNumber.toString())
+    ): KairanSubtitleResult? = findSubtitle(context, title, "", episodeNumber, episodeNumber.toString())
 
     suspend fun findSubtitle(
         context: Context,
         title: String,
         episodeNumber: Int,
         episodeKey: String
+    ): KairanSubtitleResult? = findSubtitle(context, title, "", episodeNumber, episodeKey)
+
+    suspend fun findSubtitle(
+        context: Context,
+        title: String,
+        searchTitle: String,
+        episodeNumber: Int,
+        episodeKey: String = episodeNumber.toString()
     ): KairanSubtitleResult? = withContext(Dispatchers.IO) {
-        val titleDir = File(context.filesDir, "$CACHE_DIR/${titleKey(title)}")
-        val cachedSubtitle = SubtitleStore.get(context, titleKey(title), episodeKey, episodeNumber, "csora")
+        val resolvedTitle = NamuWikiTitleResolver.resolve(context, searchTitle) ?: title
+        Log.d(TAG, "SUBTITLE_SEARCH_TITLE original=[$title] searchTitle=[$searchTitle] resolved=[$resolvedTitle]")
+        val titleDir = File(context.filesDir, "$CACHE_DIR/${titleKey(resolvedTitle)}")
+        val cachedSubtitle = SubtitleStore.get(context, titleKey(resolvedTitle), episodeKey, episodeNumber, "csora")
             ?: findFlatCachedSubtitle(titleDir, episodeKey, episodeNumber)
         val fontDir = File(titleDir, "fonts")
         val hasCachedFonts = fontDir.listFiles()?.any { file ->
             file.isFile && file.extension.lowercase(Locale.ROOT) in setOf("ttf", "otf", "ttc")
         } == true
         val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        val cacheVersion = prefs.getInt("asset_version:${titleKey(title)}#$episodeKey", 0)
+        val cacheVersion = prefs.getInt("asset_version:${titleKey(resolvedTitle)}#$episodeKey", 0)
 
         // Keep cached subtitles fast only after the multi-ASS/font asset pass has run.
         if (cachedSubtitle != null && hasCachedFonts && cacheVersion == ASSET_SCHEMA_VERSION) {
             return@withContext KairanSubtitleResult.DirectFile(cachedSubtitle)
         }
 
-        val post = findPost(context, title) ?: cachedSubtitle?.let {
+        val post = findPost(context, resolvedTitle) ?: cachedSubtitle?.let {
             return@withContext KairanSubtitleResult.DirectFile(it)
         } ?: return@withContext null
         Log.d(TAG, "POST_FOUND url=$post")
@@ -86,13 +96,13 @@ object CsoraSubtitleService {
         Log.d(TAG, "EPISODE_LINKS episode=$episodeNumber count=${links.size} labels=${links.joinToString { it.label }} fontLinks=${fontLinks.size}")
 
         if (cachedSubtitle != null) {
-            downloadFontLinks(context, fontLinks, title, episodeKey)
+            downloadFontLinks(context, fontLinks, resolvedTitle, episodeKey)
             return@withContext KairanSubtitleResult.DirectFile(cachedSubtitle)
         }
 
         val candidates = mutableListOf<SubtitleAssetUtil.AssCandidate>()
         for (link in links) {
-            val results = downloadAndExtract(context, link.url, title, episodeNumber, episodeKey)
+            val results = downloadAndExtract(context, link.url, resolvedTitle, episodeNumber, episodeKey)
             results.forEach { path ->
                 candidates += SubtitleAssetUtil.AssCandidate(path, "csora", 2)
                 Log.d(TAG, "SUBTITLE_CANDIDATE path=$path label=${link.label}")
@@ -101,13 +111,13 @@ object CsoraSubtitleService {
         if (candidates.isNotEmpty()) {
             // Some Csora posts provide fonts separately from the subtitle ZIP.
             // Font failures must never discard an otherwise valid subtitle.
-            downloadFontLinks(context, fontLinks, title, episodeKey)
+            downloadFontLinks(context, fontLinks, resolvedTitle, episodeKey)
             val episodeValidCandidates = candidates.filter {
                 SubtitleStore.subtitleMatchesEpisode(it.path, episodeNumber)
             }
             Log.d(TAG, "EPISODE_VALIDATION requested=$episodeNumber total=${candidates.size} valid=${episodeValidCandidates.size}")
             val selected = if (episodeValidCandidates.all { it.path.endsWith(".ass", true) || it.path.endsWith(".ssa", true) }) {
-                SubtitleAssetUtil.resolveAssCandidates(context, title, episodeNumber, episodeValidCandidates)
+                SubtitleAssetUtil.resolveAssCandidates(context, resolvedTitle, episodeNumber, episodeValidCandidates)
             } else {
                 episodeValidCandidates.firstOrNull()?.path
             }
@@ -115,7 +125,7 @@ object CsoraSubtitleService {
             // contain subtitles for many episodes; deleting the non-current ones
             // would force another download when those episodes are opened later.
             if (selected != null) {
-                SubtitleStore.save(context, titleKey(title), episodeKey, episodeNumber, "csora", selected)
+                SubtitleStore.save(context, titleKey(resolvedTitle), episodeKey, episodeNumber, "csora", selected)
                 prefs.edit().putInt("asset_version:${titleKey(title)}#$episodeKey", ASSET_SCHEMA_VERSION).apply()
                 return@withContext KairanSubtitleResult.DirectFile(selected)
             }

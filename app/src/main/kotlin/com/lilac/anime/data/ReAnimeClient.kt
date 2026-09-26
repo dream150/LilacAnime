@@ -45,8 +45,8 @@ class ReAnimeClient {
     /**
      * Current Re:ANIME API.
      *
-     * Search and catalog requests use:
-     * https://reanime.to/api/v1/search
+     * Search and catalog requests use the site's current internal endpoint:
+     * https://reanime.to/api/search
      *
      * limit and offset are passed through unchanged.
      */
@@ -59,7 +59,6 @@ class ReAnimeClient {
             .scheme("https")
             .host("reanime.to")
             .addPathSegment("api")
-            .addPathSegment("v1")
             .addPathSegment("search")
 
         if (query.isNotBlank()) {
@@ -106,6 +105,29 @@ class ReAnimeClient {
     }
 
 
+    /** Current TV/home preview endpoint. */
+    fun latestAired(limit: Int = 12): String {
+        val url = BASE_URL + "/api/home/latest-aired?limit=" + limit
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json")
+            .header("Accept-Language", "en-US")
+            .header("Referer", BASE_URL + "/")
+            .build()
+
+        android.util.Log.d(TAG, "HOME_API_REQUEST url=" + url)
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            android.util.Log.d(TAG, "HOME_API_RESULT code=${response.code} length=${body.length}")
+            if (!response.isSuccessful || body.isBlank()) {
+                throw IOException("Re:Anime home API HTTP ${response.code}: ${body.take(300)}")
+            }
+            return body
+        }
+    }
+
+
     /** Resolve the actual FlixCloud player links for a specific anime/episode. */
     fun getFlixServers(anilistId: Int, episodeNumber: Int): String {
         val url = "$BASE_URL/api/flix/$anilistId/$episodeNumber"
@@ -123,6 +145,42 @@ class ReAnimeClient {
             android.util.Log.d(TAG, "FLIX_RESOLVE_RESULT code=${response.code} length=${body.length}")
             if (!response.isSuccessful || body.isBlank()) {
                 throw IOException("Re:Anime Flix API HTTP ${response.code}: ${body.take(300)}")
+            }
+            return body
+        }
+    }
+
+    /**
+     * Current Re:ANIME episode API. The HTML episode selector is rendered by
+     * the site and is not reliable when fetched with plain OkHttp, so episode
+     * lists must come from /api/episodes/{slug}.
+     */
+    fun episodesAnime(slug: String): String {
+        val cleanSlug = slug.trim().trim('/')
+        require(cleanSlug.isNotBlank()) { "Re:Anime slug is empty" }
+
+        val url = BASE_URL + "/api/episodes/" + cleanSlug
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json")
+            .header("Accept-Language", "en-US")
+            .header("Referer", BASE_URL + "/anime/" + cleanSlug)
+            .build()
+
+        android.util.Log.d(TAG, "EPISODES_API_REQUEST url=$url")
+
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            android.util.Log.d(
+                TAG,
+                "EPISODES_API_RESULT code=${response.code} length=${body.length}"
+            )
+            if (!response.isSuccessful) {
+                throw IOException("Re:Anime episodes API HTTP ${response.code}: ${body.take(300)}")
+            }
+            if (body.isBlank()) {
+                throw IOException("Re:Anime episodes API empty response")
             }
             return body
         }

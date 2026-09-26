@@ -764,10 +764,25 @@ class AnimeViewModel : ViewModel() {
         episodeLoading[anime.id] = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val targetAnime = detailCache[anime.id] ?: repository.getAnimeDetail(anime, playerSettings.videoSourcePreference).also {
-                    withContext(Dispatchers.Main) {
-                        detailCache[it.id] = it
-                        animeCache[it.id] = it
+                // Re:Anime episode lists are available directly from /api/episodes/{slug}.
+                // Do not fetch the HTML detail page first; that added a slow/unnecessary
+                // request and could prevent the episode API from being reached reliably.
+                val targetAnime = if (playerSettings.videoSourcePreference == "reanime") {
+                    detailCache[anime.id] ?: anime.copy(
+                        detailUrl = anime.detailUrl.ifBlank {
+                            anime.id.removePrefix("reanime:")
+                                .trim('/')
+                                .takeIf { it.isNotBlank() }
+                                ?.let { "https://reanime.to/anime/$it" }
+                                .orEmpty()
+                        }
+                    )
+                } else {
+                    detailCache[anime.id] ?: repository.getAnimeDetail(anime, playerSettings.videoSourcePreference).also {
+                        withContext(Dispatchers.Main) {
+                            detailCache[it.id] = it
+                            animeCache[it.id] = it
+                        }
                     }
                 }
 
