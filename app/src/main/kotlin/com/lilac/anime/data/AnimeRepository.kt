@@ -49,7 +49,7 @@ class AnimeRepository {
                 val document = animenosubClient.getDocument(ANIMENOSUB_BASE_URL, ANIMENOSUB_BASE_URL + "/")
                 AnimenosubParser.parseAnimeList(document)
             }
-            "reanime" -> ReAnimeParser.parseAnimeApi(reAnimeClient.latestAired(12))
+            "reanime" -> ReAnimeParser.parseAnimeApi(reAnimeClient.catalogAnime(36, 0))
             else -> linkkfApi.getHome(page = 1, limit = 12)
         }
     }
@@ -79,71 +79,35 @@ class AnimeRepository {
         }
 
         if (source == "reanime") {
-            // Re:Anime catalog is API-only. Use the site's current /api/search
-            // endpoint and fetch a small number of pages concurrently.
-            // The API returns 36 items per page; the first short/empty page is
-            // the end of the catalog.
-            val pageSize = 36
-            val parallelPages = 3
             var offset = 0
-            var reachedEnd = false
-
-            while (!reachedEnd) {
-                val offsets = (0 until parallelPages).map { offset + it * pageSize }
-                val startedAt = System.currentTimeMillis()
-
-                val pages = coroutineScope {
-                    offsets.map { pageOffset ->
-                        async(Dispatchers.IO) {
-                            try {
-                                android.util.Log.d(
-                                    "ReAnime",
-                                    "CATALOG_API_REQUEST offset=$pageOffset limit=$pageSize"
-                                )
-                                val parsed = ReAnimeParser.parseAnimeApi(
-                                    reAnimeClient.catalogAnime(
-                                        limit = pageSize,
-                                        offset = pageOffset
-                                    )
-                                )
-                                android.util.Log.d(
-                                    "ReAnime",
-                                    "CATALOG_API_RESULT offset=$pageOffset size=${parsed.size}"
-                                )
-                                pageOffset to parsed
-                            } catch (e: Exception) {
-                                android.util.Log.e(
-                                    "ReAnime",
-                                    "CATALOG_API_FAILED offset=$pageOffset",
-                                    e
-                                )
-                                pageOffset to emptyList()
-                            }
-                        }
-                    }.awaitAll()
-                }.sortedBy { it.first }
-
-                for ((_, page) in pages) {
-                    if (page.isEmpty()) {
-                        reachedEnd = true
-                        break
-                    }
-
-                    page.forEach { result[it.id] = it }
-                    emit(result.values.toList())
-
-                    if (page.size < pageSize) {
-                        reachedEnd = true
-                        break
+            var consecutiveFailures = 0
+            while (consecutiveFailures < 3) {
+                var page: List<Anime> = emptyList()
+                var lastError: Throwable? = null
+                repeat(3) { attempt ->
+                    if (page.isNotEmpty()) return@repeat
+                    try {
+                        android.util.Log.d("ReAnime", "CATALOG_REQUEST offset=$offset limit=36 attempt=${attempt + 1}")
+                        page = ReAnimeParser.parseAnimeApi(reAnimeClient.catalogAnime(limit = 36, offset = offset))
+                        android.util.Log.d("ReAnime", "CATALOG_PAGE offset=$offset size=${page.size}")
+                    } catch (e: Exception) {
+                        lastError = e
+                        android.util.Log.e("ReAnime", "CATALOG_FAILED offset=$offset attempt=${attempt + 1}", e)
+                        kotlinx.coroutines.delay(400L)
                     }
                 }
-
-                android.util.Log.d(
-                    "ReAnime",
-                    "CATALOG_BATCH_DONE pages=${pages.size} total=${result.size} elapsed=${System.currentTimeMillis() - startedAt}ms"
-                )
-
-                offset += parallelPages * pageSize
+                if (page.isEmpty()) {
+                    consecutiveFailures++
+                    if (lastError != null) android.util.Log.e("ReAnime", "CATALOG_PAGE_EMPTY offset=$offset failures=$consecutiveFailures")
+                    if (consecutiveFailures >= 3) break
+                    continue
+                }
+                consecutiveFailures = 0
+                page.forEach { result[it.id] = it }
+                emit(result.values.toList())
+                if (page.size < 36) break
+                offset += 36
+                kotlinx.coroutines.delay(150L)
             }
             return@flow
         }
@@ -267,40 +231,24 @@ class AnimeRepository {
                 .trim()
             if (slug.isBlank()) return emptyList()
 
-            // Re:ANIME currently exposes the episode selector in the server-rendered
-            // anime page, while /api/episodes/{slug} may return the normal HTML page
-            // with HTTP 404. Parse the detail page first so a stale/removed API
-            // endpoint cannot prevent the episode list from loading.
-            android.util.Log.d("ReAnime", "EPISODE_HTML_REQUEST detail=${anime.detailUrl}")
-            runCatching {
-                val detailDocument = reAnimeClient.getDocument(anime.detailUrl, REANIME_BASE_URL + "/")
-                ReAnimeParser.parseEpisodes(detailDocument, anime)
-            }.onFailure {
-                android.util.Log.w("ReAnime", "EPISODE_HTML_FAILED slug=$slug", it)
-            }.getOrNull()?.takeIf { it.isNotEmpty() }?.let {
-                android.util.Log.d("ReAnime", "EPISODE_HTML_RESULT slug=$slug count=${it.size}")
-                return it
+            // The anime page contains the complete episode selector on the current
+            // Re:Anime site. The /watch/... page is episode-specific and may expose
+            // only the current episode, so do not use it as the primary source.
+            android.util.Log.d("ReAnime", "EPISODE_REQUEST detail=${anime.detailUrl}")
+            val detailDocument = reAnimeClient.getDocument(anime.detailUrl, REANIME_BASE_URL + "/")
+            val detailEpisodes = ReAnimeParser.parseEpisodes(detailDocument, anime)
+            if (detailEpisodes.isNotEmpty()) {
+                android.util.Log.d("ReAnime", "EPISODE_RESULT slug=$slug count=${detailEpisodes.size}")
+                return detailEpisodes
             }
 
-            // Compatibility fallback for older Re:ANIME deployments that still
-            // expose the JSON episode endpoint. A 404 here is non-fatal.
-            android.util.Log.d("ReAnime", "EPISODE_API_FALLBACK slug=$slug")
-            try {
-                val apiEpisodes = ReAnimeParser.parseEpisodeApi(
-                    reAnimeClient.episodesAnime(slug),
-                    anime
-                )
-                android.util.Log.d("ReAnime", "EPISODE_API_RESULT slug=$slug count=${apiEpisodes.size}")
-                if (apiEpisodes.isNotEmpty()) return apiEpisodes
-            } catch (e: Exception) {
-                android.util.Log.w("ReAnime", "EPISODE_API_FALLBACK_FAILED slug=$slug", e)
-            }
-
+            // Fallback for pages that render the selector only after opening the
+            // watch route.
             val episodeUrl = REANIME_BASE_URL + "/watch/" + slug + "?ep=1"
-            android.util.Log.d("ReAnime", "EPISODE_WATCH_FALLBACK url=$episodeUrl")
+            android.util.Log.d("ReAnime", "EPISODE_FALLBACK url=$episodeUrl")
             val watchDocument = reAnimeClient.getDocument(episodeUrl, anime.detailUrl)
             val fallbackEpisodes = ReAnimeParser.parseEpisodes(watchDocument, anime)
-            android.util.Log.d("ReAnime", "EPISODE_WATCH_RESULT slug=$slug count=${fallbackEpisodes.size}")
+            android.util.Log.d("ReAnime", "EPISODE_FALLBACK_RESULT slug=$slug count=${fallbackEpisodes.size}")
             return fallbackEpisodes
         }
         if (source == "animenosub") {

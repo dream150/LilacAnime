@@ -7,21 +7,26 @@ import com.lilac.anime.ui.navigation.AppScaffold
 import com.lilac.anime.ui.theme.*
 import com.lilac.anime.viewmodel.*
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items as rowItems
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,101 +39,38 @@ fun SearchScreen(
     onNavigate: (String) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    var tagPanelOpen by remember { mutableStateOf(false) }
+    var formatId by remember { mutableStateOf<Int?>(null) }
+    var genreId by remember { mutableStateOf<Int?>(null) }
+    var yearId by rememberSaveable { mutableStateOf<Int?>(null) }
+    var filterDrawerOpen by rememberSaveable { mutableStateOf(false) }
 
-    // 0 = 안함, 1 = 선택(포함), -1 = 제외.
-    val tagStates = remember { mutableStateMapOf<String, Int>() }
     val isLinkkf = vm.playerSettings.videoSourcePreference == "linkkf"
+    val selectedFilterActive = formatId != null || genreId != null || yearId != null
 
+    // Filter labels may be refreshed independently, but the anime result set itself
+    // is ALWAYS the persisted/full catalog loaded by loadAllAnime().
     LaunchedEffect(isLinkkf) {
         if (isLinkkf) vm.loadLinkkfFilterTags()
-        vm.loadAllAnime()
     }
 
-    val includeFormatIds = tagStates
-        .filter { it.value == 1 && it.key.startsWith("format:") }
-        .mapNotNull { it.key.removePrefix("format:").toIntOrNull() }
-    val includeGenreIds = tagStates
-        .filter { it.value == 1 && it.key.startsWith("genre:") }
-        .mapNotNull { it.key.removePrefix("genre:").toIntOrNull() }
-    val includeYearIds = tagStates
-        .filter { it.value == 1 && it.key.startsWith("year:") }
-        .mapNotNull { it.key.removePrefix("year:").toIntOrNull() }
-
-    val includeMode = includeFormatIds.isNotEmpty() || includeGenreIds.isNotEmpty() || includeYearIds.isNotEmpty()
-    val hasAnyTagState = tagStates.values.any { it != 0 }
-
-    // Linkkf의 포함 필터는 기존 Linkkf API를 사용한다.
-    // 선택(포함)이 없을 때는 기존 전체 목록을 사용하고,
-    // 제외 태그는 API 결과에 대해 로컬에서 한 번 더 적용한다.
-    LaunchedEffect(isLinkkf, includeFormatIds, includeGenreIds, includeYearIds) {
-        if (isLinkkf && includeMode) {
-            vm.loadLinkkfFilteredAnime(
-                page = 1,
-                formatIds = includeFormatIds,
-                genreIds = includeGenreIds,
-                yearIds = includeYearIds
-            )
-        }
-    }
-
-    val excludedGenreNames = tagStates
-        .filter { it.value == -1 && it.key.startsWith("genre:") }
-        .mapNotNull { entry ->
-            vm.linkkfGenreTags.firstOrNull { it.id.toString() == entry.key.removePrefix("genre:") }?.name
-        }
-        .toSet()
-    val excludedFormatNames = tagStates
-        .filter { it.value == -1 && it.key.startsWith("format:") }
-        .mapNotNull { entry ->
-            vm.linkkfFormatTags.firstOrNull { it.id.toString() == entry.key.removePrefix("format:") }?.name
-        }
-        .toSet()
-    val excludedYearNames = tagStates
-        .filter { it.value == -1 && it.key.startsWith("year:") }
-        .mapNotNull { entry ->
-            vm.linkkfYearTags.firstOrNull { it.id.toString() == entry.key.removePrefix("year:") }?.name
-        }
-        .toSet()
-
+    val selectedFormat = vm.linkkfFormatTags.firstOrNull { it.id == formatId }?.name
+    val selectedGenre = vm.linkkfGenreTags.firstOrNull { it.id == genreId }?.name
+    val selectedYear = vm.linkkfYearTags.firstOrNull { it.id == yearId }?.name
     val q = query.trim()
-    val sourceResults = if (isLinkkf && includeMode) {
-        vm.linkkfFilterResults
-    } else {
+
+    val results = remember(q, vm.allAnime, formatId, genreId, yearId, selectedFormat, selectedGenre, selectedYear) {
         vm.allAnime
+            .distinctBy { it.id }
+            .filter { anime ->
+                val queryMatch = q.isBlank() ||
+                    anime.title.contains(q, ignoreCase = true) ||
+                    anime.genres.any { it.contains(q, ignoreCase = true) }
+                val formatMatch = selectedFormat == null || anime.format.equals(selectedFormat, ignoreCase = true)
+                val genreMatch = selectedGenre == null || anime.genres.any { it.equals(selectedGenre, ignoreCase = true) }
+                val yearMatch = selectedYear == null || anime.year == selectedYear
+                queryMatch && formatMatch && genreMatch && yearMatch
+            }
     }
-
-    val results = sourceResults
-        .distinctBy { it.id }
-        .filter { anime ->
-            val queryMatch = q.isBlank() ||
-                anime.title.contains(q, ignoreCase = true) ||
-                anime.genres.any { it.contains(q, ignoreCase = true) }
-
-            val genreExcluded = isLinkkf && excludedGenreNames.any { ex ->
-                anime.genres.any { it.equals(ex, ignoreCase = true) }
-            }
-            val formatExcluded = isLinkkf && excludedFormatNames.any { ex ->
-                anime.format.equals(ex, ignoreCase = true)
-            }
-            val yearExcluded = isLinkkf && excludedYearNames.any { ex ->
-                anime.year.equals(ex, ignoreCase = true)
-            }
-
-            queryMatch && !genreExcluded && !formatExcluded && !yearExcluded
-        }
-
-    fun cycle(key: String) {
-        val current = tagStates[key] ?: 0
-        tagStates[key] = when (current) {
-            0 -> 1
-            1 -> -1
-            else -> 0
-        }
-    }
-
-    val includeCount = includeFormatIds.size + includeGenreIds.size + includeYearIds.size
-    val excludeCount = tagStates.values.count { it == -1 }
 
     AppScaffold(selected = "search", onSelect = onNavigate) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
@@ -151,32 +93,37 @@ fun SearchScreen(
                     shape = RoundedCornerShape(18.dp),
                     singleLine = true
                 )
+            }
 
-                if (isLinkkf) {
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Button(
-                            onClick = { tagPanelOpen = true },
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.Tune, contentDescription = null)
-                            Spacer(Modifier.width(7.dp))
-                            Text("태그 필터")
-                        }
-                        if (hasAnyTagState) {
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "선택 $includeCount · 제외 $excludeCount",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = .65f)
-                            )
-                        }
+            if (isLinkkf) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (selectedFilterActive) {
+                        Text(
+                            "필터 ${listOf(formatId, genreId, yearId).count { it != null }}개",
+                            modifier = Modifier.padding(end = 8.dp),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { filterDrawerOpen = true },
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("태그 필터")
                     }
                 }
             }
 
             Text(
-                "${results.size}개 작품",
+                "${results.size}개 작품 · 캐시된 전체 목록",
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
@@ -184,11 +131,7 @@ fun SearchScreen(
 
             if (results.isEmpty()) {
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    if (isLinkkf && vm.linkkfFilterLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(28.dp))
-                    } else {
-                        Text("검색 결과가 없습니다.")
-                    }
+                    Text("검색 결과가 없습니다.")
                 }
             } else {
                 LazyColumn(
@@ -202,111 +145,124 @@ fun SearchScreen(
                 }
             }
         }
-    }
 
-    if (tagPanelOpen && isLinkkf) {
-        AlertDialog(
-            onDismissRequest = { tagPanelOpen = false },
-            title = {
-                Column {
-                    Text("태그 필터", fontWeight = FontWeight.Bold)
-                    Text(
-                        "선택 → 제외 → 안함 순으로 변경됩니다.",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = .6f)
-                    )
-                }
-            },
-            text = {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+        if (isLinkkf && filterDrawerOpen) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clickable { filterDrawerOpen = false }
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.38f))
+                )
+                Surface(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(330.dp)
+                        .align(Alignment.CenterEnd)
+                        .clickable { },
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp,
+                    shadowElevation = 12.dp
                 ) {
-                    item { Text("시즌 타입", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp)) }
-                    items(vm.linkkfFormatTags, key = { "m-f-${it.id}" }) { tag ->
-                        MobileTagChoice(
-                            label = tag.name,
-                            state = tagStates["format:${tag.id}"] ?: 0,
-                            onClick = { cycle("format:${tag.id}") }
-                        )
-                    }
-                    item { Text("장르", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp)) }
-                    items(vm.linkkfGenreTags, key = { "m-g-${it.id}" }) { tag ->
-                        MobileTagChoice(
-                            label = tag.name,
-                            state = tagStates["genre:${tag.id}"] ?: 0,
-                            onClick = { cycle("genre:${tag.id}") }
-                        )
-                    }
-                    item { Text("연도", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp)) }
-                    items(vm.linkkfYearTags, key = { "m-y-${it.id}" }) { tag ->
-                        MobileTagChoice(
-                            label = tag.name,
-                            state = tagStates["year:${tag.id}"] ?: 0,
-                            onClick = { cycle("year:${tag.id}") }
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { tagPanelOpen = false }) {
-                    Text("닫기")
-                }
-            },
-            dismissButton = {
-                if (hasAnyTagState) {
-                    TextButton(onClick = { tagStates.clear() }) {
-                        Text("전체 초기화")
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 18.dp, vertical = 18.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("태그 필터", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "원하는 조건을 선택하세요.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = .6f)
+                                )
+                            }
+                            IconButton(onClick = { filterDrawerOpen = false }) {
+                                Icon(Icons.Default.Close, contentDescription = "닫기")
+                            }
+                        }
+
+                        Spacer(Modifier.height(12.dp))
+
+                        Column(
+                            Modifier
+                                .weight(1f)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            FilterSection("시즌 타입", vm.linkkfFormatTags, formatId) {
+                                formatId = if (formatId == it) null else it
+                            }
+                            FilterSection("장르", vm.linkkfGenreTags, genreId) {
+                                genreId = if (genreId == it) null else it
+                            }
+                            FilterSection("연도", vm.linkkfYearTags.take(20), yearId) {
+                                yearId = if (yearId == it) null else it
+                            }
+                        }
+
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    formatId = null
+                                    genreId = null
+                                    yearId = null
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text("초기화") }
+                            Button(
+                                onClick = { filterDrawerOpen = false },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text("적용") }
+                        }
                     }
                 }
             }
-        )
-    }
-}
-
-@Composable
-private fun MobileTagChoice(
-    label: String,
-    state: Int,
-    onClick: () -> Unit
-) {
-    val (icon, text) = when (state) {
-        1 -> Icons.Default.CheckCircle to "선택"
-        -1 -> Icons.Default.RemoveCircle to "제외"
-        else -> Icons.Default.RadioButtonUnchecked to "안함"
-    }
-    val containerColor = when (state) {
-        1 -> MaterialTheme.colorScheme.primaryContainer
-        -1 -> MaterialTheme.colorScheme.errorContainer
-        else -> MaterialTheme.colorScheme.surfaceVariant
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(21.dp))
-        Spacer(Modifier.width(10.dp))
-        Text(label, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.width(8.dp))
-        Surface(
-            color = containerColor,
-            shape = RoundedCornerShape(7.dp)
-        ) {
-            Text(
-                text,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold
-            )
         }
     }
 }
 
+@Composable
+private fun FilterSection(
+    title: String,
+    tags: List<LinkkfApiClient.FilterTag>,
+    selected: Int?,
+    onSelect: (Int) -> Unit
+) {
+    if (tags.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+        Text(
+            title,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            rowItems(tags) { tag ->
+                FilterChip(
+                    selected = selected == tag.id,
+                    onClick = { onSelect(tag.id) },
+                    label = { Text(tag.name, maxLines = 1) }
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun SearchResultRow(anime: Anime, open: (Anime) -> Unit) {

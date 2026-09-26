@@ -42,14 +42,43 @@ class LinkkfApiClient {
             .build()
 
         android.util.Log.d("LinkkfAPI", "REQUEST url=$url")
-        client.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            android.util.Log.d("LinkkfAPI", "RESPONSE code=${response.code} length=${body.length}")
-            if (!response.isSuccessful) {
-                throw IllegalStateException("Linkkf API HTTP ${response.code}: $url")
+
+        var lastCode = -1
+        var lastError: Throwable? = null
+        repeat(3) { attempt ->
+            try {
+                client.newCall(request).execute().use { response ->
+                    val body = response.body?.string().orEmpty()
+                    lastCode = response.code
+                    android.util.Log.d(
+                        "LinkkfAPI",
+                        "RESPONSE code=${response.code} length=${body.length} attempt=${attempt + 1}"
+                    )
+                    if (response.isSuccessful) return body
+
+                    // Cloudflare-style 522 is commonly transient. Retry before
+                    // surfacing the failure to the repository/UI. Other 5xx
+                    // responses also get one or two cheap retries.
+                    if (response.code !in 500..599 || attempt == 2) {
+                        throw IllegalStateException("Linkkf API HTTP ${response.code}: $url")
+                    }
+                }
+            } catch (error: java.io.IOException) {
+                lastError = error
+                if (attempt == 2) throw error
             }
-            return body
+            try {
+                Thread.sleep(350L * (attempt + 1))
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw interrupted
+            }
         }
+
+        throw IllegalStateException(
+            "Linkkf API request failed code=$lastCode: $url",
+            lastError
+        )
     }
 
     fun getHome(page: Int = 1, limit: Int = 12): List<Anime> {

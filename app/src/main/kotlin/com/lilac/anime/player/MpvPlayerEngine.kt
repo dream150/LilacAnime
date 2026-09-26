@@ -237,26 +237,36 @@ class MpvPlayerEngine(private val context: Context) {
     }
 
     private fun updateProperty(property: String) {
-        when (property) {
-            "time-pos" -> {
-                currentPosition = ((mpv.getPropertyDouble("time-pos") ?: 0.0) * 1000.0)
-                    .toLong().coerceAtLeast(0L)
-            }
-            "duration" -> {
-                duration = ((mpv.getPropertyDouble("duration") ?: 0.0) * 1000.0)
-                    .toLong().coerceAtLeast(0L)
-            }
-            "pause" -> {
-                isPlaying = mpv.getPropertyBoolean("pause") != true
-            }
-            "eof-reached" -> {
-                if (mpv.getPropertyBoolean("eof-reached") == true) {
-                    // END_FILE이 뒤따라와도 generation dedup으로 같은 회차를
-                    // 두 번 자동재생하지 않는다.
-                    signalPlaybackEnded(loadedLoadGeneration)
+        // During an episode/server switch libmpv can still deliver delayed
+        // property notifications after the old media has already been torn
+        // down. Querying time-pos/duration/eof-reached at that moment makes
+        // native mpv print "property unavailable" and can race the next load.
+        if (playbackState == STATE_IDLE) return
+
+        runCatching {
+            when (property) {
+                "time-pos" -> {
+                    val value = mpv.getPropertyDouble("time-pos") ?: return@runCatching
+                    currentPosition = (value * 1000.0).toLong().coerceAtLeast(0L)
                 }
+                "duration" -> {
+                    val value = mpv.getPropertyDouble("duration") ?: return@runCatching
+                    duration = (value * 1000.0).toLong().coerceAtLeast(0L)
+                }
+                "pause" -> {
+                    isPlaying = mpv.getPropertyBoolean("pause") != true
+                }
+                "eof-reached" -> {
+                    if (mpv.getPropertyBoolean("eof-reached") == true) {
+                        signalPlaybackEnded(loadedLoadGeneration)
+                    }
+                }
+                "sub-text" -> subtitleText = mpv.getPropertyString("sub-text") ?: ""
             }
-            "sub-text" -> subtitleText = mpv.getPropertyString("sub-text") ?: ""
+        }.onFailure {
+            // A property can disappear while mpv is replacing the media.
+            // This is expected during teardown, so never propagate it.
+            Log.d(TAG, "MPV_PROPERTY_UNAVAILABLE property=$property")
         }
     }
 

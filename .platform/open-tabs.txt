@@ -1,4 +1,2 @@
 #v2
 0
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/player/PlayerScreen.kt	83	0	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/search/SearchScreen.kt	1078	2	text

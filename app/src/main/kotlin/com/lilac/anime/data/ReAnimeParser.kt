@@ -88,11 +88,6 @@ object ReAnimeParser {
             .ifBlank { stringValue(item.opt("name")) }
         if (title.isBlank()) return null
 
-        // Re:ANIME's display title is already the English search title we want
-        // to feed into NamuWiki for Korean title resolution. Do not depend on
-        // a separate romaji/romanized field from the API.
-        val romaji = title
-
         // Keep provider IDs when Re:Anime exposes them. Different API builds
         // have used several spellings, so accept the common variants.
         val malId = firstInt(
@@ -143,7 +138,6 @@ object ReAnimeParser {
             backdrop = poster,
             genres = genres,
             description = description,
-            romaji = romaji,
             detailUrl = detailUrl
         )
     }
@@ -190,9 +184,6 @@ object ReAnimeParser {
 
     private fun firstString(obj: JSONObject, vararg keys: String): String? =
         keys.asSequence().map { stringValue(obj.opt(it)) }.firstOrNull { it.isNotBlank() }
-
-    private fun firstStringFromObject(value: Any?, vararg keys: String): String? =
-        (value as? JSONObject)?.let { firstString(it, *keys) }
 
     private fun firstInt(first: JSONObject, second: JSONObject, vararg keys: String): Int? =
         keys.asSequence()
@@ -257,104 +248,6 @@ object ReAnimeParser {
             original.poster
         ).firstOrNull { it.isNotBlank() }.orEmpty()
         return original.copy(title = title, description = description, poster = poster, backdrop = poster)
-    }
-
-    /** Parse the JSON returned by Re:ANIME /api/episodes/{slug}. */
-    fun parseEpisodeApi(json: String, anime: Anime): List<Episode> {
-        val rootObject = runCatching { JSONObject(json) }.getOrNull()
-        val rootArray = runCatching { JSONArray(json) }.getOrNull()
-        val candidates = when {
-            rootArray != null -> rootArray
-            rootObject != null -> findEpisodeArray(rootObject)
-            else -> JSONArray()
-        }
-
-        val slug = extractSlug(anime.detailUrl)
-            ?: anime.id.removePrefix(ID_PREFIX).trim('/')
-        if (slug.isBlank()) return emptyList()
-
-        val result = linkedMapOf<String, Episode>()
-        for (i in 0 until candidates.length()) {
-            val raw = candidates.optJSONObject(i) ?: continue
-            val item = raw.optJSONObject("episode") ?: raw
-
-            // Some API responses wrap the actual episode object one more level.
-            val payload = item.optJSONObject("data") ?: item.optJSONObject("episode") ?: item
-
-            val number = firstPositiveInt(
-                payload, item, raw,
-                "number", "episode", "episodeNumber", "episode_number",
-                "ep", "epNumber", "episode_no", "episodeNo"
-            ) ?: continue
-
-            val display = number.toString()
-            val title = firstString(
-                payload, item, raw,
-                "title", "name", "episode_title", "episodeTitle"
-            ).ifBlank { "Episode $display" }
-
-            // The player route is stable even when the API response does not
-            // include an explicit watch URL.
-            val videoUrl = BASE_URL + "/watch/" + slug + "?ep=" + number
-            val id = ID_PREFIX + slug + ":" + display
-            result[id] = Episode(
-                id = id,
-                number = number,
-                title = title,
-                videoUrl = videoUrl,
-                displayNumber = display
-            )
-        }
-
-        val episodes = result.values.sortedBy { it.number }
-        android.util.Log.d(
-            "ReAnime",
-            "PARSED_EPISODE_API slug=$slug count=${episodes.size}"
-        )
-        return episodes
-    }
-
-    private fun findEpisodeArray(root: JSONObject): JSONArray {
-        val keys = listOf("data", "episodes", "results", "items")
-        for (key in keys) {
-            root.optJSONArray(key)?.let { return it }
-            val nested = root.optJSONObject(key)
-            if (nested != null) {
-                for (nestedKey in keys) {
-                    nested.optJSONArray(nestedKey)?.let { return it }
-                }
-            }
-        }
-        return JSONArray()
-    }
-
-    private fun firstPositiveInt(vararg args: Any): Int? {
-        val objects = args.filterIsInstance<JSONObject>()
-        val keys = args.dropWhile { it is JSONObject }.filterIsInstance<String>()
-        for (key in keys) {
-            for (obj in objects) {
-                val value = obj.opt(key)
-                val number = when (value) {
-                    is Number -> value.toInt()
-                    is String -> value.trim().toIntOrNull()
-                    else -> null
-                }
-                if (number != null && number > 0) return number
-            }
-        }
-        return null
-    }
-
-    private fun firstString(vararg args: Any): String {
-        val objects = args.filterIsInstance<JSONObject>()
-        val keys = args.dropWhile { it is JSONObject }.filterIsInstance<String>()
-        for (key in keys) {
-            for (obj in objects) {
-                val value = stringValue(obj.opt(key))
-                if (value.isNotBlank()) return value
-            }
-        }
-        return ""
     }
 
     fun parseEpisodes(document: Document, anime: Anime): List<Episode> {
