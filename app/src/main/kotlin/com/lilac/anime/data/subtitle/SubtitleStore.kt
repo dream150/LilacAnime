@@ -57,7 +57,7 @@ object SubtitleStore {
         }
 
         // New Linkkf VTT cache format.
-        Regex("(?:^|_)ep_([a-z0-9._-]+)$", RegexOption.IGNORE_CASE)
+        Regex("(?:^|_)ep_([a-z0-9._-]+?)(?:_(?:linkkf|reanime))?$", RegexOption.IGNORE_CASE)
             .find(name)?.groupValues?.getOrNull(1)?.let { key ->
                 val numeric = key.toIntOrNull()
                 return numeric == episodeNumber
@@ -93,7 +93,7 @@ object SubtitleStore {
         val name = file.nameWithoutExtension.lowercase(java.util.Locale.ROOT)
         val normalizedKey = safeEpisodeKey(episodeKey)
 
-        Regex("(?:^|_)ep_([a-z0-9._-]+)$", RegexOption.IGNORE_CASE)
+        Regex("(?:^|_)ep_([a-z0-9._-]+?)(?:_(?:linkkf|reanime))?$", RegexOption.IGNORE_CASE)
             .find(name)?.groupValues?.getOrNull(1)?.let { generatedKey ->
                 return generatedKey == normalizedKey
             }
@@ -193,7 +193,7 @@ object SubtitleStore {
 
     suspend fun list(context: Context, animeId: String, episodeKey: String, episodeNumber: Int): List<SavedSubtitle> = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        listOf("linkkf", "kairan", "csora").flatMap { source ->
+        listOf("linkkf", "reanime", "kairan", "csora").flatMap { source ->
             val primary = prefs.getString(key(animeId, episodeKey, source), null)
             val stored = prefs.getStringSet(allPathsKey(animeId, episodeKey, source), emptySet()).orEmpty()
             val paths = (stored + listOfNotNull(primary)).distinct()

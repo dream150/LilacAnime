@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -109,6 +110,7 @@ import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.NamuWikiTitleResolver
 import com.lilac.anime.data.ReAnimeNativeTitleResolver
 import com.lilac.anime.data.subtitle.StreamUrlExtractor
+import com.lilac.anime.data.subtitle.SubtitleTrack
 import com.lilac.anime.data.subtitle.downloadSubtitleFile
 import com.lilac.anime.network.LinkkfPlayerResolver
 import com.lilac.anime.network.FlixCloudHlsProxy
@@ -149,6 +151,8 @@ fun PlayerScreen(
     var streamReferer by remember { mutableStateOf<String?>(null) }
     var subtitleUrl by remember { mutableStateOf<String?>(null) }
     var subtitleReferer by remember { mutableStateOf<String?>(null) }
+    var reAnimeSubtitleTracks by remember { mutableStateOf<List<SubtitleTrack>>(emptyList()) }
+    var selectedReAnimeSubtitleUrl by remember { mutableStateOf<String?>(null) }
     var localSubtitle by remember { mutableStateOf<String?>(null) }
     var resolvedVideoPageUrl by remember { mutableStateOf<String?>(null) }
     var parsedStreamingQualities by remember { mutableStateOf<List<StreamQuality>>(emptyList()) }
@@ -176,7 +180,7 @@ fun PlayerScreen(
     var tvNavCol by rememberSaveable { mutableStateOf(2) }
     var tvSettingsIndex by rememberSaveable { mutableStateOf(0) }
     val focusManager = LocalFocusManager.current
-    var subtitleSettingsOpen by remember { mutableStateOf(false) }
+    var reAnimeSubtitleTrackPickerOpen by remember { mutableStateOf(false) }
     var subtitleSize by rememberSaveable { mutableFloatStateOf(vm.playerSettings.subtitleSize) }
     var subtitleSyncMs by rememberSaveable { mutableLongStateOf(vm.playerSettings.syncOffsetMs) }
     var subtitlePosition by rememberSaveable { mutableFloatStateOf(vm.playerSettings.subtitleBottomPaddingFraction * 100f) }
@@ -288,6 +292,8 @@ fun PlayerScreen(
         subtitleUrl = null
         subtitleReferer = null
         localSubtitle = null
+        reAnimeSubtitleTracks = emptyList()
+        selectedReAnimeSubtitleUrl = null
         resolvedVideoPageUrl = null
         parsedStreamingQualities = emptyList()
         selectedStreamingQuality = null
@@ -385,7 +391,7 @@ fun PlayerScreen(
                 SubtitleStore.getUser(context, anime.id, episode.id, episode.number)
             }?.takeIf { File(it).isFile }
         }
-        if (source !in setOf("kairan", "csora")) return null
+        if (source !in setOf("linkkf", "reanime", "kairan", "csora")) return null
         return withContext(Dispatchers.IO) {
             SubtitleStore.get(context, anime.id, episode.id, episode.number, source)
         }?.takeIf { File(it).isFile }?.also {
@@ -579,10 +585,22 @@ fun PlayerScreen(
         localSubtitle = resolveCachedSubtitle(
             currentEpisode,
             vm.playerSettings.subtitleSourcePreference
-        ) ?: withContext(Dispatchers.IO) {
-            SubtitleStore.list(
-                context, anime.id, currentEpisode.id, currentEpisode.number
-            ).firstOrNull { !it.ignored }?.path
+        ) ?: if (source == "reanime") {
+            // Re:ANIME has its own Korean SRT track. Keep it as a source-specific
+            // fallback so a previously selected LinkKF/Kairan preference does not
+            // prevent a cached Re:ANIME subtitle from appearing during Re:ANIME playback.
+            resolveCachedSubtitle(currentEpisode, "reanime")
+                ?: withContext(Dispatchers.IO) {
+                    SubtitleStore.list(
+                        context, anime.id, currentEpisode.id, currentEpisode.number
+                    ).firstOrNull { !it.ignored }?.path
+                }
+        } else {
+            withContext(Dispatchers.IO) {
+                SubtitleStore.list(
+                    context, anime.id, currentEpisode.id, currentEpisode.number
+                ).firstOrNull { !it.ignored }?.path
+            }
         }
 
         engine.configureNetworkHeaders(
@@ -634,7 +652,8 @@ fun PlayerScreen(
                         episodeNumber = currentEpisode.number,
                         vttUrl = subtitleToFetch,
                         episodeKey = currentEpisode.id,
-                        referer = resolved.subtitleReferer ?: resolved.referer
+                        referer = resolved.subtitleReferer ?: resolved.referer,
+                        source = if (vm.playerSettings.videoSourcePreference == "reanime") "reanime" else "linkkf"
                     )
                 }.getOrNull()
                 if (!downloaded.isNullOrBlank() && File(downloaded).isFile) {
@@ -698,6 +717,23 @@ fun PlayerScreen(
                 loading = true
                 error = null
             },
+            onSubtitleTracksFound = { tracks ->
+                if (generation == playbackGeneration &&
+                    resolvedVideoPageUrl == extractorTargetUrl &&
+                    currentEpisode.videoUrl == extractorTargetUrl &&
+                    tracks.isNotEmpty()
+                ) {
+                    reAnimeSubtitleTracks = tracks
+                    // Korean remains the default selection when available, but every
+                    // track is exposed to the user below.
+                    selectedReAnimeSubtitleUrl = tracks.firstOrNull {
+                        it.language.contains("kor", true) ||
+                            it.label.contains("korean", true) ||
+                            it.url.contains("_kor_", true)
+                    }?.url ?: tracks.first().url
+                    Log.d("SubtitleSelect", "REANIME_TRACKS_RECEIVED count=${tracks.size}")
+                }
+            },
             onSubtitleFound = { foundUrl ->
                 if (generation == playbackGeneration &&
                     resolvedVideoPageUrl == extractorTargetUrl &&
@@ -705,7 +741,44 @@ fun PlayerScreen(
                     foundUrl.isNotBlank()
                 ) {
                     subtitleUrl = foundUrl
-                    localSubtitle = foundUrl
+                    selectedReAnimeSubtitleUrl = foundUrl
+                    subtitleReferer = subtitleReferer ?: extractorTargetUrl
+                    val subtitleGeneration = generation
+                    val subtitleDownloadReferer = subtitleReferer?.takeIf { it.isNotBlank() }
+                        ?: "https://flixcloud.cc/"
+                    playerScope.launch(Dispatchers.IO) {
+                        val downloaded = runCatching {
+                            downloadSubtitleFile(
+                                context = context,
+                                animeId = anime.id,
+                                episodeNumber = currentEpisode.number,
+                                vttUrl = foundUrl,
+                                episodeKey = currentEpisode.id,
+                                referer = subtitleDownloadReferer,
+                                source = "reanime"
+                            )
+                        }.getOrNull()
+                        if (!downloaded.isNullOrBlank() && File(downloaded).isFile && subtitleGeneration == playbackGeneration) {
+                            SubtitleStore.save(
+                                context,
+                                anime.id,
+                                currentEpisode.id,
+                                currentEpisode.number,
+                                "reanime",
+                                downloaded
+                            )
+                            withContext(Dispatchers.Main) {
+                                if (subtitleGeneration == playbackGeneration && currentEpisode.videoUrl == extractorTargetUrl) {
+                                    localSubtitle = downloaded
+                                    if (streamUrl != null) {
+                                        engine.replaceSubtitleTrack(downloaded)
+                                        engine.setSubtitleDelay(vm.playerSettings.syncOffsetMs)
+                                        engine.setSubtitleVisible(subtitleEnabled)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             },
             onSubtitleRefererFound = { _, referer ->
@@ -780,9 +853,14 @@ fun PlayerScreen(
         )
 
         val saved = vm.getProgress(anime.id, currentEpisode.id, currentEpisode.number)
+        val cachedReAnimeSubtitle = localSubtitle?.takeIf { File(it).isFile }
+            ?: resolveCachedSubtitle(currentEpisode, "reanime")
+        if (!cachedReAnimeSubtitle.isNullOrBlank()) {
+            localSubtitle = cachedReAnimeSubtitle
+        }
         engine.load(
             url = url,
-            subtitlePath = localSubtitle?.takeIf { File(it).isFile },
+            subtitlePath = cachedReAnimeSubtitle,
             syncOffsetMs = vm.playerSettings.syncOffsetMs,
             customFontPath = vm.playerSettings.subtitleFontPath
                 ?: vm.playerSettings.customFontPath,
@@ -1221,7 +1299,7 @@ fun PlayerScreen(
                                         engine.setAssEffectsEnabled(enabled)
                                     }
                                     5 -> {
-                                        val sources = listOf("linkkf", "kairan", "csora", "user")
+                                        val sources = listOf("linkkf", "reanime", "kairan", "csora", "user")
                                         val idx = sources.indexOf(subtitleSource).coerceAtLeast(0)
                                         subtitleSource = sources[(idx + 1) % sources.size]
                                         vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = subtitleSource))
@@ -1494,117 +1572,243 @@ fun PlayerScreen(
                             )
                         }
 
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text("자막 세부 설정", color = Color.White, fontSize = 13.sp)
-                                    Text("크기 · 위치 · 싱크 · 스타일 · 소스", color = Color.White.copy(.55f), fontSize = 11.sp)
-                                }
-                            },
-                            onClick = { subtitleSettingsOpen = !subtitleSettingsOpen }
-                        )
+                        // All subtitle controls live in one section so there is no
+                        // second/hidden subtitle settings menu to hunt for.
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 8.dp)
+                        ) {
+                            Text("자막", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("표시 · 트랙 · 소스 · 크기 · 위치 · 싱크", color = Color.White.copy(.50f), fontSize = 10.sp)
+                            Spacer(Modifier.height(8.dp))
 
-                        if (subtitleSettingsOpen) {
-                            Column(Modifier.padding(horizontal = 18.dp, vertical = 4.dp)) {
-                                Text("자막 소스", color = Color.White.copy(.72f), fontSize = 11.sp)
-                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(top = 5.dp)) {
-                                    listOf("linkkf" to "Linkkf", "kairan" to "Kairan", "csora" to "Csora", "user" to "사용자").forEach { (source, label) ->
-                                        Surface(
-                                            onClick = {
-                                                subtitleSource = source
-                                                vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = source))
-                                                playerScope.launch {
-                                                    val path = if (source == "user") {
-                                                        resolveCachedSubtitle(currentEpisode, "user")
-                                                    } else if (source == "kairan" || source == "csora") {
-                                                        resolvePreferredSubtitle(currentEpisode, source)
-                                                    } else {
-                                                        withContext(Dispatchers.IO) {
-                                                            SubtitleStore.get(
-                                                                context,
-                                                                anime.id,
-                                                                currentEpisode.id,
-                                                                currentEpisode.number,
-                                                                source
-                                                            )
-                                                        }
-                                                    }
-                                                    if (!path.isNullOrBlank() && File(path).isFile) {
-                                                        localSubtitle = path
-                                                        engine.replaceSubtitleTrack(path)
-                                                        engine.setSubtitleDelay(subtitleSyncMs)
-                                                        engine.setSubtitleVisible(subtitleEnabled)
-                                                    } else {
-                                                        Log.d(
-                                                            "SubtitleSelect",
-                                                            "MANUAL_NONE source=$source episode=${currentEpisode.displayNumber}"
+                            Text("자막 소스", color = Color.White.copy(.72f), fontSize = 11.sp)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(top = 5.dp)
+                            ) {
+                                listOf(
+                                    "linkkf" to "Linkkf",
+                                    "reanime" to "Re:Anime",
+                                    "kairan" to "Kairan",
+                                    "csora" to "Csora",
+                                    "user" to "사용자"
+                                ).forEach { (source, label) ->
+                                    Surface(
+                                        onClick = {
+                                            subtitleSource = source
+                                            vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = source))
+                                            playerScope.launch {
+                                                val path = if (source == "user") {
+                                                    resolveCachedSubtitle(currentEpisode, "user")
+                                                } else if (source == "kairan" || source == "csora") {
+                                                    resolvePreferredSubtitle(currentEpisode, source)
+                                                } else {
+                                                    withContext(Dispatchers.IO) {
+                                                        SubtitleStore.get(
+                                                            context,
+                                                            anime.id,
+                                                            currentEpisode.id,
+                                                            currentEpisode.number,
+                                                            source
                                                         )
                                                     }
                                                 }
-                                            },
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = if (subtitleSource == source) Color.White else Color.White.copy(.10f)
-                                        ) {
-                                            Text(label, color = if (subtitleSource == source) Color.Black else Color.White, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp))
-                                        }
+                                                if (!path.isNullOrBlank() && File(path).isFile) {
+                                                    localSubtitle = path
+                                                    engine.replaceSubtitleTrack(path)
+                                                    engine.setSubtitleDelay(subtitleSyncMs)
+                                                    engine.setSubtitleVisible(subtitleEnabled)
+                                                } else {
+                                                    Log.d("SubtitleSelect", "MANUAL_NONE source=$source episode=${currentEpisode.displayNumber}")
+                                                }
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (subtitleSource == source) Color.White else Color.White.copy(.10f)
+                                    ) {
+                                        Text(
+                                            label,
+                                            color = if (subtitleSource == source) Color.Black else Color.White,
+                                            fontSize = 9.sp,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp)
+                                        )
                                     }
-                                }
-
-                                Spacer(Modifier.height(8.dp))
-                                Text("자막 크기 ${subtitleSize.toInt()}%", color = Color.White.copy(.72f), fontSize = 11.sp)
-                                Slider(
-                                    value = subtitleSize,
-                                    onValueChange = {
-                                        subtitleSize = it
-                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSize = it))
-                                        engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, it, vttBold, vm.playerSettings.vttOutlineWidth, subtitlePosition / 100f, false)
-                                    },
-                                    valueRange = 50f..300f,
-                                    steps = 24
-                                )
-
-                                Text("자막 위치 ${subtitlePosition.toInt()}%", color = Color.White.copy(.72f), fontSize = 11.sp)
-                                Slider(
-                                    value = subtitlePosition,
-                                    onValueChange = {
-                                        subtitlePosition = it
-                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleBottomPaddingFraction = it / 100f))
-                                        engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, vm.playerSettings.vttOutlineWidth, it / 100f, false)
-                                    },
-                                    valueRange = 3f..30f,
-                                    steps = 26
-                                )
-
-                                Text("자막 싱크 ${subtitleSyncMs}ms", color = Color.White.copy(.72f), fontSize = 11.sp)
-                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                    listOf(-250L, 0L, 250L).forEach { delta ->
-                                        Surface(
-                                            onClick = {
-                                                subtitleSyncMs = if (delta == 0L) 0L else subtitleSyncMs + delta
-                                                vm.updatePlayerSettings(context, vm.playerSettings.copy(syncOffsetMs = subtitleSyncMs))
-                                                engine.setSubtitleDelay(subtitleSyncMs)
-                                            },
-                                            shape = RoundedCornerShape(8.dp), color = Color.White.copy(.10f)
-                                        ) { Text(if (delta == 0L) "초기화" else if (delta < 0) "-250ms" else "+250ms", color = Color.White, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) }
-                                    }
-                                }
-
-                                Row(Modifier.fillMaxWidth().padding(top = 7.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                    Text("VTT 원본 스타일 유지", color = Color.White, fontSize = 11.sp)
-                                    Switch(checked = vttStyleEnabled, onCheckedChange = {
-                                        vttStyleEnabled = it
-                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(vttStyleEnabled = it))
-                                    })
-                                }
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                    Text("VTT 자막 굵게", color = Color.White, fontSize = 11.sp)
-                                    Switch(checked = vttBold, onCheckedChange = {
-                                        vttBold = it
-                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(vttBold = it))
-                                        engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, it, vm.playerSettings.vttOutlineWidth, subtitlePosition / 100f, false)
-                                    })
                                 }
                             }
+
+                            if (vm.playerSettings.videoSourcePreference == "reanime") {
+                                Spacer(Modifier.height(8.dp))
+                                Surface(
+                                    onClick = { reAnimeSubtitleTrackPickerOpen = true },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color.White.copy(.08f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Re:Anime 자막 트랙", color = Color.White, fontSize = 12.sp)
+                                            Text(
+                                                when {
+                                                    reAnimeSubtitleTracks.isNotEmpty() -> "${reAnimeSubtitleTracks.size}개 트랙 · ${reAnimeSubtitleTracks.firstOrNull { it.url == selectedReAnimeSubtitleUrl }?.label ?: "트랙 선택"}"
+                                                    else -> "트랙을 불러오는 중…"
+                                                },
+                                                color = Color.White.copy(.50f),
+                                                fontSize = 10.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+                                        Text(
+                                            if (reAnimeSubtitleTracks.isNotEmpty()) "선택" else "대기",
+                                            color = Color.White.copy(.80f),
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(6.dp))
+                            Text("자막 크기 ${subtitleSize.toInt()}%", color = Color.White.copy(.72f), fontSize = 11.sp)
+                            Slider(
+                                value = subtitleSize,
+                                onValueChange = {
+                                    subtitleSize = it
+                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSize = it))
+                                    engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, it, vttBold, vm.playerSettings.vttOutlineWidth, subtitlePosition / 100f, false)
+                                },
+                                valueRange = 50f..180f,
+                                steps = 25
+                            )
+
+                            Text("자막 위치 ${subtitlePosition.toInt()}%", color = Color.White.copy(.72f), fontSize = 11.sp)
+                            Slider(
+                                value = subtitlePosition,
+                                onValueChange = {
+                                    subtitlePosition = it
+                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleBottomPaddingFraction = it / 100f))
+                                    engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, vm.playerSettings.vttOutlineWidth, it / 100f, false)
+                                },
+                                valueRange = 3f..30f,
+                                steps = 26
+                            )
+
+                            Text("자막 싱크 ${subtitleSyncMs}ms", color = Color.White.copy(.72f), fontSize = 11.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                listOf(-250L, 0L, 250L).forEach { delta ->
+                                    Surface(
+                                        onClick = {
+                                            subtitleSyncMs = if (delta == 0L) 0L else subtitleSyncMs + delta
+                                            vm.updatePlayerSettings(context, vm.playerSettings.copy(syncOffsetMs = subtitleSyncMs))
+                                            engine.setSubtitleDelay(subtitleSyncMs)
+                                        },
+                                        shape = RoundedCornerShape(8.dp), color = Color.White.copy(.10f)
+                                    ) {
+                                        Text(
+                                            if (delta == 0L) "초기화" else if (delta < 0) "-250ms" else "+250ms",
+                                            color = Color.White,
+                                            fontSize = 9.sp,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 7.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("VTT 원본 스타일 유지", color = Color.White, fontSize = 11.sp)
+                                Switch(checked = vttStyleEnabled, onCheckedChange = {
+                                    vttStyleEnabled = it
+                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(vttStyleEnabled = it))
+                                })
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("VTT 자막 굵게", color = Color.White, fontSize = 11.sp)
+                                Switch(checked = vttBold, onCheckedChange = {
+                                    vttBold = it
+                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(vttBold = it))
+                                    engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, it, vm.playerSettings.vttOutlineWidth, subtitlePosition / 100f, false)
+                                })
+                            }
+                        }
+
+                        if (reAnimeSubtitleTrackPickerOpen) {
+                            AlertDialog(
+                                onDismissRequest = { reAnimeSubtitleTrackPickerOpen = false },
+                                title = { Text("Re:Anime 자막 트랙") },
+                                text = {
+                                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                                        if (reAnimeSubtitleTracks.isEmpty()) {
+                                            Text("현재 회차에서 자막 트랙을 찾지 못했습니다.")
+                                        } else {
+                                            reAnimeSubtitleTracks.forEach { track ->
+                                                val selectedTrack = selectedReAnimeSubtitleUrl == track.url
+                                                Surface(
+                                                    onClick = {
+                                                        selectedReAnimeSubtitleUrl = track.url
+                                                        subtitleSource = "reanime"
+                                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = "reanime"))
+                                                        reAnimeSubtitleTrackPickerOpen = false
+                                                        playerScope.launch {
+                                                            val downloaded = runCatching {
+                                                                downloadSubtitleFile(
+                                                                    context = context,
+                                                                    animeId = anime.id,
+                                                                    episodeNumber = currentEpisode.number,
+                                                                    vttUrl = track.url,
+                                                                    episodeKey = currentEpisode.id,
+                                                                    referer = subtitleReferer ?: resolvedVideoPageUrl ?: "https://flixcloud.cc/",
+                                                                    source = "reanime"
+                                                                )
+                                                            }.getOrNull()
+                                                            if (!downloaded.isNullOrBlank() && File(downloaded).isFile) {
+                                                                SubtitleStore.save(context, anime.id, currentEpisode.id, currentEpisode.number, "reanime", downloaded)
+                                                                localSubtitle = downloaded
+                                                                engine.replaceSubtitleTrack(downloaded)
+                                                                engine.setSubtitleDelay(subtitleSyncMs)
+                                                                engine.setSubtitleVisible(subtitleEnabled)
+                                                                Toast.makeText(context, "${track.label} 자막을 적용했습니다.", Toast.LENGTH_SHORT).show()
+                                                            } else {
+                                                                Toast.makeText(context, "자막을 불러오지 못했습니다.", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    },
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = if (selectedTrack) MaterialTheme.colorScheme.primary.copy(alpha = .18f) else Color.Transparent,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Row(
+                                                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        RadioButton(selected = selectedTrack, onClick = null)
+                                                        Column(Modifier.weight(1f)) {
+                                                            Text(track.label, fontSize = 12.sp)
+                                                            Text(track.format.uppercase(Locale.ROOT), fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .55f))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                confirmButton = {
+                                    TextButton(onClick = { reAnimeSubtitleTrackPickerOpen = false }) { Text("닫기") }
+                                }
+                            )
                         }
 
                         if (parsedStreamingQualities.isNotEmpty()) {
@@ -1651,10 +1855,9 @@ fun PlayerScreen(
                             Text("현재 프로젝트에서 사용할 저장 자막을 선택합니다.", color = Color.White.copy(.50f), fontSize = 10.sp)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf("linkkf" to "Linkkf VTT", "kairan" to "Kairan ASS", "csora" to "Csora ASS", "user" to "사용자").forEach { (key, label) ->
+                                listOf("linkkf" to "Linkkf VTT", "reanime" to "Re:Anime SRT", "kairan" to "Kairan ASS", "csora" to "Csora ASS", "user" to "사용자").forEach { (key, label) ->
                                     Surface(onClick = {
                                         subtitleSource = key
-                                        subtitleSettingsOpen = true
                                         vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = key))
                                     }, shape = RoundedCornerShape(9.dp), color = if (subtitleSource == key) Color.White else Color.White.copy(.08f)) {
                                         Text(label, color = if (subtitleSource == key) Color.Black else Color.White, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp))

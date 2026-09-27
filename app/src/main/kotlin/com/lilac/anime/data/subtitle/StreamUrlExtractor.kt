@@ -43,12 +43,20 @@ import kotlin.concurrent.thread
  * For Animenosub we only permit the source page and its embedded player host as
  * top-level navigation, preventing ad redirects from taking over the app.
  */
+data class SubtitleTrack(
+    val url: String,
+    val language: String,
+    val label: String,
+    val format: String
+)
+
 @Composable
 fun StreamUrlExtractor(
     targetUrl: String,
     modifier: Modifier = Modifier,
     onQualitiesFound: (List<StreamQuality>) -> Unit,
     onSubtitleFound: (String) -> Unit,
+    onSubtitleTracksFound: (List<SubtitleTrack>) -> Unit = {},
     onSubtitleRefererFound: (String, String) -> Unit = { _, _ -> },
     onRefererFound: (String) -> Unit = {},
     onAuthRequired: () -> Unit = {},
@@ -60,6 +68,7 @@ fun StreamUrlExtractor(
 ) {
     val detectedUrls = remember(targetUrl, restartKey) { linkedSetOf<String>() }
     var isSubtitleFound by remember(targetUrl, restartKey) { mutableStateOf(false) }
+    var subtitleTracksReported by remember(targetUrl, restartKey) { mutableStateOf(false) }
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     key(targetUrl, restartKey) {
@@ -461,14 +470,20 @@ fun StreamUrlExtractor(
                             mainHandler.post { onRefererFound(lastPlayHdReferer!!) }
                         }
 
-                        if (!isSubtitleFound && path.endsWith(".vtt")) {
-                            isSubtitleFound = true
-                            val subtitleRef = requestReferer?.trim()?.takeIf { it.isNotBlank() }
-                                ?: lastPlayHdReferer?.trim()?.takeIf { it.isNotBlank() }
-
-                            mainHandler.post {
-                                onSubtitleFound(url)
-                                subtitleRef?.let { onSubtitleRefererFound(url, it) }
+                        if (!isSubtitleFound && (path.endsWith(".vtt") || path.endsWith(".srt"))) {
+                            // Re:ANIME exposes a complete subtitle array in the FlixCloud HTML.
+                            // Wait for that manifest so an arbitrary first network request (often
+                            // English) cannot silently become the selected track.
+                            val isReAnimePlayer = targetHost == "reanime.to" || targetHost == "www.reanime.to" ||
+                                url.contains("flixcloud.cc", ignoreCase = true)
+                            if (!isReAnimePlayer) {
+                                isSubtitleFound = true
+                                val subtitleRef = requestReferer?.trim()?.takeIf { it.isNotBlank() }
+                                    ?: lastPlayHdReferer?.trim()?.takeIf { it.isNotBlank() }
+                                mainHandler.post {
+                                    onSubtitleFound(url)
+                                    subtitleRef?.let { onSubtitleRefererFound(url, it) }
+                                }
                             }
                         }
                         reportM3u8(url)
@@ -486,6 +501,50 @@ fun StreamUrlExtractor(
                         if (finishedHost == "flixcloud.cc" || finishedHost == "www.flixcloud.cc") {
                             view?.let { pollFlixCloudPk(it) }
                         }
+                        // FlixCloud embeds the complete subtitle track array in the player HTML.
+                        // Re:ANIME can expose multiple languages; report all of them so the player
+                        // can let the user choose instead of hard-coding Korean.
+                        if (finishedHost == "flixcloud.cc" || finishedHost == "www.flixcloud.cc") {
+                            view?.evaluateJavascript(
+                                """(function(){try{var h=document.documentElement.innerHTML||"";var m=h.match(/subtitles:\[(.*?)\]/s);return m?m[1]:"";}catch(e){return "";}})()""".trimIndent()
+                            ) { raw ->
+                                val decoded = raw.orEmpty()
+                                    .trim()
+                                    .removeSurrounding("\"")
+                                    .replace("\\\"", "\"")
+                                    .replace("\\u003d", "=")
+                                    .replace("\\u0026", "&")
+                                    .replace("\\/", "/")
+                                    .replace("\\u002F", "/")
+                                // evaluateJavascript returns a JSON-escaped string. Decode that first,
+                                // then parse each subtitle object independently so field ordering changes
+                                // on FlixCloud do not hide the track list.
+                                val objectRegex = Regex("""\{([^{}]*?url:"[^"]+"[^{}]*?)\}""")
+                                val field = Regex("""(?:^|,)\s*(url|language|format):"([^"]*)"""")
+                                val tracks = objectRegex.findAll(decoded).mapNotNull { objectMatch ->
+                                    val fields = field.findAll(objectMatch.groupValues[1]).associate { it.groupValues[1] to it.groupValues[2] }
+                                    val trackUrl = fields["url"].orEmpty().replace("\\/", "/").replace("\\u0026", "&")
+                                    if (!trackUrl.startsWith("http", true)) return@mapNotNull null
+                                    val language = fields["language"].orEmpty().ifBlank { "und" }
+                                    val label = language
+                                    val format = fields["format"].orEmpty().ifBlank { if (trackUrl.substringBefore('?').endsWith(".srt", true)) "srt" else "vtt" }
+                                    SubtitleTrack(trackUrl, language, label, format)
+                                }.distinctBy { it.url }.toList()
+                                if (tracks.isNotEmpty() && !subtitleTracksReported) {
+                                    subtitleTracksReported = true
+                                    Log.d("ReAnimeStream", "SUBTITLE_TRACKS_FOUND count=${tracks.size} tracks=${tracks.joinToString { it.label + ":" + it.language }}")
+                                    mainHandler.post { onSubtitleTracksFound(tracks) }
+                                    val korean = tracks.firstOrNull {
+                                        it.language.contains("kor", true) || it.label.contains("korean", true) || it.url.contains("_kor_", true)
+                                    }
+                                    if (!isSubtitleFound && korean != null) {
+                                        isSubtitleFound = true
+                                        mainHandler.post { onSubtitleFound(korean.url) }
+                                    }
+                                }
+                            }
+                        }
+
                         // Discover the actual embedded player host without navigating
                         // to it ourselves. Ads opened by the player cannot become the
                         // app's main frame because of shouldOverrideUrlLoading above.

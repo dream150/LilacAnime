@@ -36,7 +36,8 @@ suspend fun downloadSubtitleFile(
     episodeNumber: Int,
     vttUrl: String?,
     episodeKey: String = episodeNumber.toString(),
-    referer: String? = null
+    referer: String? = null,
+    source: String = "linkkf"
 ): String? = withContext(Dispatchers.IO) {
     if (vttUrl.isNullOrBlank()) return@withContext null
 
@@ -88,39 +89,44 @@ suspend fun downloadSubtitleFile(
 
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Log.w("Subtitle", "LINKKF_VTT_HTTP code=${response.code} referer=${candidateRef ?: "<none>"} url=$vttUrl")
+                    Log.w("Subtitle", "REMOTE_SUBTITLE_HTTP source=$source code=${response.code} referer=${candidateRef ?: "<none>"} url=$vttUrl")
                     return@use
                 }
 
                 val bytes = response.body?.bytes() ?: return@use
                 if (bytes.isEmpty()) return@use
-                Log.d("Subtitle", "LINKKF_VTT_RESPONSE code=${response.code} type=${response.header("Content-Type")} bytes=${bytes.size} referer=${candidateRef ?: "<none>"} origin=$sendOrigin")
+                Log.d("Subtitle", "REMOTE_SUBTITLE_RESPONSE source=$source code=${response.code} type=${response.header("Content-Type")} bytes=${bytes.size} referer=${candidateRef ?: "<none>"} origin=$sendOrigin")
 
                 // Reject an HTML error/challenge page masquerading as a successful response.
                 val text = bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
                 val first = text.trimStart().lowercase(Locale.ROOT)
                 if (first.startsWith("<!doctype html") || first.startsWith("<html") || first.startsWith("<head")) {
-                    Log.w("Subtitle", "LINKKF_VTT_HTML_RESPONSE referer=$candidateRef url=$vttUrl")
+                    Log.w("Subtitle", "REMOTE_SUBTITLE_HTML_RESPONSE source=$source referer=$candidateRef url=$vttUrl")
                     return@use
                 }
 
                 val safeKey = episodeKey.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9._-]"), "_")
+                val safeSource = source.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9._-]"), "_")
                 val normalized = text.trimStart()
-                val payload = if (normalized.startsWith("WEBVTT", ignoreCase = true)) {
+                val isWebVtt = normalized.startsWith("WEBVTT", ignoreCase = true)
+                val isSrt = Regex("(?m)^\\d+\\s*$").containsMatchIn(normalized) &&
+                    normalized.contains(" --> ")
+                val extension = if (isSrt && !isWebVtt) "srt" else "vtt"
+                val payload = if (isWebVtt) {
                     if (text.startsWith("WEBVTT")) text.toByteArray(Charsets.UTF_8)
                     else ("WEBVTT\n\n" + normalized.removePrefix("WEBVTT")).toByteArray(Charsets.UTF_8)
                 } else bytes
-                val file = File(context.filesDir, "sub_${animeId}_ep_${safeKey}.vtt")
+                val file = File(context.filesDir, "sub_${animeId}_ep_${safeKey}_${safeSource}.$extension")
                 file.writeBytes(payload)
 
-                Log.d("Subtitle", "LINKKF_VTT_SAVED path=${file.absolutePath} bytes=${file.length()} referer=$candidateRef")
+                Log.d("Subtitle", "REMOTE_SUBTITLE_SAVED source=$source path=${file.absolutePath} bytes=${file.length()} referer=$candidateRef")
                 return@withContext file.absolutePath
             }
         } catch (e: Exception) {
-            Log.w("Subtitle", "LINKKF_VTT_ATTEMPT_FAILED referer=$candidateRef url=$vttUrl", e)
+            Log.w("Subtitle", "REMOTE_SUBTITLE_ATTEMPT_FAILED source=$source referer=$candidateRef url=$vttUrl", e)
         }
     }
 
-    Log.e("Subtitle", "LINKKF_VTT_DOWNLOAD_FAILED url=$vttUrl")
+    Log.e("Subtitle", "REMOTE_SUBTITLE_DOWNLOAD_FAILED source=$source url=$vttUrl")
     null
 }
