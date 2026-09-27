@@ -82,11 +82,37 @@ object ReAnimeParser {
             ?: extractAnimeSlug(rawSlug)
             ?: rawSlug?.takeIf { looksLikeSlug(it) }
 
-        val title = stringValue(anime.opt("title"))
+        // Re:ANIME search responses commonly expose title metadata as an
+        // AniList-like object: { english, romaji, native }. Preserve the
+        // native/Japanese title separately instead of losing it when the
+        // display title is converted to a String.
+        val titleValue = anime.opt("title")
+        val itemTitleValue = item.opt("title")
+
+        val title = stringValue(titleValue)
             .ifBlank { stringValue(anime.opt("name")) }
-            .ifBlank { stringValue(item.opt("title")) }
+            .ifBlank { stringValue(itemTitleValue) }
             .ifBlank { stringValue(item.opt("name")) }
         if (title.isBlank()) return null
+
+        val nativeTitle = firstNonBlank(
+            extractJapaneseTitle(titleValue),
+            extractJapaneseTitle(itemTitleValue),
+            firstString(
+                anime,
+                "title_native", "titleNative", "native_title",
+                "nativeTitle", "japanese_title", "japaneseTitle",
+                "japanese", "native"
+            ),
+            firstString(
+                item,
+                "title_native", "titleNative", "native_title",
+                "nativeTitle", "japanese_title", "japaneseTitle",
+                "japanese", "native"
+            ),
+            findJapaneseTitle(anime),
+            findJapaneseTitle(item)
+        ).orEmpty()
 
         // Keep provider IDs when Re:Anime exposes them. Different API builds
         // have used several spellings, so accept the common variants.
@@ -125,7 +151,7 @@ object ReAnimeParser {
 
         android.util.Log.d(
             "ReAnime",
-            "PARSED_ANIME title=$title slug=$finalSlug detailUrl=$detailUrl " +
+            "PARSED_ANIME title=$title native=$nativeTitle slug=$finalSlug detailUrl=$detailUrl " +
                 "anilistId=$anilistId malId=$malId"
         )
 
@@ -134,6 +160,7 @@ object ReAnimeParser {
             anilistId = anilistId,
             malId = malId,
             title = title,
+            native = nativeTitle,
             poster = poster,
             backdrop = poster,
             genres = genres,
@@ -142,8 +169,8 @@ object ReAnimeParser {
         )
     }
 
-    private fun firstNonBlank(vararg values: String): String? {
-        return values.firstOrNull { it.isNotBlank() }
+    private fun firstNonBlank(vararg values: String?): String? {
+        return values.firstOrNull { !it.isNullOrBlank() }?.trim()
     }
 
     private fun looksLikeSlug(value: String): Boolean {
@@ -180,6 +207,48 @@ object ReAnimeParser {
                 .trim()
                 .takeIf { looksLikeSlug(it) }
         }.getOrNull()
+    }
+
+    private fun extractJapaneseTitle(value: Any?): String? {
+        if (value !is JSONObject) return null
+        return firstString(
+            value,
+            "native", "japanese", "title_native", "titleNative",
+            "native_title", "nativeTitle", "japanese_title", "japaneseTitle"
+        )
+    }
+
+    /**
+     * Re:ANIME has changed the shape of title metadata between API builds.
+     * If the title object is nested differently, walk the response and pick
+     * an explicitly named native/Japanese title instead of falling back to
+     * the English display title.
+     */
+    private fun findJapaneseTitle(value: Any?): String? {
+        when (value) {
+            is JSONObject -> {
+                val direct = firstString(
+                    value,
+                    "native", "japanese", "title_native", "titleNative",
+                    "native_title", "nativeTitle", "japanese_title", "japaneseTitle"
+                )
+                if (!direct.isNullOrBlank()) return direct
+
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val nested = findJapaneseTitle(value.opt(key))
+                    if (!nested.isNullOrBlank()) return nested
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until value.length()) {
+                    val nested = findJapaneseTitle(value.opt(i))
+                    if (!nested.isNullOrBlank()) return nested
+                }
+            }
+        }
+        return null
     }
 
     private fun firstString(obj: JSONObject, vararg keys: String): String? =

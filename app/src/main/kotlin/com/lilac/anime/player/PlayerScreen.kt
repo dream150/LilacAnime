@@ -106,6 +106,8 @@ import com.lilac.anime.data.subtitle.SubtitleAssetUtil
 import com.lilac.anime.data.subtitle.KairanSubtitleService
 import com.lilac.anime.data.subtitle.CsoraSubtitleService
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
+import com.lilac.anime.data.subtitle.NamuWikiTitleResolver
+import com.lilac.anime.data.ReAnimeNativeTitleResolver
 import com.lilac.anime.data.subtitle.StreamUrlExtractor
 import com.lilac.anime.data.subtitle.downloadSubtitleFile
 import com.lilac.anime.network.LinkkfPlayerResolver
@@ -396,9 +398,35 @@ fun PlayerScreen(
         sourceOverride: String? = null
     ): String? {
         val preferred = sourceOverride ?: vm.playerSettings.subtitleSourcePreference
+
+        // Re:ANIME subtitles are indexed by Korean titles.
+        // Search NamuWiki using only the Re:ANIME English/display title,
+        // then pass the resolved Korean title to the existing providers.
+        val subtitleSearchTitle = if (
+            anime.detailUrl.startsWith("https://reanime.to", ignoreCase = true)
+        ) {
+            val englishQuery = anime.title.trim().replace("…", "...")
+            val englishResolved = if (englishQuery.isNotBlank()) {
+                withContext(Dispatchers.IO) {
+                    NamuWikiTitleResolver.resolve(context, englishQuery)
+                } ?: ""
+            } else {
+                ""
+            }
+
+            Log.d(
+                "SubtitleSelect",
+                "REANIME_NAMUWIKI_MATCH language=english query=[$englishQuery] korean=[$englishResolved]"
+            )
+            englishResolved.ifBlank { anime.title }
+        } else {
+            anime.title
+        }
+
         Log.d(
             "SubtitleSelect",
-            "REQUEST source=$preferred title=[${anime.title}] episode=${episode.displayNumber}"
+            "REQUEST source=$preferred title=[${anime.title}] " +
+                "searchTitle=[$subtitleSearchTitle] episode=${episode.displayNumber}"
         )
 
         resolveCachedSubtitle(episode, preferred)?.let { return it }
@@ -408,7 +436,7 @@ fun PlayerScreen(
                 val result = runCatching {
                     KairanSubtitleService.findSubtitle(
                         context,
-                        anime.title,
+                        subtitleSearchTitle,
                         episode.number,
                         episode.displayNumber
                     )
@@ -427,7 +455,7 @@ fun PlayerScreen(
                 val result = runCatching {
                     CsoraSubtitleService.findSubtitle(
                         context,
-                        anime.title,
+                        subtitleSearchTitle,
                         episode.number,
                         episode.displayNumber
                     )
