@@ -427,6 +427,14 @@ object OfflineStore {
             put("title", episode.title)
             put("videoUrl", episode.videoUrl)
             put("vttUrl", episode.vttUrl)
+            put("nativeTitle", episode.nativeTitle)
+            put("airedDate", episode.airedDate)
+            put("isFiller", episode.isFiller)
+            put("isRecap", episode.isRecap)
+            put("playable", episode.playable)
+            put("subbed", episode.subbed)
+            put("dubbed", episode.dubbed)
+            put("thumbnailUrl", episode.thumbnailUrl)
         }
         prefs.edit().putString(key, json.toString()).apply()
     }
@@ -443,7 +451,15 @@ object OfflineStore {
                 title = json.getString("title"),
                 displayNumber = json.optString("displayNumber", json.getInt("number").toString()),
                 videoUrl = if (json.has("videoUrl") && !json.isNull("videoUrl")) json.getString("videoUrl") else null,
-                vttUrl = if (json.has("vttUrl") && !json.isNull("vttUrl")) json.getString("vttUrl") else null
+                vttUrl = if (json.has("vttUrl") && !json.isNull("vttUrl")) json.getString("vttUrl") else null,
+                nativeTitle = json.optString("nativeTitle", ""),
+                airedDate = json.optString("airedDate", ""),
+                isFiller = json.optBoolean("isFiller", false),
+                isRecap = json.optBoolean("isRecap", false),
+                playable = json.optBoolean("playable", true),
+                subbed = json.optBoolean("subbed", false),
+                dubbed = json.optBoolean("dubbed", false),
+                thumbnailUrl = json.optString("thumbnailUrl", "")
             )
         } catch (e: Exception) {
             null
@@ -473,7 +489,15 @@ object OfflineStore {
                 title = json.getString("title"),
                 displayNumber = json.optString("displayNumber", json.getInt("number").toString()),
                 videoUrl = if (json.has("videoUrl") && !json.isNull("videoUrl")) json.getString("videoUrl") else null,
-                vttUrl = if (json.has("vttUrl") && !json.isNull("vttUrl")) json.getString("vttUrl") else null
+                vttUrl = if (json.has("vttUrl") && !json.isNull("vttUrl")) json.getString("vttUrl") else null,
+                nativeTitle = json.optString("nativeTitle", ""),
+                airedDate = json.optString("airedDate", ""),
+                isFiller = json.optBoolean("isFiller", false),
+                isRecap = json.optBoolean("isRecap", false),
+                playable = json.optBoolean("playable", true),
+                subbed = json.optBoolean("subbed", false),
+                dubbed = json.optBoolean("dubbed", false),
+                thumbnailUrl = json.optString("thumbnailUrl", "")
             )
         } catch (_: Exception) {
             null

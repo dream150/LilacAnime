@@ -270,9 +270,10 @@ fun DetailScreen(
     val currentAnime = detailAnime
     val saved = vm.isInLibrary(currentAnime.id)
     val isLinkkf = vm.playerSettings.videoSourcePreference == "linkkf"
+    val isReAnime = vm.playerSettings.videoSourcePreference == "reanime"
     val viewStats = vm.linkkfViewStats
     val relatedSeries = vm.linkkfRelatedSeries
-    var detailTab by remember(currentAnime.id) { mutableIntStateOf(0) }
+    var detailTab by remember(currentAnime.id, isReAnime) { mutableIntStateOf(if (isReAnime) 3 else 0) }
     var episodeQuery by remember(currentAnime.id) { mutableStateOf("") }
     var showCover by remember(currentAnime.id) { mutableStateOf(false) }
     val episodes = vm.episodes(currentAnime)
@@ -281,7 +282,7 @@ fun DetailScreen(
     // 회차가 많은 작품은 페이지 단위로 표시하고, 최신화순/오래된화순을 전환할 수 있다.
     var newestFirst by remember(currentAnime.id) { mutableStateOf(false) }
     var episodePage by remember(currentAnime.id) { mutableIntStateOf(0) }
-    val episodePageSize = 50
+    val episodePageSize = if (isReAnime) 100 else 50
 
     LaunchedEffect(currentAnime.id) {
         newestFirst = OfflineStore.getEpisodeSortOrder(context, currentAnime.id)
@@ -978,6 +979,15 @@ fun DetailScreen(
                         TextButton(onClick = { detailTab = 2 }, modifier = Modifier.weight(1f)) {
                             Text("관련 작품", color = if (detailTab == 2) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontWeight = if (detailTab == 2) FontWeight.Bold else FontWeight.Normal)
                         }
+                        if (isReAnime) {
+                            TextButton(onClick = { detailTab = 3 }, modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "회차",
+                                    color = if (detailTab == 3) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                    fontWeight = if (detailTab == 3) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
                     }
                     Spacer(Modifier.height(12.dp))
                     when (detailTab) {
@@ -987,8 +997,50 @@ fun DetailScreen(
                             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
                             lineHeight = 22.sp
                         )
-                        else -> {
-                            if (relatedSeries.isNotEmpty() && isLinkkf) {
+                        2 -> {
+                            if (isReAnime && currentAnime.reAnimeRelated.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                    currentAnime.reAnimeRelated.forEach { related ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().clickable {
+                                                val slug = related.id.removePrefix("reanime:")
+                                                vm.cacheAnime(Anime(
+                                                    id = related.id,
+                                                    title = related.title,
+                                                    native = related.nativeTitle,
+                                                    poster = related.poster,
+                                                    backdrop = related.poster,
+                                                    format = related.format,
+                                                    year = related.seasonYear?.toString().orEmpty(),
+                                                    detailUrl = "https://reanime.to/anime/$slug"
+                                                ))
+                                                openRelated(Anime(
+                                                    id = related.id, title = related.title, native = related.nativeTitle,
+                                                    poster = related.poster, backdrop = related.poster, format = related.format,
+                                                    year = related.seasonYear?.toString().orEmpty(), detailUrl = "https://reanime.to/anime/$slug"
+                                                ))
+                                            }.padding(vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            AnimeImage(
+                                                model = related.poster,
+                                                contentDescription = related.title,
+                                                modifier = Modifier.size(64.dp, 88.dp).clip(RoundedCornerShape(10.dp)),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                            Spacer(Modifier.width(12.dp))
+                                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                Text(related.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                                                if (related.nativeTitle.isNotBlank()) Text(related.nativeTitle, fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f))
+                                                Text(
+                                                    listOfNotNull(related.relationType.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }.takeIf { it.isNotBlank() }, related.format.takeIf { it.isNotBlank() }, related.seasonYear?.toString()).joinToString(" · "),
+                                                    fontSize = 11.sp, color = Lilac
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if (relatedSeries.isNotEmpty() && isLinkkf) {
                                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                     relatedSeries.forEach { series ->
                                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1032,13 +1084,14 @@ fun DetailScreen(
                 }
             }
 
-            if (episodesLoading) {
-                item {
-                    Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Lilac)
+            if (!isReAnime || detailTab == 3) {
+                if (episodesLoading) {
+                    item {
+                        Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = Lilac)
+                        }
                     }
-                }
-            } else if (episodes.isNotEmpty()) {
+                } else if (episodes.isNotEmpty()) {
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
@@ -1162,7 +1215,7 @@ fun DetailScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .background(if (isDownloaded) Lilac.copy(alpha = 0.15f) else Color.Transparent)
                             .clickableNoIndication {
-                                if (isDownloaded || !isOffline) playEpisode(ep)
+                                if (ep.playable && (isDownloaded || !isOffline)) playEpisode(ep)
                             }
                             .padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -1181,6 +1234,59 @@ fun DetailScreen(
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(ep.title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                            if (isReAnime && ep.nativeTitle.isNotBlank()) {
+                                Text(
+                                    ep.nativeTitle,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.58f),
+                                    maxLines = 1
+                                )
+                            }
+                            if (isReAnime) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (ep.isFiller) {
+                                        Text(
+                                            "FILLER",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.10f))
+                                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    if (ep.isRecap) {
+                                        Text(
+                                            "RECAP",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f))
+                                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    if (ep.airedDate.isNotBlank()) {
+                                        Text(
+                                            ep.airedDate.substringBefore("T"),
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.48f)
+                                        )
+                                    }
+                                }
+                            }
+                            if (!ep.playable) {
+                                Text(
+                                    "재생 불가",
+                                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                                    fontSize = 11.sp
+                                )
+                            }
                             if (isDownloaded) {
                                 Text("오프라인 시청 가능", color = LilacDark, fontSize = 12.sp)
                             } else if (downloadingProgress != null) {
@@ -1233,7 +1339,7 @@ fun DetailScreen(
                             }
                             !isOffline -> {
                                 IconButton(
-                                    enabled = !isBatchDownloading && downloadingProgress == null,
+                                    enabled = ep.playable && !isBatchDownloading && downloadingProgress == null,
                                     onClick = { processSingleDownload(ep) }
                                 ) {
                                     Icon(Icons.Default.Download, contentDescription = "다운로드", tint = Lilac)
@@ -1245,9 +1351,10 @@ fun DetailScreen(
                         }
                     }
                 }
-            } else {
-                item {
-                    Text("에피소드가 없습니다.", modifier = Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onBackground)
+                } else {
+                    item {
+                        Text("에피소드가 없습니다.", modifier = Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onBackground)
+                    }
                 }
             }
 

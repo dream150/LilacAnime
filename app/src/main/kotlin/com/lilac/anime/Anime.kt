@@ -47,7 +47,21 @@ data class Anime(
     val seriesTagIds: List<Int> = emptyList(),
     val detailUrl: String = "",
     val episodes: List<Episode> = emptyList(),
-    val dubEpisodes: List<Episode> = emptyList()
+    val dubEpisodes: List<Episode> = emptyList(),
+    /** Re:Anime detail-page relations (prequel/sequel/side story/etc.). */
+    val reAnimeRelated: List<ReAnimeRelated> = emptyList()
+)
+
+data class ReAnimeRelated(
+    val id: String,
+    val title: String,
+    val nativeTitle: String = "",
+    val romaji: String = "",
+    val poster: String = "",
+    val format: String = "",
+    val relationType: String = "",
+    val season: String = "",
+    val seasonYear: Int? = null
 )
 
 data class Episode(
@@ -57,9 +71,18 @@ data class Episode(
     val description: String = "",
     val videoUrl: String? = null,
     val vttUrl: String? = null,
-    // Linkkf 회차명이 4a, 5a처럼 숫자+문자로 제공되는 경우를 보존한다.
+    // Linkkf/Re:Anime 회차명이 4a, 5a처럼 숫자+문자로 제공되는 경우를 보존한다.
     // number는 기존 진행률/자막 API 호환을 위해 숫자 부분만 유지한다.
-    val displayNumber: String = number.toString()
+    val displayNumber: String = number.toString(),
+    // Re:Anime 상세회차에서 제공하는 추가 메타데이터.
+    val nativeTitle: String = "",
+    val airedDate: String = "",
+    val isFiller: Boolean = false,
+    val isRecap: Boolean = false,
+    val playable: Boolean = true,
+    val subbed: Boolean = false,
+    val dubbed: Boolean = false,
+    val thumbnailUrl: String = ""
 )
 
 data class WatchProgress(

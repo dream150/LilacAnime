@@ -236,10 +236,60 @@ class AnimeRepository {
             // only the current episode, so do not use it as the primary source.
             android.util.Log.d("ReAnime", "EPISODE_REQUEST detail=${anime.detailUrl}")
             val detailDocument = reAnimeClient.getDocument(anime.detailUrl, REANIME_BASE_URL + "/")
-            val detailEpisodes = ReAnimeParser.parseEpisodes(detailDocument, anime)
-            if (detailEpisodes.isNotEmpty()) {
-                android.util.Log.d("ReAnime", "EPISODE_RESULT slug=$slug count=${detailEpisodes.size}")
-                return detailEpisodes
+            val firstPage = ReAnimeParser.parseEpisodePage(detailDocument, anime)
+            if (firstPage.episodes.isNotEmpty()) {
+                val allEpisodes = LinkedHashMap<Int, Episode>()
+                firstPage.episodes.forEach { allEpisodes[it.number] = it }
+
+                // Re:ANIME embeds only one page (normally 100 episodes) in the
+                // initial HTML. The payload also exposes totalPages/offset, so
+                // fetch the remaining pages lazily from the same detail route.
+                if (firstPage.totalPages > 1) {
+                    for (page in 1 until firstPage.totalPages) {
+                        val expectedOffset = page * firstPage.limit
+                        val candidates = listOf(
+                            "${anime.detailUrl}?page=${page + 1}",
+                            "${anime.detailUrl}?episode_page=${page + 1}",
+                            "${anime.detailUrl}?ep_page=${page + 1}",
+                            "${anime.detailUrl}?offset=$expectedOffset&limit=${firstPage.limit}"
+                        )
+                        var fetched: ReAnimeParser.EpisodePage? = null
+                        for (candidate in candidates) {
+                            try {
+                                val doc = reAnimeClient.getDocument(candidate, anime.detailUrl)
+                                val parsed = ReAnimeParser.parseEpisodePage(doc, anime)
+                                if (parsed.episodes.isNotEmpty() &&
+                                    parsed.offset == expectedOffset &&
+                                    parsed.episodes.any { it.number > (allEpisodes.keys.maxOrNull() ?: 0) }) {
+                                    fetched = parsed
+                                    android.util.Log.d(
+                                        "ReAnime",
+                                        "EPISODE_PAGE_FETCHED page=${page + 1}/${firstPage.totalPages} " +
+                                            "offset=${parsed.offset} count=${parsed.episodes.size} url=$candidate"
+                                    )
+                                    break
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.w("ReAnime", "EPISODE_PAGE_REQUEST_FAILED url=$candidate", e)
+                            }
+                        }
+                        if (fetched == null) {
+                            android.util.Log.w(
+                                "ReAnime",
+                                "EPISODE_PAGE_NOT_FOUND page=${page + 1}/${firstPage.totalPages} expectedOffset=$expectedOffset"
+                            )
+                            break
+                        }
+                        fetched.episodes.forEach { allEpisodes[it.number] = it }
+                    }
+                }
+
+                val result = allEpisodes.values.sortedBy { it.number }
+                android.util.Log.d(
+                    "ReAnime",
+                    "EPISODE_RESULT slug=$slug count=${result.size} expected=${firstPage.total}"
+                )
+                return result
             }
 
             // Fallback for pages that render the selector only after opening the

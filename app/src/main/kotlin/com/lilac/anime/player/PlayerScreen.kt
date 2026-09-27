@@ -1534,55 +1534,50 @@ fun PlayerScreen(
                             )
                         }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                                Text(if (subtitleEnabled) "자막 켜짐" else "자막 꺼짐", color = Color.White, fontSize = 13.sp)
-                                Text("현재 자막 표시 상태", color = Color.White.copy(.55f), fontSize = 11.sp)
-                            }
-                            Switch(
-                                checked = subtitleEnabled,
-                                onCheckedChange = {
-                                    subtitleEnabled = it
-                                    engine.setSubtitleVisible(it)
+                        // 자막 관련 옵션은 이 하나의 섹션에서만 관리합니다.
+                        // 표시/효과/소스/트랙/크기/위치/싱크/스타일/파일 관리까지 한 곳에 모읍니다.
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("자막", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("표시 · 소스 · 트랙 · 크기 · 위치 · 싱크 · 스타일", color = Color.White.copy(.50f), fontSize = 10.sp)
                                 }
-                            )
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                                Text("ASS 자막 효과", color = Color.White, fontSize = 13.sp)
-                                Text(
-                                    if (vm.playerSettings.assEffectsEnabled) "원본 위치·색상·효과를 유지합니다"
-                                    else "효과를 단순화해 TV 성능을 우선합니다",
-                                    color = Color.White.copy(.55f), fontSize = 11.sp
+                                Switch(
+                                    checked = subtitleEnabled,
+                                    onCheckedChange = {
+                                        subtitleEnabled = it
+                                        engine.setSubtitleVisible(it)
+                                    }
                                 )
                             }
-                            Switch(
-                                checked = vm.playerSettings.assEffectsEnabled,
-                                onCheckedChange = { enabled ->
-                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(assEffectsEnabled = enabled))
-                                    engine.setAssEffectsEnabled(enabled)
-                                }
-                            )
-                        }
 
-                        // All subtitle controls live in one section so there is no
-                        // second/hidden subtitle settings menu to hunt for.
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 18.dp, vertical = 8.dp)
-                        ) {
-                            Text("자막", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text("표시 · 트랙 · 소스 · 크기 · 위치 · 싱크", color = Color.White.copy(.50f), fontSize = 10.sp)
                             Spacer(Modifier.height(8.dp))
 
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("ASS 자막 효과", color = Color.White, fontSize = 11.sp)
+                                    Text(
+                                        if (vm.playerSettings.assEffectsEnabled) "원본 위치·색상·효과를 유지합니다"
+                                        else "효과를 단순화해 성능을 우선합니다",
+                                        color = Color.White.copy(.50f), fontSize = 9.sp
+                                    )
+                                }
+                                Switch(
+                                    checked = vm.playerSettings.assEffectsEnabled,
+                                    onCheckedChange = { enabled ->
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(assEffectsEnabled = enabled))
+                                        engine.setAssEffectsEnabled(enabled)
+                                    }
+                                )
+                            }
+
+                            Spacer(Modifier.height(8.dp))
                             Text("자막 소스", color = Color.White.copy(.72f), fontSize = 11.sp)
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -1609,13 +1604,7 @@ fun PlayerScreen(
                                                     resolvePreferredSubtitle(currentEpisode, source)
                                                 } else {
                                                     withContext(Dispatchers.IO) {
-                                                        SubtitleStore.get(
-                                                            context,
-                                                            anime.id,
-                                                            currentEpisode.id,
-                                                            currentEpisode.number,
-                                                            source
-                                                        )
+                                                        SubtitleStore.get(context, anime.id, currentEpisode.id, currentEpisode.number, source)
                                                     }
                                                 }
                                                 if (!path.isNullOrBlank() && File(path).isFile) {
@@ -1658,7 +1647,7 @@ fun PlayerScreen(
                                             Text(
                                                 when {
                                                     reAnimeSubtitleTracks.isNotEmpty() -> "${reAnimeSubtitleTracks.size}개 트랙 · ${reAnimeSubtitleTracks.firstOrNull { it.url == selectedReAnimeSubtitleUrl }?.label ?: "트랙 선택"}"
-                                                    else -> "트랙을 불러오는 중…"
+                                                    else -> "현재 회차의 자막 트랙을 불러오는 중…"
                                                 },
                                                 color = Color.White.copy(.50f),
                                                 fontSize = 10.sp,
@@ -1674,7 +1663,7 @@ fun PlayerScreen(
                                 }
                             }
 
-                            Spacer(Modifier.height(6.dp))
+                            Spacer(Modifier.height(8.dp))
                             Text("자막 크기 ${subtitleSize.toInt()}%", color = Color.White.copy(.72f), fontSize = 11.sp)
                             Slider(
                                 value = subtitleSize,
@@ -1720,29 +1709,101 @@ fun PlayerScreen(
                                 }
                             }
 
-                            Row(
-                                Modifier.fillMaxWidth().padding(top = 7.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("VTT 원본 스타일 유지", color = Color.White, fontSize = 11.sp)
+                            Spacer(Modifier.height(4.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("VTT 원본 스타일", color = Color.White, fontSize = 11.sp)
+                                    Text("원본 색상/스타일 유지", color = Color.White.copy(.50f), fontSize = 9.sp)
+                                }
                                 Switch(checked = vttStyleEnabled, onCheckedChange = {
                                     vttStyleEnabled = it
                                     vm.updatePlayerSettings(context, vm.playerSettings.copy(vttStyleEnabled = it))
                                 })
                             }
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("VTT 자막 굵게", color = Color.White, fontSize = 11.sp)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("VTT 굵게", color = Color.White, fontSize = 11.sp)
+                                    Text("자막 글자를 굵게 표시", color = Color.White.copy(.50f), fontSize = 9.sp)
+                                }
                                 Switch(checked = vttBold, onCheckedChange = {
                                     vttBold = it
                                     vm.updatePlayerSettings(context, vm.playerSettings.copy(vttBold = it))
-                                    engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, it, vm.playerSettings.vttOutlineWidth, subtitlePosition / 100f, false)
+                                    engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, it, vttOutlineWidth, subtitlePosition / 100f, false)
                                 })
                             }
+                            Text("VTT 테두리 ${String.format(Locale.US, "%.1f", vttOutlineWidth)}dp", color = Color.White.copy(.72f), fontSize = 11.sp)
+                            Slider(
+                                value = vttOutlineWidth,
+                                onValueChange = {
+                                    vttOutlineWidth = it
+                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(vttOutlineWidth = it))
+                                    engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, it, subtitlePosition / 100f, false)
+                                },
+                                valueRange = 0f..6f, steps = 11
+                            )
+
+
+                            Spacer(Modifier.height(8.dp))
+                            Text("자막 파일 및 폰트", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("저장된 자막, 사용자 자막, ASS 폰트를 한 곳에서 관리합니다.", color = Color.White.copy(.50f), fontSize = 9.sp)
+                            Spacer(Modifier.height(6.dp))
+                        if (discoveredSubtitleFonts.isNotEmpty()) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
+                                Text("발견된 ASS 폰트", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    discoveredSubtitleFonts.forEach { font ->
+                                        val selected = selectedSubtitleFontPath == font.path
+                                        Surface(onClick = {
+                                            selectedSubtitleFontPath = font.path
+                                            vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleFontPath = font.path, subtitleFontSource = font.source))
+                                            engine.replaceSubtitleTrack(localSubtitle ?: return@Surface)
+                                        }, shape = RoundedCornerShape(9.dp), color = if (selected) Color.White else Color.White.copy(.08f)) {
+                                            Text(font.displayName, color = if (selected) Color.Black else Color.White, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("커스텀 폰트", color = Color.White, fontSize = 13.sp)
+                                Text(customFontName ?: "기본 폰트 사용 중", color = Color.White.copy(.50f), fontSize = 10.sp)
+                            }
+                            TextButton(onClick = { fontPickerLauncher.launch("font/*") }) { Text("불러오기", color = Color.White, fontSize = 11.sp) }
+                        }
+
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("사용자 자막", color = Color.White, fontSize = 13.sp)
+                                Text("ASS / SSA / SRT / VTT / SMI", color = Color.White.copy(.50f), fontSize = 10.sp)
+                            }
+                            TextButton(onClick = { subtitleFilePickerLauncher.launch(arrayOf("text/*", "application/*")) }) { Text("추가", color = Color.White, fontSize = 11.sp) }
+                        }
+
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
+                            Text("이 회차의 저장 자막", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            if (savedSubtitles.isEmpty()) Text("저장된 원본 자막이 없습니다.", color = Color.White.copy(.45f), fontSize = 10.sp)
+                            savedSubtitles.forEach { saved ->
+                                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(saved.source.uppercase(Locale.ROOT), color = if (saved.ignored) Color.Gray else Color.White, fontSize = 10.sp, modifier = Modifier.weight(1f))
+                                    TextButton(onClick = { playerScope.launch { SubtitleStore.setIgnored(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, saved.source, !saved.ignored); savedSubtitles = SubtitleStore.list(context, anime.id, currentEpisode.displayNumber, currentEpisode.number) } }) { Text(if (saved.ignored) "사용" else "제외", color = Color.White, fontSize = 9.sp) }
+                                    TextButton(onClick = { playerScope.launch { SubtitleStore.deleteOne(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, saved.source, saved.path); savedSubtitles = SubtitleStore.list(context, anime.id, currentEpisode.displayNumber, currentEpisode.number) } }) { Text("삭제", color = Color(0xFFFF8A80), fontSize = 9.sp) }
+                                }
+                            }
+                        }
+
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
+                            Text("사용자 자막 관리", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            userSubtitles.forEach { saved ->
+                                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(File(saved.path).name, color = Color.White.copy(.75f), fontSize = 9.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                                    TextButton(onClick = { playerScope.launch { localSubtitle = saved.path; subtitleSource = "user"; engine.replaceSubtitleTrack(saved.path); engine.setSubtitleVisible(true) } }) { Text("사용", color = Color.White, fontSize = 9.sp) }
+                                    TextButton(onClick = { playerScope.launch { SubtitleStore.deleteOne(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, "user", saved.path); userSubtitles = SubtitleStore.listUser(context, anime.id, currentEpisode.displayNumber, currentEpisode.number) } }) { Text("삭제", color = Color(0xFFFF8A80), fontSize = 9.sp) }
+                                }
+                            }
+                        }
+
                         }
 
                         if (reAnimeSubtitleTrackPickerOpen) {
@@ -1847,93 +1908,6 @@ fun PlayerScreen(
                                     }
                                 }
                             }
-                        }
-
-                        // Subtitle source / font / saved subtitle management / user subtitle.
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp)) {
-                            Text("자막 소스", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text("현재 프로젝트에서 사용할 저장 자막을 선택합니다.", color = Color.White.copy(.50f), fontSize = 10.sp)
-                            Spacer(Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf("linkkf" to "Linkkf VTT", "reanime" to "Re:Anime SRT", "kairan" to "Kairan ASS", "csora" to "Csora ASS", "user" to "사용자").forEach { (key, label) ->
-                                    Surface(onClick = {
-                                        subtitleSource = key
-                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = key))
-                                    }, shape = RoundedCornerShape(9.dp), color = if (subtitleSource == key) Color.White else Color.White.copy(.08f)) {
-                                        Text(label, color = if (subtitleSource == key) Color.Black else Color.White, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp))
-                                    }
-                                }
-                            }
-                        }
-
-                        if (discoveredSubtitleFonts.isNotEmpty()) {
-                            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
-                                Text("발견된 ASS 폰트", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    discoveredSubtitleFonts.forEach { font ->
-                                        val selected = selectedSubtitleFontPath == font.path
-                                        Surface(onClick = {
-                                            selectedSubtitleFontPath = font.path
-                                            vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleFontPath = font.path, subtitleFontSource = font.source))
-                                            engine.replaceSubtitleTrack(localSubtitle ?: return@Surface)
-                                        }, shape = RoundedCornerShape(9.dp), color = if (selected) Color.White else Color.White.copy(.08f)) {
-                                            Text(font.displayName, color = if (selected) Color.Black else Color.White, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("커스텀 폰트", color = Color.White, fontSize = 13.sp)
-                                Text(customFontName ?: "기본 폰트 사용 중", color = Color.White.copy(.50f), fontSize = 10.sp)
-                            }
-                            TextButton(onClick = { fontPickerLauncher.launch("font/*") }) { Text("불러오기", color = Color.White, fontSize = 11.sp) }
-                        }
-
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("사용자 자막", color = Color.White, fontSize = 13.sp)
-                                Text("ASS / SSA / SRT / VTT / SMI", color = Color.White.copy(.50f), fontSize = 10.sp)
-                            }
-                            TextButton(onClick = { subtitleFilePickerLauncher.launch(arrayOf("text/*", "application/*")) }) { Text("추가", color = Color.White, fontSize = 11.sp) }
-                        }
-
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
-                            Text("이 회차의 저장 자막", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            if (savedSubtitles.isEmpty()) Text("저장된 원본 자막이 없습니다.", color = Color.White.copy(.45f), fontSize = 10.sp)
-                            savedSubtitles.forEach { saved ->
-                                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(saved.source.uppercase(Locale.ROOT), color = if (saved.ignored) Color.Gray else Color.White, fontSize = 10.sp, modifier = Modifier.weight(1f))
-                                    TextButton(onClick = { playerScope.launch { SubtitleStore.setIgnored(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, saved.source, !saved.ignored); savedSubtitles = SubtitleStore.list(context, anime.id, currentEpisode.displayNumber, currentEpisode.number) } }) { Text(if (saved.ignored) "사용" else "제외", color = Color.White, fontSize = 9.sp) }
-                                    TextButton(onClick = { playerScope.launch { SubtitleStore.deleteOne(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, saved.source, saved.path); savedSubtitles = SubtitleStore.list(context, anime.id, currentEpisode.displayNumber, currentEpisode.number) } }) { Text("삭제", color = Color(0xFFFF8A80), fontSize = 9.sp) }
-                                }
-                            }
-                        }
-
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
-                            Text("사용자 자막 관리", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            userSubtitles.forEach { saved ->
-                                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(File(saved.path).name, color = Color.White.copy(.75f), fontSize = 9.sp, maxLines = 1, modifier = Modifier.weight(1f))
-                                    TextButton(onClick = { playerScope.launch { localSubtitle = saved.path; subtitleSource = "user"; engine.replaceSubtitleTrack(saved.path); engine.setSubtitleVisible(true) } }) { Text("사용", color = Color.White, fontSize = 9.sp) }
-                                    TextButton(onClick = { playerScope.launch { SubtitleStore.deleteOne(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, "user", saved.path); userSubtitles = SubtitleStore.listUser(context, anime.id, currentEpisode.displayNumber, currentEpisode.number) } }) { Text("삭제", color = Color(0xFFFF8A80), fontSize = 9.sp) }
-                                }
-                            }
-                        }
-
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) { Text("VTT 원본 스타일", color = Color.White, fontSize = 12.sp); Text("원본 색상/스타일 유지", color = Color.White.copy(.50f), fontSize = 10.sp) }
-                            Switch(checked = vttStyleEnabled, onCheckedChange = { vttStyleEnabled = it; vm.updatePlayerSettings(context, vm.playerSettings.copy(vttStyleEnabled = it)) })
-                        }
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) { Text("VTT 굵게", color = Color.White, fontSize = 12.sp); Text("자막 글자를 굵게 표시", color = Color.White.copy(.50f), fontSize = 10.sp) }
-                            Switch(checked = vttBold, onCheckedChange = { vttBold = it; vm.updatePlayerSettings(context, vm.playerSettings.copy(vttBold = it)); engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, it, vttOutlineWidth, subtitlePosition / 100f, false) })
-                        }
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp)) {
-                            Text("VTT 테두리 ${String.format(Locale.US, "%.1f", vttOutlineWidth)}dp", color = Color.White.copy(.72f), fontSize = 11.sp)
-                            Slider(value = vttOutlineWidth, onValueChange = { vttOutlineWidth = it; vm.updatePlayerSettings(context, vm.playerSettings.copy(vttOutlineWidth = it)); engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, it, subtitlePosition / 100f, false) }, valueRange = 0f..6f, steps = 11)
                         }
 
                         Row(

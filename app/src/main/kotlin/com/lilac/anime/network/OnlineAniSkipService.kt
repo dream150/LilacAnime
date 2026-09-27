@@ -31,7 +31,7 @@ object OnlineAniSkipService {
     private const val ANI_SKIP_BASE = "https://api.aniskip.com/v2/skip-times"
     private const val ANILIST_GRAPHQL_URL = "https://graphql.anilist.co"
 
-    private val allowedTypes = setOf("op", "ed", "mixed-op", "mixed-ed")
+    private val allowedTypes = setOf("op", "ed", "mixed-op", "mixed-ed", "recap")
 
     private val ipv4FirstDns = object : Dns {
         override fun lookup(hostname: String): List<InetAddress> =
@@ -107,37 +107,40 @@ object OnlineAniSkipService {
             Log.d(TAG, "CACHE_EXPIRED key=$cacheKey")
         }
 
-        val url = "$ANI_SKIP_BASE/$resolvedMalId/$episodeNumber" +
-            "?types=op&types=ed&types=mixed-op&types=mixed-ed&episodeLength=0"
-        val request = Request.Builder()
-            .url(url)
-            .header("Accept", "application/json")
-            .header("User-Agent", "LilacAnime Android")
-            .get()
-            .build()
-
-        Log.d(TAG, "ANISKIP_REQUEST url=$url")
-        val result = runCatching {
-            client.newCall(request).execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                Log.d(
-                    TAG,
-                    "ANISKIP_RESPONSE code=${response.code} success=${response.isSuccessful} bodyLength=${body.length}"
-                )
-                if (!response.isSuccessful || body.isBlank()) {
-                    Log.w(TAG, "ANISKIP_HTTP_ERROR code=${response.code} malId=$resolvedMalId episode=$episodeNumber")
-                    emptyList()
-                } else {
-                    parseSkipResponse(body)
+        fun requestSkipTimes(length: Int): List<ChapterSkipSegment> {
+            // AniSkip's documented/working query shape is repeated types[]
+            // parameters. Keep all supported segment types, including recap.
+            val url = "$ANI_SKIP_BASE/$resolvedMalId/$episodeNumber" +
+                "?types[]=op&types[]=ed&types[]=mixed-op&types[]=mixed-ed&types[]=recap" +
+                "&episodeLength=${length.coerceAtLeast(0)}"
+            val request = Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
+                .header("User-Agent", "LilacAnime Android")
+                .get()
+                .build()
+            Log.d(TAG, "ANISKIP_REQUEST url=$url")
+            return runCatching {
+                client.newCall(request).execute().use { response ->
+                    val body = response.body?.string().orEmpty()
+                    Log.d(TAG, "ANISKIP_RESPONSE code=${response.code} success=${response.isSuccessful} bodyLength=${body.length} length=$length")
+                    if (!response.isSuccessful || body.isBlank()) {
+                        Log.w(TAG, "ANISKIP_HTTP_ERROR code=${response.code} malId=$resolvedMalId episode=$episodeNumber length=$length")
+                        emptyList()
+                    } else parseSkipResponse(body)
                 }
-            }
-        }.onFailure { error ->
-            Log.e(
-                TAG,
-                "ANISKIP_NETWORK_ERROR ${error.javaClass.simpleName}: ${error.message}",
-                error
-            )
-        }.getOrElse { emptyList() }
+            }.onFailure { error ->
+                Log.e(TAG, "ANISKIP_NETWORK_ERROR ${error.javaClass.simpleName}: ${error.message}", error)
+            }.getOrElse { emptyList() }
+        }
+
+        // Prefer a duration-matched result. If AniSkip has no exact-duration
+        // record, fall back to episodeLength=0 which returns all known matches.
+        val result = if (episodeLengthSeconds > 0) {
+            requestSkipTimes(episodeLengthSeconds).ifEmpty { requestSkipTimes(0) }
+        } else {
+            requestSkipTimes(0)
+        }
 
         val cleaned = result
             .filter { it.startTime >= 0.0 && it.endTime > it.startTime }
