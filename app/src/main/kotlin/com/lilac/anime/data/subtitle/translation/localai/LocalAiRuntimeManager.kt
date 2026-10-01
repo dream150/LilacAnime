@@ -13,7 +13,8 @@ object LocalAiRuntimeManager {
     private const val TAG = "LocalAiRuntime"
     private const val ROOT = "local_ai"
     private const val RUNTIMES = "runtimes"
-    private const val CONTRACT = "lilac-local-ai-v1"
+    private const val CONTRACT = "lilac-local-ai-v2"
+    private const val LEGACY_CONTRACT = "lilac-local-ai-v1"
 
     fun runtimeRoot(context: Context) = File(context.filesDir, "$ROOT/$RUNTIMES").apply { mkdirs() }
 
@@ -23,7 +24,7 @@ object LocalAiRuntimeManager {
             if (!manifest.isFile) return@mapNotNull null
             runCatching { RuntimePack.fromJson(JSONObject(manifest.readText()), dir.absolutePath) }.getOrNull()
         }
-        ?.filter { it.abi == "arm64-v8a" && it.jniContract == CONTRACT }
+        ?.filter { it.abi == "arm64-v8a" && (it.jniContract == CONTRACT || it.jniContract == LEGACY_CONTRACT) }
         ?.sortedBy { it.name.lowercase() }
         ?: emptyList()
 
@@ -66,9 +67,9 @@ object LocalAiRuntimeManager {
             if (!manifest.isFile) throw IOException("runtime.json이 없습니다.")
             val pack = RuntimePack.fromJson(JSONObject(manifest.readText()), staging.absolutePath)
             if (pack.abi != "arm64-v8a") throw IOException("이 기기용 arm64-v8a runtime이 아닙니다.")
-            if (pack.jniContract != CONTRACT) throw IOException("지원하지 않는 JNI runtime contract입니다: ${pack.jniContract}")
+            if (pack.jniContract != CONTRACT && pack.jniContract != LEGACY_CONTRACT) throw IOException("지원하지 않는 JNI runtime contract입니다: ${pack.jniContract}")
             val library = File(staging, pack.libraryFile)
-            if (!library.isFile) throw IOException("runtime library가 없습니다: ${pack.libraryFile}")
+            if (pack.jniContract == LEGACY_CONTRACT && !library.isFile) throw IOException("runtime library가 없습니다: ${pack.libraryFile}")
             val finalDir = File(runtimeRoot(context), pack.id).apply { if (exists()) deleteRecursively(); mkdirs() }
             staging.copyRecursively(finalDir, overwrite = true)
             staging.deleteRecursively()

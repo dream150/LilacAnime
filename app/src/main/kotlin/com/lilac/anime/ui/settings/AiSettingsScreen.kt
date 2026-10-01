@@ -69,6 +69,10 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
     var expandedAdvanced by remember { mutableStateOf(false) }
     var contextSize by remember(settings.aiContextSize) { mutableStateOf(settings.aiContextSize.toFloat()) }
     var maxTokens by remember(settings.aiMaxTokens) { mutableStateOf(settings.aiMaxTokens.toFloat()) }
+    var temperature by remember(settings.aiTemperature) { mutableStateOf(settings.aiTemperature) }
+    var topP by remember(settings.aiTopP) { mutableStateOf(settings.aiTopP) }
+    var topK by remember(settings.aiTopK) { mutableStateOf(settings.aiTopK.toFloat()) }
+    var repetitionPenalty by remember(settings.aiRepetitionPenalty) { mutableStateOf(settings.aiRepetitionPenalty) }
     var contextCues by remember(settings.aiContextCues) { mutableStateOf(settings.aiContextCues.toFloat()) }
     var prefetchAhead by remember(settings.aiPrefetchAhead) { mutableStateOf(settings.aiPrefetchAhead.toFloat()) }
     var translationImportMessage by remember { mutableStateOf<String?>(null) }
@@ -200,6 +204,20 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                 Text("최대 출력 토큰: ${maxTokens.roundToInt()}",fontSize=13.sp,fontWeight=FontWeight.Medium)
                 Slider(value=maxTokens,onValueChange={maxTokens=it},valueRange=256f..4096f,steps=15,onValueChangeFinished={vm.updatePlayerSettings(context,settings.copy(aiMaxTokens=maxTokens.roundToInt()))})
                 Spacer(Modifier.height(10.dp))
+                Text("Temperature: ${String.format(java.util.Locale.US, "%.2f", temperature)}",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Slider(value=temperature,onValueChange={temperature=it},valueRange=0.0f..1.5f,steps=29,onValueChangeFinished={vm.updatePlayerSettings(context,settings.copy(aiTemperature=temperature))})
+                Text("낮을수록 출력이 안정적이고, 높을수록 표현이 다양해질 수 있습니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+                Spacer(Modifier.height(8.dp))
+                Text("Top-p: ${String.format(java.util.Locale.US, "%.2f", topP)}",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Slider(value=topP,onValueChange={topP=it},valueRange=0.1f..1.0f,steps=17,onValueChangeFinished={vm.updatePlayerSettings(context,settings.copy(aiTopP=topP))})
+                Spacer(Modifier.height(8.dp))
+                Text("Top-k: ${topK.roundToInt()}",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Slider(value=topK,onValueChange={topK=it},valueRange=1f..100f,steps=98,onValueChangeFinished={vm.updatePlayerSettings(context,settings.copy(aiTopK=topK.roundToInt()))})
+                Spacer(Modifier.height(8.dp))
+                Text("Repetition penalty: ${String.format(java.util.Locale.US, "%.2f", repetitionPenalty)}",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Slider(value=repetitionPenalty,onValueChange={repetitionPenalty=it},valueRange=1.0f..1.3f,steps=29,onValueChangeFinished={vm.updatePlayerSettings(context,settings.copy(aiRepetitionPenalty=repetitionPenalty))})
+                Text("이 옵션은 native llama.cpp runtime에서 적용됩니다. 내장 llama-android runtime은 현재 샘플링 옵션을 노출하지 않아 적용되지 않습니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+                Spacer(Modifier.height(10.dp))
                 Text("유지할 자막 문맥: ${contextCues.roundToInt()}개",fontSize=13.sp,fontWeight=FontWeight.Medium)
                 Slider(value=contextCues,onValueChange={contextCues=it},valueRange=0f..10f,steps=9,onValueChangeFinished={vm.updatePlayerSettings(context,settings.copy(aiContextCues=contextCues.roundToInt()))})
                 Text("현재 자막을 번역할 때 직전에 나온 자막 몇 개를 문맥으로 함께 참고할지 설정합니다. 0개면 문맥 없이 현재 자막만 번역합니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
@@ -216,7 +234,11 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                                 aiContextSize = 4096,
                                 aiThreads = 0,
                                 aiMaxTokens = 1536,
-                                aiContextCues = 3,
+                                aiTemperature = 0.7f,
+                                aiTopP = 0.6f,
+                                aiTopK = 20,
+                                aiRepetitionPenalty = 1.05f,
+                                aiContextCues = 0,
                                 aiPrefetchEnabled = true,
                                 aiPrefetchAhead = 10
                             )
@@ -225,7 +247,7 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                     modifier=Modifier.fillMaxWidth()
                 ){Text("AI 고급 설정을 기본값으로 복원")}
                 Spacer(Modifier.height(8.dp))
-                Text("온도(Temperature)는 현재 사용 중인 llama-android 0.1.1 API가 샘플링 파라미터를 노출하지 않아 이 앱에서는 적용할 수 없습니다. 임의로 저장만 하는 설정을 만들지 않고, 실제로 적용되는 추론 옵션만 제공합니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+
             }
 
             Spacer(Modifier.height(20.dp)); HorizontalDivider(); Spacer(Modifier.height(18.dp))

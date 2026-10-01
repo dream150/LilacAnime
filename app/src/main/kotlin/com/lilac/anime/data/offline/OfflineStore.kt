@@ -73,6 +73,10 @@ object OfflineStore {
             putInt("pref_ai_context_size", settings.aiContextSize)
             putInt("pref_ai_threads", settings.aiThreads)
             putInt("pref_ai_max_tokens", settings.aiMaxTokens)
+            putFloat("pref_ai_temperature", settings.aiTemperature)
+            putFloat("pref_ai_top_p", settings.aiTopP)
+            putInt("pref_ai_top_k", settings.aiTopK)
+            putFloat("pref_ai_repetition_penalty", settings.aiRepetitionPenalty)
             putInt("pref_ai_context_cues", settings.aiContextCues)
             putBoolean("pref_ai_prefetch_enabled", settings.aiPrefetchEnabled)
             putInt("pref_ai_prefetch_ahead", settings.aiPrefetchAhead)
@@ -155,10 +159,17 @@ object OfflineStore {
             translationModelId = prefs.getString("pref_translation_model_id", null),
             translationPrompt = prefs.getString("pref_translation_prompt", null)
                 ?.takeIf { it.isNotBlank() && !it.contains("LILAC_N") }
+                ?.let { saved ->
+                    if (saved == "Translate the following subtitle segment into Korean, without additional explanation.\n\nPreserve all subtitle formatting, timing, positioning, styling, effect, control, and metadata tags exactly as they are. Do not translate, remove, rename, reorder, or modify any tags, tag parameters, timestamps, escape sequences, or special characters. Preserve line breaks and the original structure. Translate only natural-language subtitle text. Output only the translated subtitle.\n\n{source_text}") com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime.DEFAULT_PROMPT else saved
+                }
                 ?: com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime.DEFAULT_PROMPT,
             aiContextSize = prefs.getInt("pref_ai_context_size", 4096).coerceIn(1024, 16384),
             aiThreads = prefs.getInt("pref_ai_threads", 0).coerceIn(0, 12),
             aiMaxTokens = prefs.getInt("pref_ai_max_tokens", 1536).coerceIn(256, 4096),
+            aiTemperature = prefs.getFloat("pref_ai_temperature", 0.7f).coerceIn(0.0f, 2.0f),
+            aiTopP = prefs.getFloat("pref_ai_top_p", 0.6f).coerceIn(0.05f, 1.0f),
+            aiTopK = prefs.getInt("pref_ai_top_k", 20).coerceIn(1, 100),
+            aiRepetitionPenalty = prefs.getFloat("pref_ai_repetition_penalty", 1.05f).coerceIn(1.0f, 1.5f),
             aiContextCues = prefs.getInt("pref_ai_context_cues", 3).coerceIn(0, 10),
             aiPrefetchEnabled = prefs.getBoolean("pref_ai_prefetch_enabled", true),
             aiPrefetchAhead = prefs.getInt("pref_ai_prefetch_ahead", 10).coerceIn(0, 40)

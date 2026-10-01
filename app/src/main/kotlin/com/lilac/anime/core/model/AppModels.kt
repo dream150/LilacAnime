@@ -76,11 +76,15 @@ data class PlayerSettings(
     // local = 설치된 GGUF + runtime, openai/deepl/qwen = 사용자 API Key
     val translationProvider: String = "local",
     val translationModelId: String? = null,
-    val translationPrompt: String = "Translate the following subtitle segment into Korean, without additional explanation.\n\nPreserve all subtitle formatting, timing, positioning, styling, effect, control, and metadata tags exactly as they are. Do not translate, remove, rename, reorder, or modify any tags, tag parameters, timestamps, escape sequences, or special characters. Preserve line breaks and the original structure. Translate only natural-language subtitle text. Output only the translated subtitle.\n\n{source_text}",
+    val translationPrompt: String = com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime.DEFAULT_PROMPT,
     // Local AI advanced inference settings. 0 threads means automatic CPU thread selection.
     val aiContextSize: Int = 4096,
     val aiThreads: Int = 0,
     val aiMaxTokens: Int = 1536,
+    val aiTemperature: Float = 0.7f,
+    val aiTopP: Float = 0.6f,
+    val aiTopK: Int = 20,
+    val aiRepetitionPenalty: Float = 1.05f,
     // 번역 대상 자막 앞에서 모델에 참고로 유지할 이전 자막 Cue 수.
     val aiContextCues: Int = 3,
     val aiPrefetchEnabled: Boolean = true,

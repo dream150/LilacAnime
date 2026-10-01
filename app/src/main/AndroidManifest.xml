@@ -10,7 +10,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    
+
     <application
     android:name=".LilacApplication"
         android:allowBackup="true"
@@ -19,6 +19,11 @@
         android:label="LilacAnime"
         android:supportsRtl="true"
         android:theme="@style/Theme.LilacAnime">
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+        <uses-native-library android:name="vendor.qti.hardware.dsp@1.0.so" android:required="false" />
+        <uses-native-library android:name="vendor.qti.hardware.dsp-V1-ndk.so" android:required="false" />
+        <uses-native-library android:name="libvmmem.so" android:required="false" />
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.lilac.anime.cast.CastOptionsProvider" />

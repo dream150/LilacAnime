@@ -74,38 +74,86 @@ internal object HunyuanQ2Native {
     private var loadedLibrary: String? = null
     private var loadError: Throwable? = null
 
-    private external fun nativeInit(): Boolean
-    private external fun nativeLoad(path: String): Boolean
-    private external fun nativeTranslate(prompt: String, maxTokens: Int): String?
+    private external fun nativeInit(runtimeDirectory: String, backend: String): Boolean
+    private external fun nativeLoad(path: String, contextSize: Int, threads: Int): Boolean
+    private external fun nativeTranslate(roles: Array<String>, contents: Array<String>, chatTemplate: String, addGenerationPrompt: Boolean, maxTokens: Int, temperature: Float, topP: Float, topK: Int, repetitionPenalty: Float): String?
     private external fun nativeRelease()
     private external fun nativeShutdown()
 
-    fun load(runtimeDirectory: String, libraryFile: String, modelPath: String): Boolean {
-        val library = File(runtimeDirectory, libraryFile)
-        if (!library.isFile) {
-            loadError = IOException("runtime library가 없습니다: ${library.absolutePath}")
-            return false
+    private fun loadLibraryIfPresent(directory: File, name: String) {
+        val file = File(directory, name)
+        if (file.isFile) {
+            System.load(file.absolutePath)
+            Log.i(TAG, "dependency loaded: ${file.name}")
         }
-        if (loaded && loadedLibrary == library.absolutePath) return nativeLoad(modelPath)
-        if (initialized && loadedLibrary != library.absolutePath) {
+    }
+
+    fun load(runtimeDirectory: String, libraryFile: String, modelPath: String): Boolean {
+        val directory = File(runtimeDirectory)
+        val runtimeLibrary = File(directory, libraryFile)
+        val loadKey = "apk:lilac_hunyuan_jni|${runtimeDirectory}|${libraryFile}"
+        if (loaded && loadedLibrary == loadKey) return nativeLoad(modelPath, currentContextSize, currentThreads)
+        if (initialized && loadedLibrary != loadKey) {
             throw IOException("다른 native runtime은 앱 재시작 후 사용할 수 있습니다.")
         }
         return runCatching {
-            System.load(library.absolutePath)
-            Log.i(TAG, "runtime loaded: ${library.absolutePath}")
-            if (!nativeInit()) throw IOException("native runtime 초기화에 실패했습니다.")
+            listOf(
+                "libggml-base.so",
+                "libggml-cpu.so",
+                "libggml-opencl.so",
+                "libggml-hexagon.so",
+                "libggml.so",
+                "libllama-common.so",
+                "libllama.so"
+            ).forEach { name ->
+                runCatching { loadLibraryIfPresent(directory, name) }
+                    .onFailure { Log.w(TAG, "optional dependency load failed: $name", it) }
+            }
+
+            val bridgeSource = runCatching {
+                System.loadLibrary("lilac_hunyuan_jni")
+                "apk"
+            }.getOrElse {
+                if (!runtimeLibrary.isFile) throw IOException("APK JNI bridge와 runtime JNI bridge가 모두 없습니다: ${runtimeLibrary.absolutePath}")
+                System.load(runtimeLibrary.absolutePath)
+                "runtime-pack"
+            }
+            Log.i(TAG, "JNI bridge loaded source=$bridgeSource runtime=${directory.absolutePath}")
+
+            val prefs = appContext?.getSharedPreferences("lilac_offline_store", Context.MODE_PRIVATE)
+            val contextSize = prefs?.getInt("pref_ai_context_size", 4096)?.coerceIn(1024, 16384) ?: 4096
+            val configuredThreads = prefs?.getInt("pref_ai_threads", 0)?.coerceIn(0, 12) ?: 0
+            val threads = if (configuredThreads > 0) configuredThreads else Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
+            currentContextSize = contextSize
+            currentThreads = threads
+            if (!nativeInit(directory.absolutePath, "auto")) throw IOException("native runtime 초기화에 실패했습니다.")
             initialized = true
-            loadedLibrary = library.absolutePath
-            loaded = nativeLoad(modelPath)
+            loadedLibrary = loadKey
+            loaded = nativeLoad(modelPath, contextSize, threads)
             if (!loaded) throw IOException("모델을 native runtime에 불러오지 못했습니다.")
             true
         }.onFailure {
             loadError = it
             Log.e(TAG, "runtime load failed", it)
+            runCatching { nativeShutdown() }
+            loaded = false
+            initialized = false
+            loadedLibrary = null
         }.getOrDefault(false)
     }
 
-    fun translate(prompt: String, maxTokens: Int): String? = if (loaded) nativeTranslate(prompt, maxTokens) else null
+    private var appContext: Context? = null
+    private var currentContextSize = 4096
+    private var currentThreads = 6
+
+    fun setContext(context: Context) { appContext = context.applicationContext }
+
+    fun translate(messages: List<Pair<String, String>>, chatTemplate: String?, addGenerationPrompt: Boolean, maxTokens: Int, temperature: Float, topP: Float, topK: Int, repetitionPenalty: Float): String? {
+        if (!loaded || messages.isEmpty()) return null
+        val roles = messages.map { it.first }.toTypedArray()
+        val contents = messages.map { it.second }.toTypedArray()
+        return nativeTranslate(roles, contents, chatTemplate.orEmpty(), addGenerationPrompt, maxTokens, temperature, topP, topK, repetitionPenalty)
+    }
 
     fun release() {
         if (initialized) nativeRelease()
@@ -122,13 +170,15 @@ internal object HunyuanQ2Native {
     fun error(): Throwable? = loadError
 }
 
+
 internal object LocalAiTranslationRuntime {
     private const val TAG = "LocalAiTranslation"
-    const val DEFAULT_PROMPT = "{context}\n\nReference the context above and translate ONLY the following subtitle into natural Korean. Do not translate the context, do not add explanations, labels, numbering, or code blocks. Preserve the meaning, character relationship, speaker style, emotion, and established honorific level. The default Korean speech style is 반말; use 존댓말 only when the relationship or situation clearly requires it.\n\n{source_text}"
+    const val DEFAULT_PROMPT = "{context}\n\nUse the context above only as reference. Do not translate or repeat it. Translate only the following current subtitle into Korean, without additional explanation.\n\n{source_text}"
     private val lock = Mutex()
     private var sessionModel: dev.ffmpegkit.llama.LlamaModel? = null
     private var sessionRuntime: RuntimeRegistry.Candidate? = null
     private var sessionModelId: String? = null
+    private var sessionChatTemplate: String? = null
     private var sessionContext: Context? = null
 
     suspend fun beginSession(context: Context) = withContext(Dispatchers.IO) {
@@ -150,6 +200,7 @@ internal object LocalAiTranslationRuntime {
             sessionModel = null
             sessionRuntime = null
             sessionModelId = null
+            sessionChatTemplate = null
             sessionContext = null
             Log.i(TAG, "SESSION_END")
         }
@@ -162,50 +213,62 @@ internal object LocalAiTranslationRuntime {
             val runtime = sessionRuntime ?: throw IOException("local AI runtime이 초기화되지 않았습니다.")
             val prefs = context.getSharedPreferences("lilac_offline_store", Context.MODE_PRIVATE)
             val savedPrompt = prefs.getString("pref_translation_prompt", null)?.trim()
-            val template = if (savedPrompt.isNullOrBlank()) DEFAULT_PROMPT else savedPrompt
-            val promptSource = if (savedPrompt.isNullOrBlank()) "default" else "user"
+            val legacyDefaultPrompt = "Translate the following subtitle segment into Korean, without additional explanation.\n\nPreserve all subtitle formatting, timing, positioning, styling, effect, control, and metadata tags exactly as they are. Do not translate, remove, rename, reorder, or modify any tags, tag parameters, timestamps, escape sequences, or special characters. Preserve line breaks and the original structure. Translate only natural-language subtitle text. Output only the translated subtitle.\n\n{source_text}"
+            val isLegacyDefault = savedPrompt == legacyDefaultPrompt
+            val template = if (savedPrompt.isNullOrBlank() || isLegacyDefault) DEFAULT_PROMPT else savedPrompt
+            val promptSource = if (savedPrompt.isNullOrBlank() || isLegacyDefault) "default" else "user"
             val contextCount = prefs.getInt("pref_ai_context_cues", 3).coerceIn(0, 10)
             val cleanContext = contextLines
                 .map { it.replace("\r\n", "\n").replace('\r', '\n').trim() }
                 .filter { it.isNotBlank() }
                 .takeLast(contextCount)
-            val contextText = if (cleanContext.isEmpty()) {
-                "[No previous subtitle context]"
-            } else {
-                cleanContext.joinToString("\n")
-            }
+            val contextText = cleanContext.joinToString("\n")
             val cleanSource = source.replace("\r\n", "\n").replace('\r', '\n').trim()
             val prompt = if (template.contains("{context}")) {
-                template
-                    .replace("{context}", contextText)
-                    .replace("{source_text}", cleanSource)
+                val contextualTemplate = template.replace("{context}", contextText)
+                if (template.contains("{source_text}")) contextualTemplate.replace("{source_text}", cleanSource)
+                else "$contextualTemplate\n\nCurrent subtitle:\n$cleanSource"
             } else {
-                // Keep user prompt intact, but always add the model's contextual
-                // translation structure when the user prompt has no context slot.
-                val sourcePart = if (template.contains("{source_text}")) {
-                    template.replace("{source_text}", cleanSource)
-                } else {
-                    "$template\n\n$cleanSource"
-                }
-                "[CONTEXT - DO NOT TRANSLATE]\n$contextText\n\n$sourcePart\n\nTranslate ONLY the final subtitle above. Do not translate or repeat the context."
+                val sourcePart = if (template.contains("{source_text}")) template.replace("{source_text}", cleanSource) else "$template\n\n$cleanSource"
+                if (contextText.isBlank()) sourcePart else """Context for reference only (do not translate or repeat):
+$contextText
+
+Translate only the current subtitle below into Korean. Use the context only to resolve meaning, names, and pronouns. Do not include any context text in the output. Output only the translation of the current subtitle.
+
+Current subtitle:
+$sourcePart"""
             }
-            Log.i(TAG, "CONTEXT_TRANSLATION promptSource=$promptSource contextCount=${cleanContext.size} sourceChars=${cleanSource.length} promptChars=${prompt.length}")
+            Log.i(TAG, "CONTEXT_TRANSLATION promptSource=$promptSource contextCount=${cleanContext.size} sourceChars=${cleanSource.length} contextChars=${contextText.length} promptChars=${prompt.length}")
+            Log.d(TAG, "PROMPT_INPUT context=${contextText.replace("\n", "\\n").take(800)} current=${cleanSource.replace("\n", "\\n").take(500)} prompt=${prompt.replace("\n", "\\n").take(1400)}")
             val maxTokens = prefs.getInt("pref_ai_max_tokens", 1536).coerceIn(256, 4096)
+            val temperature = prefs.getFloat("pref_ai_temperature", 0.7f).coerceIn(0.0f, 2.0f)
+            val topP = prefs.getFloat("pref_ai_top_p", 0.6f).coerceIn(0.05f, 1.0f)
+            val topK = prefs.getInt("pref_ai_top_k", 20).coerceIn(1, 100)
+            val repetitionPenalty = prefs.getFloat("pref_ai_repetition_penalty", 1.05f).coerceIn(1.0f, 1.5f)
+            Log.i(TAG, "SAMPLING temperature=$temperature topP=$topP topK=$topK repetitionPenalty=$repetitionPenalty maxTokens=$maxTokens")
             val output = when (runtime.kind) {
                 RuntimeRegistry.Kind.BUILTIN_LLAMA -> {
                     val llamaModel = sessionModel ?: throw IOException("llama 모델이 로드되지 않았습니다.")
                     dev.ffmpegkit.llama.Llama.complete(llamaModel, prompt = prompt, maxTokens = maxTokens).text
                 }
-                RuntimeRegistry.Kind.NATIVE_PACK -> HunyuanQ2Native.translate(prompt, maxTokens) ?: ""
+                RuntimeRegistry.Kind.NATIVE_PACK -> {
+                    val messages = listOf("user" to prompt)
+                    Log.i(TAG, "CHAT_TEMPLATE_RUNTIME runtime=native mode=messages addGenerationPrompt=false templatePresent=${!sessionChatTemplate.isNullOrBlank()} promptChars=${prompt.length}")
+                    HunyuanQ2Native.translate(messages, sessionChatTemplate, false, maxTokens, temperature, topP, topK, repetitionPenalty) ?: ""
+                }
             }
-            parseSingleOutput(output, cleanSource)
+            Log.d(TAG, "MODEL_RAW_OUTPUT ${output.replace("\n", "\\n").take(1200)}")
+            val parsedOutput = parseSingleOutput(output, cleanSource)
+            Log.d(TAG, "PARSED_OUTPUT ${parsedOutput.replace("\n", "\\n").take(800)}")
+            parsedOutput
         }
     }
 
 
     private suspend fun beginSessionInternal(context: Context) {
+        HunyuanQ2Native.setContext(context)
         val model = selectModel(context)
-        val runtime = RuntimeRegistry.select(context, model)
+        var runtime = RuntimeRegistry.select(context, model)
             ?: throw IOException("이 모델과 호환되는 runtime이 없습니다: ${model.displayName}")
         when (runtime.kind) {
             RuntimeRegistry.Kind.BUILTIN_LLAMA -> {
@@ -224,12 +287,30 @@ internal object LocalAiTranslationRuntime {
             RuntimeRegistry.Kind.NATIVE_PACK -> {
                 val pack = runtime.pack ?: throw IOException("선택된 native runtime 정보가 없습니다.")
                 if (!HunyuanQ2Native.load(pack.directory, pack.libraryFile, model.localPath)) {
-                    throw IOException("native runtime을 불러오지 못했습니다: ${HunyuanQ2Native.error()?.message.orEmpty()}")
+                    val preferred = RuntimeRegistry.selectedId(context, model)
+                    val fallback = RuntimeRegistry.compatible(context, model)
+                        .firstOrNull { it.kind == RuntimeRegistry.Kind.BUILTIN_LLAMA }
+                    if (preferred == RuntimeRegistry.AUTO && fallback != null) {
+                        Log.w(TAG, "SNAPDRAGON_RUNTIME_FAILED_FALLBACK_CPU error=${HunyuanQ2Native.error()?.message.orEmpty()}")
+                        HunyuanQ2Native.shutdown()
+                        val prefs = context.getSharedPreferences("lilac_offline_store", Context.MODE_PRIVATE)
+                        val contextSize = prefs.getInt("pref_ai_context_size", 4096).coerceIn(1024, 16384)
+                        val configuredThreads = prefs.getInt("pref_ai_threads", 0).coerceIn(0, 12)
+                        val threads = if (configuredThreads > 0) configuredThreads else Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+                        sessionModel = dev.ffmpegkit.llama.Llama.loadModel(
+                            modelPath = model.localPath,
+                            config = dev.ffmpegkit.llama.LlamaConfig(contextSize = contextSize, threads = threads)
+                        )
+                        runtime = fallback
+                    } else {
+                        throw IOException("native runtime을 불러오지 못했습니다: ${HunyuanQ2Native.error()?.message.orEmpty()}")
+                    }
                 }
             }
         }
         sessionRuntime = runtime
         sessionModelId = model.id
+        sessionChatTemplate = model.chatTemplate
         sessionContext = context.applicationContext
     }
 
