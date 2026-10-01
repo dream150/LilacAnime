@@ -12,7 +12,9 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.lilac.anime.Episode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import okhttp3.Request
 import okhttp3.OkHttpClient
 import org.json.JSONObject
@@ -41,7 +43,8 @@ object ReAnimePlayerResolver {
         val referer: String?,
         val headers: String?,
         val subtitleUrl: String? = null,
-        val subtitleReferer: String? = null
+        val subtitleReferer: String? = null,
+        val flixCloudPk: String? = null
     )
 
     suspend fun resolve(context: Context, episode: Episode): Result {
@@ -58,10 +61,115 @@ object ReAnimePlayerResolver {
             return Result(null, null, null)
         }
 
-        val flixUrl = findFlixUrl(slug, ep) ?: return Result(null, null, null)
+        val pageUrl = if (page.isNotBlank()) page else "$BASE/watch/${Uri.encode(slug)}?ep=$ep"
+
+        // The API path uses synchronous OkHttp.execute(), so it MUST run off the
+        // Android main thread. The WebView fallback itself posts all WebView work
+        // back to the main thread internally.
+        val flixUrl = withContext(Dispatchers.IO) {
+            findFlixUrl(slug, ep)
+        } ?: findFlixUrlFromWatchPage(context, pageUrl)
+            ?: return Result(null, null, null)
         android.util.Log.d(TAG, "FLIX_URL episode=$ep url=$flixUrl")
         return captureWebView(context, flixUrl)
     }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private suspend fun findFlixUrlFromWatchPage(context: Context, pageUrl: String): String? =
+        suspendCancellableCoroutine { continuation ->
+            val main = Handler(Looper.getMainLooper())
+            var webView: WebView? = null
+            var finished = false
+            var candidate: String? = null
+
+            fun finish(value: String?) {
+                if (finished) return
+                if (value.isNullOrBlank()) return
+                finished = true
+                candidate = value
+                main.post {
+                    runCatching { webView?.stopLoading() }
+                    runCatching { webView?.destroy() }
+                    webView = null
+                }
+                if (continuation.isActive) continuation.resume(candidate)
+            }
+
+            fun inspect(raw: String?) {
+                if (finished || raw.isNullOrBlank()) return
+                val value = runCatching { Uri.decode(raw) }.getOrDefault(raw).trim()
+                if (value.startsWith("https://flixcloud.cc/e/", true) ||
+                    value.startsWith("https://www.flixcloud.cc/e/", true)) {
+                    android.util.Log.d(TAG, "FLIX_WATCH_PAGE_LINK_CAPTURED url=$value")
+                    finish(value)
+                }
+            }
+
+            continuation.invokeOnCancellation {
+                main.post {
+                    runCatching { webView?.stopLoading() }
+                    runCatching { webView?.destroy() }
+                    webView = null
+                }
+            }
+
+            main.post {
+                val view = WebView(context.applicationContext)
+                webView = view
+                view.settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    javaScriptCanOpenWindowsAutomatically = false
+                    setSupportMultipleWindows(false)
+                    mediaPlaybackRequiresUserGesture = false
+                    cacheMode = WebSettings.LOAD_DEFAULT
+                    userAgentString = UA
+                }
+                view.webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                        inspect(request?.url?.toString())
+                        return false
+                    }
+
+                    override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                        inspect(request?.url?.toString())
+                        request?.requestHeaders?.values?.forEach { inspect(it) }
+                        return super.shouldInterceptRequest(view, request)
+                    }
+
+                    override fun shouldInterceptRequest(view: WebView?, url: String?): WebResourceResponse? {
+                        inspect(url)
+                        return super.shouldInterceptRequest(view, url)
+                    }
+
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        if (finished) return
+                        view?.evaluateJavascript(
+                            """(function(){try{return JSON.stringify([].slice.call(document.querySelectorAll('a,[href],[data-url],[data-link],[data-server-url]')).map(function(e){return e.href||e.getAttribute('data-url')||e.getAttribute('data-link')||e.getAttribute('data-server-url')||''}).filter(function(x){return /flixcloud\\.cc\\/e\\//i.test(x)}));}catch(e){return '[]';}})()"""
+                        ) { raw ->
+                            runCatching {
+                                val decoded = raw.orEmpty().trim().trim('\"')
+                                    .replace("\\\"", "\"")
+                                    .replace("\\/", "/")
+                                val array = org.json.JSONArray(decoded)
+                                for (i in 0 until array.length()) inspect(array.optString(i))
+                            }
+                        }
+                    }
+                }
+                view.loadUrl(pageUrl, mapOf("Referer" to "$BASE/", "User-Agent" to UA))
+                main.postDelayed({
+                    if (!finished) {
+                        finished = true
+                        runCatching { view.stopLoading() }
+                        runCatching { view.destroy() }
+                        webView = null
+                        if (continuation.isActive) continuation.resume(null)
+                    }
+                }, 15_000L)
+            }
+        }
 
     private fun findFlixUrl(slug: String, episode: Int): String? {
         // Current Re:ANIME exposes the episode links from /api/watch/{slug}/{ep}.
@@ -137,6 +245,8 @@ object ReAnimePlayerResolver {
             var m3u8Headers: String? = null
             var subtitle: String? = null
             var subtitleReferer: String? = null
+            var flixCloudPk: String? = null
+            var pkPolls = 0
             val seen = linkedSetOf<String>()
 
             fun choose(urls: Collection<String>): String? {
@@ -157,7 +267,7 @@ object ReAnimePlayerResolver {
                 val selected = bestM3u8 ?: choose(seen)
                 if (selected.isNullOrBlank()) return
                 finished = true
-                val result = Result(selected, m3u8Referer ?: flixUrl, m3u8Headers, subtitle, subtitleReferer)
+                val result = Result(selected, m3u8Referer ?: flixUrl, m3u8Headers, subtitle, subtitleReferer, flixCloudPk)
                 main.post {
                     runCatching { webView?.stopLoading() }
                     runCatching { webView?.destroy() }
@@ -169,7 +279,7 @@ object ReAnimePlayerResolver {
             fun timeout() {
                 if (finished) return
                 finished = true
-                val result = Result(choose(seen), m3u8Referer ?: flixUrl, m3u8Headers, subtitle, subtitleReferer)
+                val result = Result(choose(seen), m3u8Referer ?: flixUrl, m3u8Headers, subtitle, subtitleReferer, flixCloudPk)
                 main.post {
                     runCatching { webView?.stopLoading() }
                     runCatching { webView?.destroy() }
@@ -202,6 +312,20 @@ object ReAnimePlayerResolver {
                     userAgentString = UA
                 }
 
+                fun pollPk(view: WebView) {
+                    if (finished || flixCloudPk != null || pkPolls++ >= 50) return
+                    view.evaluateJavascript("(function(){try{return window.__pk||window.pk||''}catch(e){return ''}})()") { raw ->
+                        val value = raw.orEmpty().trim().trim('\"').takeIf { it.isNotBlank() && it != "null" }
+                        if (value != null) {
+                            flixCloudPk = value
+                            android.util.Log.d(TAG, "FLIX_PK_CAPTURED chars=${value.length}")
+                            if (bestM3u8 != null) complete()
+                        } else {
+                            main.postDelayed({ webView?.let { pollPk(it) } }, 100L)
+                        }
+                    }
+                }
+
                 fun inspect(url: String, requestHeaders: Map<String, String> = emptyMap()) {
                     val path = runCatching { Uri.parse(url).path.orEmpty().lowercase() }.getOrDefault("")
                     val ref = requestHeaders.entries.firstOrNull { it.key.equals("Referer", true) }
@@ -227,7 +351,7 @@ object ReAnimePlayerResolver {
                         }.joinToString("\n")
                         bestM3u8 = choose(seen)
                         android.util.Log.d(TAG, "M3U8_CAPTURED url=$url selected=${bestM3u8 ?: "<pending>"}")
-                        complete()
+                        if (flixCloudPk != null) complete()
                     }
                 }
 
@@ -260,6 +384,7 @@ object ReAnimePlayerResolver {
                 }
 
                 view.loadUrl(flixUrl, mapOf("Referer" to "$BASE/", "User-Agent" to UA))
+                pollPk(view)
                 main.postDelayed({ timeout() }, TIMEOUT_MS)
             }
         }

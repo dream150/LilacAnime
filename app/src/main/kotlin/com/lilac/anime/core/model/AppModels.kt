@@ -48,7 +48,7 @@ data class PlayerSettings(
     val syncOffsetMs: Long = 0L,
     // Media3 SubtitleView 기준: 값이 클수록 VTT/SRT 자막이 화면 위쪽으로 올라간다.
     val subtitleBottomPaddingFraction: Float = 0.12f,
-    // 자막 소스: "linkkf" = Linkkf VTT, "kairan" = Kairan ASS, "csora" = Csora ASS
+    // 자막 소스: "linkkf" = Linkkf VTT, "reanime" = Re:Anime track, "jimaku" = Jimaku Japanese ASS/SRT, "kairan" = Kairan ASS, "csora" = Csora ASS
     val subtitleSourcePreference: String = "linkkf",
     val customFontPath: String? = null,
     // Discovered Kairan/Csora ASS font selected by the user.
@@ -70,7 +70,21 @@ data class PlayerSettings(
     val vttBold: Boolean = true,
     val vttOutlineWidth: Float = 2.0f,
     // ASS/SSA effects can be disabled on lower-powered TV devices.
-    val assEffectsEnabled: Boolean = true
+    val assEffectsEnabled: Boolean = true,
+    // 자막 자동 번역
+    val translationAutoEnabled: Boolean = false,
+    // local = 설치된 GGUF + runtime, openai/deepl/qwen = 사용자 API Key
+    val translationProvider: String = "local",
+    val translationModelId: String? = null,
+    val translationPrompt: String = "Translate the following subtitle segment into Korean, without additional explanation.\n\nPreserve all subtitle formatting, timing, positioning, styling, effect, control, and metadata tags exactly as they are. Do not translate, remove, rename, reorder, or modify any tags, tag parameters, timestamps, escape sequences, or special characters. Preserve line breaks and the original structure. Translate only natural-language subtitle text. Output only the translated subtitle.\n\n{source_text}",
+    // Local AI advanced inference settings. 0 threads means automatic CPU thread selection.
+    val aiContextSize: Int = 4096,
+    val aiThreads: Int = 0,
+    val aiMaxTokens: Int = 1536,
+    // 번역 대상 자막 앞에서 모델에 참고로 유지할 이전 자막 Cue 수.
+    val aiContextCues: Int = 3,
+    val aiPrefetchEnabled: Boolean = true,
+    val aiPrefetchAhead: Int = 10
 )
 
 data class ExoVideoQualityOption(

@@ -30,7 +30,9 @@ fun startEpisodeDownload(
     streamUrl: String,
     referer: String? = null,
     subtitleUrl: String? = null,
-    subtitleReferer: String? = null
+    subtitleReferer: String? = null,
+    flixCloudPk: String? = null,
+    streamHeaders: String? = null
 ) {
     OfflineDownloadManager.enqueue(
         context,
@@ -41,7 +43,9 @@ fun startEpisodeDownload(
             streamUrl = streamUrl,
             referer = referer,
             subtitleUrl = subtitleUrl,
-            subtitleReferer = subtitleReferer
+            subtitleReferer = subtitleReferer,
+            flixCloudPk = flixCloudPk,
+            streamHeaders = streamHeaders
         )
     )
 }

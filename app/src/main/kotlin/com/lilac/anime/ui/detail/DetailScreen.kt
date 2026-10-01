@@ -49,6 +49,7 @@ import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.downloadSubtitleFile
 import com.lilac.anime.network.LinkkfRequestContextStore
 import com.lilac.anime.network.LinkkfEpisodeM3u8Collector
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -569,6 +570,12 @@ fun DetailScreen(
                 "Subtitle",
                 "REPAIR_BOTH_DONE episode=${ep.number} linkkf=${linkkfPath != null} kairan=${kairanPath != null}"
             )
+        } catch (e: CancellationException) {
+            // The detail screen can leave composition while subtitle repair is still
+            // running (for example when entering the player). That is expected and
+            // must not be reported as a subtitle failure.
+            Log.d("Subtitle", "REPAIR_BOTH_CANCELLED episode=${ep.number}")
+            throw e
         } catch (e: Exception) {
             Log.e("Subtitle", "REPAIR_BOTH_FAILED episode=${ep.number}", e)
         }
@@ -596,6 +603,50 @@ fun DetailScreen(
 
     // 단일 에피소드 다운로드 프로세스
     fun processSingleDownload(ep: Episode) {
+        if (isReAnime) {
+            Toast.makeText(context, "${ep.displayNumber}화 다운로드 준비 중...", Toast.LENGTH_SHORT).show()
+            scope.launch(Dispatchers.Main) {
+                try {
+                    val resolved = ReAnimePlayerResolver.resolve(context, ep)
+                    val streamUrl = resolved.m3u8Url
+                    if (streamUrl.isNullOrBlank()) {
+                        Toast.makeText(context, "Re:ANIME 스트리밍 주소를 찾지 못했습니다.", Toast.LENGTH_SHORT).show()
+                        return@launch
+                    }
+                    withContext(Dispatchers.IO) {
+                        OfflineStore.saveAnime(context, currentAnime)
+                        OfflineStore.saveEpisode(
+                            context = context,
+                            animeId = currentAnime.id,
+                            episode = ep.copy(videoUrl = streamUrl, vttUrl = resolved.subtitleUrl.orEmpty())
+                        )
+                    }
+                    Log.i(
+                        "OfflineDownload",
+                        "REANIME_ENQUEUE episode=${ep.displayNumber} " +
+                            "m3u8=${streamUrl.isNotBlank()} pkChars=${resolved.flixCloudPk?.length ?: 0} " +
+                            "referer=${resolved.referer?.take(80) ?: "<none>"}"
+                    )
+                    startEpisodeDownload(
+                        context = context,
+                        animeId = currentAnime.id,
+                        animeTitle = currentAnime.title,
+                        episode = ep.copy(videoUrl = streamUrl, vttUrl = resolved.subtitleUrl.orEmpty()),
+                        streamUrl = streamUrl,
+                        referer = resolved.referer,
+                        subtitleUrl = resolved.subtitleUrl,
+                        subtitleReferer = resolved.subtitleReferer ?: resolved.referer,
+                        flixCloudPk = resolved.flixCloudPk,
+                        streamHeaders = resolved.headers
+                    )
+                    Toast.makeText(context, "${ep.displayNumber}화 다운로드를 시작합니다.", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Log.e("OfflineDownload", "REANIME_DOWNLOAD_FAILED episode=${ep.displayNumber}", e)
+                    Toast.makeText(context, "${ep.displayNumber}화 다운로드를 시작하지 못했습니다: ${e.message.orEmpty()}", Toast.LENGTH_LONG).show()
+                }
+            }
+            return
+        }
         // 버튼 클릭 자체가 정상적으로 들어왔는지 즉시 사용자에게 알린다.
         // URL 추출/WebView가 지연되어도 이 Toast는 먼저 표시되어야 한다.
         Toast.makeText(context, "${ep.displayNumber}화 다운로드 준비 중...", Toast.LENGTH_SHORT).show()

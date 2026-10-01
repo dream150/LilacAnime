@@ -50,6 +50,8 @@ object MpvOfflineStore {
         val animeId: String = "",
         val sourceUrl: String? = null,
         val referer: String? = null,
+        val flixCloudPk: String? = null,
+        val streamHeaders: String? = null,
         val episodeNumber: Int = 0,
         val episodeKey: String = ""
     )
@@ -120,6 +122,8 @@ object MpvOfflineStore {
         status.error?.let { obj.put("error", it) }
         status.sourceUrl?.let { obj.put("sourceUrl", it) }
         status.referer?.let { obj.put("referer", it) }
+        status.flixCloudPk?.let { obj.put("flixCloudPk", it) }
+        status.streamHeaders?.let { obj.put("streamHeaders", it) }
         val temp = File(dir, "$META.tmp")
         temp.writeText(obj.toString(), Charsets.UTF_8)
         if (!temp.renameTo(File(dir, META))) {
@@ -152,6 +156,8 @@ object MpvOfflineStore {
             animeId = obj.optString("animeId", id.substringBefore("::")),
             sourceUrl = obj.optString("sourceUrl").takeIf { it.isNotBlank() },
             referer = obj.optString("referer").takeIf { it.isNotBlank() },
+            flixCloudPk = obj.optString("flixCloudPk").takeIf { it.isNotBlank() },
+            streamHeaders = obj.optString("streamHeaders").takeIf { it.isNotBlank() },
             episodeNumber = obj.optInt("episodeNumber", 0),
             episodeKey = obj.optString("episodeKey")
         )

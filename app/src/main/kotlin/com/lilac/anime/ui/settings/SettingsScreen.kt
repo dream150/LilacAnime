@@ -1,5 +1,6 @@
 package com.lilac.anime.ui.settings
 
+import kotlinx.coroutines.withContext
 import com.lilac.anime.*
 import com.lilac.anime.cast.*
 import com.lilac.anime.core.model.*
@@ -23,10 +24,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +43,12 @@ import androidx.compose.ui.Alignment
 import kotlin.math.roundToInt
 import com.lilac.anime.network.OfflineOpEdFingerprintStore
 
+private fun formatModelBytes(bytes: Long): String {
+    if (bytes < 1024L * 1024L) return "${bytes / 1024L} KB"
+    if (bytes < 1024L * 1024L * 1024L) return String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+    return String.format(java.util.Locale.US, "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+}
+
 @Composable
 fun SettingsScreen(
     vm: AnimeViewModel,
@@ -46,8 +57,10 @@ fun SettingsScreen(
     onNavigate: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val settings = vm.playerSettings
     var deleteTarget by remember { mutableStateOf<String?>(null) }
+
 
     AppScaffold(selected = "settings", onSelect = onNavigate) { padding ->
         Column(
@@ -312,6 +325,15 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(20.dp))
+
+            Text("AI 번역", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+            Spacer(Modifier.height(8.dp))
+            Text("로컬 AI 모델, 번역 프롬프트, 성능과 고급 추론 설정은 별도의 AI 설정에서 관리합니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = .65f))
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = { onNavigate("settings/ai") }, modifier = Modifier.fillMaxWidth()) { Text("AI 설정 열기") }
             Spacer(Modifier.height(24.dp))
             HorizontalDivider()
             Spacer(Modifier.height(20.dp))

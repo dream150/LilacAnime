@@ -66,6 +66,16 @@ object OfflineStore {
             putBoolean("pref_vtt_bold", settings.vttBold)
             putFloat("pref_vtt_outline_width", settings.vttOutlineWidth)
             putBoolean("pref_ass_effects_enabled", settings.assEffectsEnabled)
+            putBoolean("pref_translation_auto_enabled", settings.translationAutoEnabled)
+            putString("pref_translation_provider", settings.translationProvider)
+            putString("pref_translation_model_id", settings.translationModelId)
+            putString("pref_translation_prompt", settings.translationPrompt)
+            putInt("pref_ai_context_size", settings.aiContextSize)
+            putInt("pref_ai_threads", settings.aiThreads)
+            putInt("pref_ai_max_tokens", settings.aiMaxTokens)
+            putInt("pref_ai_context_cues", settings.aiContextCues)
+            putBoolean("pref_ai_prefetch_enabled", settings.aiPrefetchEnabled)
+            putInt("pref_ai_prefetch_ahead", settings.aiPrefetchAhead)
             apply()
         }
     }
@@ -106,7 +116,7 @@ object OfflineStore {
                 0.12f
             ).coerceIn(0.03f, 0.45f),
             subtitleSourcePreference = prefs.getString("pref_subtitle_source", "linkkf")
-                ?.takeIf { it == "linkkf" || it == "kairan" || it == "csora" } ?: "linkkf",
+                ?.takeIf { it in setOf("linkkf", "reanime", "jimaku", "kairan", "csora", "user") } ?: "linkkf",
             customFontPath = prefs.getString("pref_custom_font_path", null),
             subtitleFontPath = prefs.getString("pref_subtitle_font_path", null),
             subtitleFontSource = prefs.getString("pref_subtitle_font_source", null),
@@ -138,7 +148,20 @@ object OfflineStore {
             vttStyleEnabled = prefs.getBoolean("pref_vtt_style_enabled", true),
             vttBold = prefs.getBoolean("pref_vtt_bold", true),
             vttOutlineWidth = prefs.getFloat("pref_vtt_outline_width", 2.0f).coerceIn(0.5f, 6.0f),
-            assEffectsEnabled = prefs.getBoolean("pref_ass_effects_enabled", true)
+            assEffectsEnabled = prefs.getBoolean("pref_ass_effects_enabled", true),
+            translationAutoEnabled = prefs.getBoolean("pref_translation_auto_enabled", false),
+            translationProvider = prefs.getString("pref_translation_provider", "local")
+                ?.takeIf { it in setOf("local", "openai", "deepl", "qwen") } ?: "local",
+            translationModelId = prefs.getString("pref_translation_model_id", null),
+            translationPrompt = prefs.getString("pref_translation_prompt", null)
+                ?.takeIf { it.isNotBlank() && !it.contains("LILAC_N") }
+                ?: com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime.DEFAULT_PROMPT,
+            aiContextSize = prefs.getInt("pref_ai_context_size", 4096).coerceIn(1024, 16384),
+            aiThreads = prefs.getInt("pref_ai_threads", 0).coerceIn(0, 12),
+            aiMaxTokens = prefs.getInt("pref_ai_max_tokens", 1536).coerceIn(256, 4096),
+            aiContextCues = prefs.getInt("pref_ai_context_cues", 3).coerceIn(0, 10),
+            aiPrefetchEnabled = prefs.getBoolean("pref_ai_prefetch_enabled", true),
+            aiPrefetchAhead = prefs.getInt("pref_ai_prefetch_ahead", 10).coerceIn(0, 40)
         )
     }
 

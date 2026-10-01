@@ -347,6 +347,20 @@
       ]
     },
     {
+      "name": "com.google.mlkit:translate:17.0.3",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/com/google/mlkit/translate/17.0.3/translate-17.0.3-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/firebase/firebase-components/16.1.0/firebase-components-16.1.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/mlkit/common/18.11.0/common-18.11.0-exploded/classes.jar",
+        "../../.platform/caches/resolved-deps/com/google/firebase/firebase-annotations/16.0.0/firebase-annotations-16.0.0.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/com/google/firebase/firebase-components/16.1.0/firebase-components-16.1.0-sources.jar",
+        "../../.platform/caches/resolved-deps/com/google/firebase/firebase-annotations/16.0.0/firebase-annotations-16.0.0-sources.jar"
+      ]
+    },
+    {
       "name": "com.microsoft.playwright:playwright:1.55.0",
       "kind": "JAR",
       "classes": [
@@ -386,6 +400,16 @@
       ],
       "sources": [
         "../../.platform/caches/resolved-deps/com/squareup/retrofit2/retrofit/2.11.0/retrofit-2.11.0-sources.jar"
+      ]
+    },
+    {
+      "name": "dev.ffmpegkit-maintained:llama-android:0.1.1",
+      "kind": "AAR",
+      "classes": [
+        "../../.platform/caches/resolved-deps/dev/ffmpegkit-maintained/llama-android/0.1.1/llama-android-0.1.1-exploded/classes.jar"
+      ],
+      "sources": [
+        "../../.platform/caches/resolved-deps/dev/ffmpegkit-maintained/llama-android/0.1.1/llama-android-0.1.1-sources.jar"
       ]
     },
     {

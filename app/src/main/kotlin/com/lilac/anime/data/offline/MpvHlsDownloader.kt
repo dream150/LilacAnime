@@ -1,5 +1,6 @@
 package com.lilac.anime.data.offline
 
+
 import com.lilac.anime.*
 import com.lilac.anime.cast.*
 import com.lilac.anime.core.model.*
@@ -37,6 +38,9 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -65,10 +69,18 @@ class MpvHlsDownloader(
         val offset: Long?
     )
 
+    private data class HlsEncryption(
+        val method: String,
+        val keyUrl: String,
+        val iv: ByteArray?
+    )
+
     private data class Segment(
         val url: String,
         val duration: Double,
-        val range: ByteRange? = null
+        val range: ByteRange? = null,
+        val encryption: HlsEncryption? = null,
+        val sequence: Long = 0L
     )
 
     private data class PlaylistInfo(
@@ -95,6 +107,12 @@ class MpvHlsDownloader(
             mkdirs()
         }
 
+        Log.i(
+            TAG,
+            "DOWNLOAD_ENTER anime=$animeId episode=$episodeId source=${sourceUrl.take(180)} " +
+                "proxy=${FlixCloudHlsProxy.isProxyUrl(sourceUrl)} referer=${referer?.take(100) ?: "<none>"}"
+        )
+
         val output = MpvOfflineStore.videoFile(context, animeId, episodeId)
         val tempOutput = MpvOfflineStore.videoPartFile(context, animeId, episodeId)
 
@@ -107,25 +125,46 @@ class MpvHlsDownloader(
         // Partial HLS data is durable. Never delete it at the start of a retry.
         val localRoot = File(dir, "hls").apply { mkdirs() }
 
+        // A local FlixCloud proxy URL intentionally has no .m3u8 suffix.
+        // It is still an HLS playlist endpoint, so it MUST go through the
+        // playlist resolver instead of the direct-file branch. Otherwise the
+        //  playlist text itself is written to the MP4 temp file and
+        // MediaExtractor fails on the first validation attempt.
+        val isProxyHls = FlixCloudHlsProxy.isProxyUrl(sourceUrl)
+        val isHlsSource = sourceUrl.contains(".m3u8", ignoreCase = true) || isProxyHls
+        Log.i(TAG, "SOURCE_CLASSIFY isHls=$isHlsSource isProxyHls=$isProxyHls hasM3u8=${sourceUrl.contains(".m3u8", ignoreCase = true)}")
+
         // A direct MP4 URL is also accepted. It still goes through the same
         // final audio/video-track validation before becoming "completed".
-        if (!sourceUrl.contains(".m3u8", ignoreCase = true)) {
+        if (!isHlsSource) {
+            Log.i(TAG, "DIRECT_FILE_START url=${sourceUrl.take(180)}")
             tempOutput.delete()
             downloadToFile(sourceUrl, tempOutput, referer = referer)
+            Log.i(TAG, "DIRECT_FILE_DOWNLOADED bytes=${tempOutput.length()}")
             validatePlayableMp4(tempOutput)
             atomicReplace(tempOutput, output)
+            Log.i(TAG, "DIRECT_FILE_COMPLETE path=${output.absolutePath} bytes=${output.length()}")
             onProgress(Progress(1L, 1L))
             return@withContext output
         }
 
         try {
+            Log.i(TAG, "DOWNLOAD_START source=$sourceUrl proxy=${FlixCloudHlsProxy.isProxyUrl(sourceUrl)}")
             val playlistInfo = resolvePlaylists(sourceUrl, referer)
+            Log.i(
+                TAG,
+                "PLAYLIST_RESOLVED video=${playlistInfo.mediaUrl} audio=${playlistInfo.audioUrl ?: "<none>"} " +
+                    "videoProxy=${FlixCloudHlsProxy.isProxyUrl(playlistInfo.mediaUrl)} " +
+                    "audioProxy=${playlistInfo.audioUrl?.let(FlixCloudHlsProxy::isProxyUrl) ?: false}"
+            )
 
             val videoText = getText(playlistInfo.mediaUrl, referer)
-            rejectEncryptedHls(videoText)
+            Log.i(TAG, "VIDEO_PLAYLIST_READY chars=${videoText.length} segments=${countMediaUris(videoText)}")
+            validateHlsEncryption(videoText)
 
             val audioText = playlistInfo.audioUrl?.let { getText(it, referer) }
-            audioText?.let(::rejectEncryptedHls)
+            audioText?.let(::validateHlsEncryption)
+            Log.i(TAG, "AUDIO_PLAYLIST_READY present=${audioText != null} chars=${audioText?.length ?: 0} segments=${audioText?.let(::countMediaUris) ?: 0}")
 
             val videoSegments = parseSegments(playlistInfo.mediaUrl, videoText)
             require(videoSegments.isNotEmpty()) {
@@ -138,6 +177,13 @@ class MpvHlsDownloader(
                 emptyList()
             }
 
+            Log.i(
+                TAG,
+                "PLAYLIST_PARSED videoSegments=${videoSegments.size} audioSegments=${audioSegments.size} " +
+                    "videoEncrypted=${videoSegments.count { it.encryption != null }} " +
+                    "audioEncrypted=${audioSegments.count { it.encryption != null }}"
+            )
+
             val totalSegments =
                 videoSegments.size.toLong() + audioSegments.size.toLong()
 
@@ -148,31 +194,39 @@ class MpvHlsDownloader(
                 onProgress(Progress(current, totalSegments))
             }
 
+            Log.i(TAG, "VIDEO_SEGMENT_PHASE_START count=${videoSegments.size} proxy=${FlixCloudHlsProxy.isProxyUrl(playlistInfo.mediaUrl)}")
             val videoLocal = downloadPlaylist(
                 playlistText = videoText,
                 baseUrl = playlistInfo.mediaUrl,
                 outputDir = File(localRoot, "video").apply { mkdirs() },
                 segments = videoSegments,
                 referer = referer,
+                alreadyDecryptedByProxy = FlixCloudHlsProxy.isProxyUrl(playlistInfo.mediaUrl),
                 onSegment = { segmentProgress() }
             )
 
+            Log.i(TAG, "VIDEO_SEGMENT_PHASE_DONE files=${videoLocal.parts.size} init=${videoLocal.initFile?.length() ?: 0} playlist=${videoLocal.file.length()}")
+
             val audioLocal = if (audioSegments.isNotEmpty() && audioText != null) {
+                Log.i(TAG, "AUDIO_SEGMENT_PHASE_START count=${audioSegments.size} proxy=${FlixCloudHlsProxy.isProxyUrl(playlistInfo.audioUrl!!)}")
                 downloadPlaylist(
                     playlistText = audioText,
                     baseUrl = playlistInfo.audioUrl!!,
                     outputDir = File(localRoot, "audio").apply { mkdirs() },
                     segments = audioSegments,
                     referer = referer,
+                    alreadyDecryptedByProxy = FlixCloudHlsProxy.isProxyUrl(playlistInfo.audioUrl!!),
                     onSegment = { segmentProgress() }
                 )
             } else {
                 null
             }
 
+            Log.i(TAG, "AUDIO_SEGMENT_PHASE_DONE present=${audioLocal != null} files=${audioLocal?.parts?.size ?: 0} init=${audioLocal?.initFile?.length() ?: 0}")
+
             tempOutput.delete()
 
-            Log.i(TAG, "Starting local HLS -> MP4 with MediaExtractor/MediaMuxer")
+            Log.i(TAG, "MUX_START output=${tempOutput.absolutePath} video=${videoLocal.file.absolutePath} audio=${audioLocal?.file?.absolutePath ?: "<none>"}")
             Log.i(TAG, "Video playlist=${videoLocal.file.absolutePath}")
             Log.i(TAG, "Audio playlist=${audioLocal?.file?.absolutePath}")
 
@@ -182,15 +236,20 @@ class MpvHlsDownloader(
                 output = tempOutput
             )
 
+            Log.i(TAG, "MUX_DONE outputExists=${tempOutput.isFile} bytes=${tempOutput.length()}")
+
             check(tempOutput.isFile && tempOutput.length() > 0L) {
                 "로컬 HLS를 MP4로 변환하지 못했습니다."
             }
 
             // Do not mark the episode completed until both video and audio
             // tracks are actually present.
+            Log.i(TAG, "MP4_VALIDATE_START path=${tempOutput.absolutePath} bytes=${tempOutput.length()}")
             validatePlayableMp4(tempOutput)
+            Log.i(TAG, "MP4_VALIDATE_DONE path=${tempOutput.absolutePath}")
 
             atomicReplace(tempOutput, output)
+            Log.i(TAG, "DOWNLOAD_COMPLETE path=${output.absolutePath} bytes=${output.length()}")
 
             // Only the final MP4 is needed for offline playback.
             localRoot.deleteRecursively()
@@ -212,8 +271,10 @@ class MpvHlsDownloader(
      *   - its AUDIO rendition, when audio is declared separately.
      */
     private fun resolvePlaylists(url: String, referer: String? = null): PlaylistInfo {
+        Log.d(TAG, "RESOLVE_MASTER_START url=${url.take(180)} proxy=${FlixCloudHlsProxy.isProxyUrl(url)}")
         val master = getText(url, referer)
         if (!master.contains("#EXT-X-STREAM-INF", ignoreCase = false)) {
+            Log.d(TAG, "RESOLVE_MEDIA_PLAYLIST_DIRECT chars=${master.length}")
             return PlaylistInfo(mediaUrl = url, audioUrl = null)
         }
 
@@ -262,6 +323,12 @@ class MpvHlsDownloader(
         val selected = variants.maxByOrNull { it.bandwidth }
             ?: return PlaylistInfo(url, null)
 
+        Log.i(
+            TAG,
+            "MASTER_VARIANTS count=${variants.size} selectedBandwidth=${selected.bandwidth} " +
+                "selected=${selected.url} audioGroup=${selected.audioGroup ?: "<none>"} audioRenditions=${audioRenditions.size}"
+        )
+
         return PlaylistInfo(
             mediaUrl = selected.url,
             audioUrl = selected.audioGroup?.let { audioRenditions[it] }
@@ -274,11 +341,18 @@ class MpvHlsDownloader(
         outputDir: File,
         segments: List<Segment>,
         referer: String? = null,
+        alreadyDecryptedByProxy: Boolean = false,
         onSegment: suspend () -> Unit
     ): LocalPlaylist = coroutineScope {
         outputDir.mkdirs()
 
         val semaphore = Semaphore(3)
+        val keyCache = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+        Log.i(
+            TAG,
+            "SEGMENT_BATCH_START dir=${outputDir.absolutePath} count=${segments.size} " +
+                "proxy=$alreadyDecryptedByProxy encrypted=${segments.count { it.encryption != null }}"
+        )
         val completedBefore = segments.indices.count { index ->
             val segment = segments[index]
             val suffix = segmentSuffix(segment.url)
@@ -297,20 +371,25 @@ class MpvHlsDownloader(
                         (segment.range == null || target.length() == segment.range.length)
 
                     if (!validExisting) {
+                        Log.d(TAG, "SEGMENT_START seq=${segment.sequence} index=$index url=${segment.url.take(180)} range=${segment.range?.length ?: 0}")
                         val part = File(outputDir, "${target.name}.part")
                         // A .part file is never treated as a completed segment.
                         // downloadToFileWithRetry() removes it only between retry
                         // attempts and only after the request has definitively failed.
-                        downloadToFileWithRetry(
-                            url = segment.url,
+                        downloadAndDecryptSegmentWithRetry(
+                            segment = segment,
                             target = part,
-                            range = segment.range,
-                            referer = referer
+                            referer = referer,
+                            keyCache = keyCache,
+                            alreadyDecryptedByProxy = alreadyDecryptedByProxy
                         )
                         check(part.isFile && part.length() > 0L) {
-                            "세그먼트 다운로드 실패: ${segment.url}"
+                            "세그먼트 다운로드/복호화 실패: ${segment.url}"
                         }
                         atomicReplace(part, target)
+                        Log.d(TAG, "SEGMENT_DONE seq=${segment.sequence} index=$index bytes=${target.length()}")
+                    } else {
+                        Log.d(TAG, "SEGMENT_REUSE seq=${segment.sequence} index=$index bytes=${target.length()}")
                     }
 
                     check(target.isFile && target.length() > 0L) {
@@ -350,7 +429,14 @@ class MpvHlsDownloader(
         }
 
         val localPlaylist = File(outputDir, "playlist.m3u8")
-        writeLocalPlaylist(localPlaylist, playlistText, files, initFile)
+        writeLocalPlaylist(
+            localPlaylist,
+            playlistText,
+            files,
+            initFile,
+            stripEncryptionTag = alreadyDecryptedByProxy
+        )
+        Log.i(TAG, "SEGMENT_BATCH_DONE dir=${outputDir.absolutePath} count=${files.size} init=${initFile?.length() ?: 0} playlist=${localPlaylist.length()}")
         LocalPlaylist(localPlaylist, segments.size, initFile, files)
     }
 
@@ -370,7 +456,8 @@ class MpvHlsDownloader(
         file: File,
         original: String,
         parts: List<File>,
-        initFile: File?
+        initFile: File?,
+        stripEncryptionTag: Boolean = false
     ) {
         val lines = original.lines()
         val out = StringBuilder()
@@ -380,6 +467,13 @@ class MpvHlsDownloader(
             val line = raw.trim()
 
             when {
+                stripEncryptionTag && line.startsWith("#EXT-X-KEY:") -> {
+                    // FlixCloudHlsProxy has already decoded the encrypted HLS
+                    // payload before the local segment is written. Keeping the
+                    // EXT-X-KEY tag would make the offline player try to decrypt
+                    // the already-plaintext local segments a second time.
+                }
+
                 line.startsWith("#EXT-X-MAP:") && initFile != null -> {
                     val attrs = parseAttributes(line.substringAfter(':'))
                         .toMutableMap()
@@ -417,12 +511,38 @@ class MpvHlsDownloader(
         val out = mutableListOf<Segment>()
         var duration = 0.0
         var pendingRange: ByteRange? = null
+        var mediaSequence = 0L
+        var segmentSequence = 0L
+        var encryption: HlsEncryption? = null
         val previousEndByUri = mutableMapOf<String, Long>()
 
         for (raw in text.lines()) {
             val line = raw.trim()
 
             when {
+                line.startsWith("#EXT-X-MEDIA-SEQUENCE:") -> {
+                    mediaSequence = line.substringAfter(':').trim().toLongOrNull() ?: 0L
+                    segmentSequence = mediaSequence
+                }
+
+                line.startsWith("#EXT-X-KEY:") -> {
+                    val attrs = parseAttributes(line.substringAfter(':'))
+                    val method = attrs["METHOD"].orEmpty().trim()
+                    encryption = when {
+                        method.isBlank() || method.equals("NONE", true) -> null
+                        method.equals("AES-128", true) -> {
+                            val keyValue = attrs["URI"]?.trim()?.trim('"')
+                                ?: error("AES-128 HLS 키 URI가 없습니다.")
+                            val keyUrl = resolveUrl(baseUrl, keyValue)
+                            val iv = attrs["IV"]?.let(::parseHlsIv)
+                            HlsEncryption(method = "AES-128", keyUrl = keyUrl, iv = iv)
+                        }
+                        method.equals("SAMPLE-AES", true) || method.equals("SAMPLE-AES-CTR", true) ->
+                            error("지원하지 않는 HLS 암호화 방식: $method")
+                        else -> error("지원하지 않는 HLS 암호화 방식: $method")
+                    }
+                }
+
                 line.startsWith("#EXTINF:") -> {
                     duration = line.substringAfter(':')
                         .substringBefore(',')
@@ -430,9 +550,7 @@ class MpvHlsDownloader(
                 }
 
                 line.startsWith("#EXT-X-BYTERANGE:") -> {
-                    pendingRange = parseByteRange(
-                        line.substringAfter(':')
-                    )
+                    pendingRange = parseByteRange(line.substringAfter(':'))
                 }
 
                 line.isNotEmpty() && !line.startsWith("#") -> {
@@ -444,14 +562,15 @@ class MpvHlsDownloader(
                             ?: 0L
 
                         previousEndByUri[url] = offset + r.length
-
                         ByteRange(r.length, offset)
                     }
 
                     out += Segment(
                         url = url,
                         duration = duration,
-                        range = range
+                        range = range,
+                        encryption = encryption,
+                        sequence = segmentSequence++
                     )
 
                     duration = 0.0
@@ -463,35 +582,12 @@ class MpvHlsDownloader(
         return out
     }
 
-    private fun parseInit(
-        text: String,
-        baseUrl: String
-    ): Pair<String, ByteRange?>? {
-        val line = text.lineSequence()
-            .firstOrNull { it.trim().startsWith("#EXT-X-MAP:") }
-            ?: return null
-
-        val attrs = parseAttributes(line.substringAfter(':'))
-        val uri = attrs["URI"] ?: return null
-        val range = attrs["BYTERANGE"]?.let(::parseByteRange)
-
-        return resolveUrl(baseUrl, uri) to range
-    }
-
     private fun parseByteRange(value: String): ByteRange {
         val parts = value.trim().split('@', limit = 2)
         val length = parts[0].toLongOrNull()
             ?: error("잘못된 HLS BYTERANGE: $value")
         val offset = parts.getOrNull(1)?.toLongOrNull()
         return ByteRange(length, offset)
-    }
-
-    private fun rejectEncryptedHls(text: String) {
-        if (text.contains("#EXT-X-KEY", ignoreCase = true)) {
-            throw IllegalStateException(
-                "암호화된 HLS는 현재 오프라인 MP4 변환을 지원하지 않습니다."
-            )
-        }
     }
 
     /**
@@ -516,16 +612,22 @@ class MpvHlsDownloader(
         val audioSource = audio?.let { File(dir, "audio_source.bin") }
 
         try {
+            Log.i(TAG, "CONCAT_VIDEO_START parts=${video.parts.size} init=${video.initFile?.length() ?: 0}")
             concatenateMedia(video, videoSource)
+            Log.i(TAG, "CONCAT_VIDEO_DONE bytes=${videoSource.length()}")
             if (audio != null && audioSource != null) {
+                Log.i(TAG, "CONCAT_AUDIO_START parts=${audio.parts.size} init=${audio.initFile?.length() ?: 0}")
                 concatenateMedia(audio, audioSource)
+                Log.i(TAG, "CONCAT_AUDIO_DONE bytes=${audioSource.length()}")
             }
 
+            Log.i(TAG, "MUX_SOURCES_START videoBytes=${videoSource.length()} audioBytes=${audioSource?.length() ?: 0}")
             muxSourcesToMp4(
                 videoSource = videoSource,
                 audioSource = audioSource,
                 output = output
             )
+            Log.i(TAG, "MUX_SOURCES_DONE outputBytes=${output.length()}")
         } finally {
             videoSource.delete()
             audioSource?.delete()
@@ -1059,6 +1161,117 @@ class MpvHlsDownloader(
         }
     }
 
+    private fun validateHlsEncryption(text: String) {
+        for (line in text.lineSequence()) {
+            if (!line.trim().startsWith("#EXT-X-KEY:")) continue
+            val method = parseAttributes(line.substringAfter(':'))["METHOD"].orEmpty()
+            if (method.equals("SAMPLE-AES", true) || method.equals("SAMPLE-AES-CTR", true)) {
+                error("지원하지 않는 HLS 암호화 방식: $method")
+            }
+            if (method.isNotBlank() && !method.equals("NONE", true) && !method.equals("AES-128", true)) {
+                error("지원하지 않는 HLS 암호화 방식: $method")
+            }
+        }
+    }
+
+    private fun parseHlsIv(value: String): ByteArray {
+        val hex = value.trim().removePrefix("0x").removePrefix("0X")
+        require(hex.length <= 32 && hex.all { it in "0123456789abcdefABCDEF" }) {
+            "잘못된 HLS IV: $value"
+        }
+        val padded = hex.padStart(32, '0')
+        return ByteArray(16) { i -> padded.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+    }
+
+    private fun defaultHlsIv(sequence: Long): ByteArray =
+        ByteBuffer.allocate(16).putLong(8, sequence).array()
+
+    private fun decryptAes128(data: ByteArray, key: ByteArray, iv: ByteArray): ByteArray {
+        require(key.size == 16) { "AES-128 키 길이가 잘못되었습니다: ${key.size}" }
+        require(iv.size == 16) { "AES-128 IV 길이가 잘못되었습니다: ${iv.size}" }
+        require(data.isNotEmpty() && data.size % 16 == 0) {
+            "AES-128 세그먼트 길이가 16바이트 배수가 아닙니다: ${data.size}"
+        }
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(key, "AES"),
+            IvParameterSpec(iv)
+        )
+        return cipher.doFinal(data)
+    }
+
+    private fun downloadAndDecryptSegmentWithRetry(
+        segment: Segment,
+        target: File,
+        referer: String?,
+        keyCache: java.util.concurrent.ConcurrentHashMap<String, ByteArray>,
+        alreadyDecryptedByProxy: Boolean = false
+    ) {
+        var lastError: Throwable? = null
+        repeat(SEGMENT_RETRY_COUNT) { attempt ->
+            try {
+                if (attempt > 0) target.delete()
+                val raw = File(target.parentFile, "${target.name}.raw")
+                raw.delete()
+                downloadToFile(segment.url, raw, segment.range, referer)
+
+                val encryption = segment.encryption
+                if (alreadyDecryptedByProxy) {
+                    // FlixCloudHlsProxy already performs the outer FlixCloud
+                    // decoding and returns plaintext media bytes. The manifest
+                    // still contains EXT-X-KEY, so never AES-decrypt these bytes
+                    // again here.
+                    atomicReplace(raw, target)
+                    Log.d(TAG, "HLS_PROXY_SEGMENT_DECODED seq=${segment.sequence} bytes=${raw.length()}")
+                } else if (encryption == null) {
+                    atomicReplace(raw, target)
+                } else {
+                    val key = keyCache[encryption.keyUrl] ?: run {
+                        val downloaded = downloadBytes(encryption.keyUrl, referer)
+                        require(downloaded.size == 16) {
+                            "AES-128 key 길이가 16바이트가 아닙니다: ${downloaded.size}, url=${encryption.keyUrl}"
+                        }
+                        keyCache.putIfAbsent(encryption.keyUrl, downloaded) ?: downloaded
+                    }
+                    val iv = encryption.iv ?: defaultHlsIv(segment.sequence)
+                    val encrypted = raw.readBytes()
+                    val plain = decryptAes128(encrypted, key, iv)
+                    target.outputStream().use { it.write(plain) }
+                    raw.delete()
+                    Log.d(
+                        TAG,
+                        "HLS_AES128_DECRYPTED seq=${segment.sequence} bytes=${encrypted.size}->${plain.size} key=${encryption.keyUrl}"
+                    )
+                }
+                return
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                lastError = t
+                Log.w(TAG, "encrypted segment retry ${attempt + 1}/$SEGMENT_RETRY_COUNT failed: ${segment.url}", t)
+                File(target.parentFile, "${target.name}.raw").delete()
+                if (attempt + 1 < SEGMENT_RETRY_COUNT) {
+                    try { Thread.sleep(RETRY_BACKOFF_MS * (attempt + 1)) }
+                    catch (e: InterruptedException) { Thread.currentThread().interrupt(); throw e }
+                }
+            }
+        }
+        throw lastError ?: IllegalStateException("segment download/decrypt failed: ${segment.url}")
+    }
+
+    private fun downloadBytes(url: String, referer: String? = null): ByteArray {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Referer", referer?.takeIf { it.isNotBlank() } ?: REFERER)
+            .header("Origin", originFor(referer))
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("key HTTP ${response.code}: $url")
+            return response.body?.bytes() ?: error("empty key response: $url")
+        }
+    }
+
     private fun downloadToFileWithRetry(
         url: String,
         target: File,
@@ -1121,7 +1334,10 @@ class MpvHlsDownloader(
             )
         }
 
-        client.newCall(builder.build()).execute().use { response ->
+        val request = builder.build()
+        Log.v(TAG, "HTTP_SEGMENT_REQUEST method=${request.method} url=${url.take(180)} range=${range?.offset ?: ""}-${range?.length ?: ""}")
+        client.newCall(request).execute().use { response ->
+            Log.v(TAG, "HTTP_SEGMENT_RESPONSE code=${response.code} bytes=${response.body?.contentLength() ?: -1} url=${url.take(180)}")
             if (!response.isSuccessful) {
                 error("segment HTTP ${response.code}: $url")
             }
@@ -1146,6 +1362,7 @@ class MpvHlsDownloader(
     }
 
     private fun getText(url: String, referer: String? = null): String {
+        Log.d(TAG, "GET_PLAYLIST url=$url proxy=${FlixCloudHlsProxy.isProxyUrl(url)}")
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
@@ -1154,6 +1371,7 @@ class MpvHlsDownloader(
             .build()
 
         client.newCall(request).execute().use { response ->
+            Log.d(TAG, "GET_PLAYLIST_RESPONSE url=$url status=${response.code} bytes=${response.body?.contentLength() ?: -1}")
             if (!response.isSuccessful) {
                 error("playlist HTTP ${response.code}: $url")
             }
@@ -1169,6 +1387,12 @@ class MpvHlsDownloader(
             "${uri.scheme}://${uri.host}${if (uri.port > 0) ":${uri.port}" else ""}"
         }.getOrDefault(ORIGIN)
     }
+
+    private fun countMediaUris(text: String): Int =
+        text.lineSequence().count { line ->
+            val trimmed = line.trim()
+            trimmed.isNotEmpty() && !trimmed.startsWith("#")
+        }
 
     private fun parseAttributes(value: String): Map<String, String> {
         val result = linkedMapOf<String, String>()

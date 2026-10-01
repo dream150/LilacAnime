@@ -217,6 +217,10 @@ fun LilacApp(vm: AnimeViewModel = viewModel()) {
                 if (isTv) TvSettingsScreen(vm, themeMode, onThemeChange, { nav.navigate(it) })
                 else SettingsScreen(vm, themeMode, onThemeChange, { nav.navigate(it) })
             }
+            composable("settings/ai") {
+                if (isTv) TvAiSettingsScreen(vm, { nav.navigate(it) })
+                else AiSettingsScreen(vm, { nav.navigate(it) })
+            }
 
             composable("detail/{id}") { backStack ->
                 val id = backStack.arguments?.getString("id")

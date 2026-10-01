@@ -284,10 +284,35 @@ class AnimeRepository {
                     }
                 }
 
+                // Re:ANIME exposes the authoritative total in the first SSR payload,
+                // but the captured detail page only embeds the first 100 records.
+                // If the site does not expose the remaining page payload to the
+                // client, do not truncate the app's episode selector at 100.
+                // Create lightweight entries for the missing numeric episodes.
+                // Their watch URL is fully deterministic and opening it lets the
+                // normal Re:ANIME player resolve the actual episode metadata/source.
+                val expectedTotal = firstPage.total.coerceAtLeast(allEpisodes.keys.maxOrNull() ?: 0)
+                if (expectedTotal > 0) {
+                    for (number in 1..expectedTotal) {
+                        if (!allEpisodes.containsKey(number)) {
+                            allEpisodes[number] = Episode(
+                                id = "reanime:$slug:$number",
+                                number = number,
+                                title = "Episode $number",
+                                videoUrl = "$REANIME_BASE_URL/watch/$slug?ep=$number",
+                                displayNumber = number.toString(),
+                                playable = true,
+                                subbed = true
+                            )
+                        }
+                    }
+                }
+
                 val result = allEpisodes.values.sortedBy { it.number }
                 android.util.Log.d(
                     "ReAnime",
-                    "EPISODE_RESULT slug=$slug count=${result.size} expected=${firstPage.total}"
+                    "EPISODE_RESULT slug=$slug count=${result.size} expected=${firstPage.total} " +
+                        "loadedPayload=${firstPage.episodes.size}"
                 )
                 return result
             }

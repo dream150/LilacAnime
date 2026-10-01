@@ -746,6 +746,20 @@ fun TvLibraryScreen(vm: AnimeViewModel, open: (Anime) -> Unit, onNavigate: (Stri
     TvShell("library", onNavigate, onRefresh = { vm.refreshAnime() }) { Column(Modifier.fillMaxSize().padding(horizontal = 54.dp)) { Text("내 목록", color = TvText, fontSize = 34.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(vertical = 20.dp)); LazyVerticalGrid(columns = GridCells.Fixed(6), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) { gridItems(items) { TvLandscapeCard(it, { open(it) }, 270) } } } }
 }
 
+
+@Composable
+fun TvAiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
+    val context = LocalContext.current
+    TvShell("settings", onNavigate) {
+        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 110.dp), contentPadding = PaddingValues(vertical = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("AI 설정", color = TvText, fontSize = 36.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f)); TvChoice("설정", false) { onNavigate("settings") } } }
+            item { TvSettingSection("번역 엔진") { TvChoice("로컬 AI", vm.playerSettings.translationProvider == "local") { vm.updatePlayerSettings(context, vm.playerSettings.copy(translationProvider="local")) }; TvChoice("OpenAI", vm.playerSettings.translationProvider == "openai") { vm.updatePlayerSettings(context, vm.playerSettings.copy(translationProvider="openai")) }; TvChoice("DeepL", vm.playerSettings.translationProvider == "deepl") { vm.updatePlayerSettings(context, vm.playerSettings.copy(translationProvider="deepl")) }; TvChoice("Qwen", vm.playerSettings.translationProvider == "qwen") { vm.updatePlayerSettings(context, vm.playerSettings.copy(translationProvider="qwen")) } } }
+            item { TvSettingSection("로컬 AI 성능") { TvChoice("Context ${vm.playerSettings.aiContextSize}", false) { val next = if(vm.playerSettings.aiContextSize >= 16384) 1024 else vm.playerSettings.aiContextSize * 2; vm.updatePlayerSettings(context, vm.playerSettings.copy(aiContextSize=next)) }; TvChoice("Threads ${if(vm.playerSettings.aiThreads==0)"자동" else vm.playerSettings.aiThreads}", false) { val options=listOf(0,2,4,6,8,12); val i=options.indexOf(vm.playerSettings.aiThreads).coerceAtLeast(0); vm.updatePlayerSettings(context,vm.playerSettings.copy(aiThreads=options[(i+1)%options.size])) }; TvChoice("Prefetch ${if(vm.playerSettings.aiPrefetchEnabled)"ON" else "OFF"}", vm.playerSettings.aiPrefetchEnabled) { vm.updatePlayerSettings(context,vm.playerSettings.copy(aiPrefetchEnabled=!vm.playerSettings.aiPrefetchEnabled)) } } }
+            item { Text("온도(Temperature)는 현재 llama-android API에서 직접 조절할 수 없어 TV 화면에는 노출하지 않습니다.", color=Color.White.copy(alpha=.6f), fontSize=13.sp) }
+        }
+    }
+}
+
 @Composable
 fun TvSettingsScreen(vm: AnimeViewModel, themeMode: ThemeMode, onThemeChange: (ThemeMode) -> Unit, onNavigate: (String) -> Unit) {
     val context = LocalContext.current

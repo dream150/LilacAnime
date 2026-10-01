@@ -33,10 +33,18 @@ object OfflineDownloadManager {
         val streamUrl: String,
         val referer: String? = null,
         val subtitleUrl: String? = null,
-        val subtitleReferer: String? = null
+        val subtitleReferer: String? = null,
+        val flixCloudPk: String? = null,
+        val streamHeaders: String? = null
     )
 
     fun enqueue(context: Context, request: Request) {
+        android.util.Log.i(
+            "OfflineDownload",
+            "ENQUEUE anime=${request.animeId} episode=${request.episode.id} " +
+                "number=${request.episode.number} m3u8=${request.streamUrl.contains(".m3u8", true)} " +
+                "flixPkChars=${request.flixCloudPk?.length ?: 0}"
+        )
         val app = context.applicationContext
         val intent = Intent(app, LilacDownloadService::class.java).apply {
             action = LilacDownloadService.ACTION_DOWNLOAD
@@ -50,7 +58,13 @@ object OfflineDownloadManager {
             request.referer?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_REFERER, it) }
             request.subtitleUrl?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_SUBTITLE_URL, it) }
             request.subtitleReferer?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_SUBTITLE_REFERER, it) }
+            request.flixCloudPk?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_FLIX_PK, it) }
+            request.streamHeaders?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_STREAM_HEADERS, it) }
         }
+        android.util.Log.i(
+            "OfflineDownload",
+            "SERVICE_START action=${LilacDownloadService.ACTION_DOWNLOAD} episode=${request.episode.id}"
+        )
         ContextCompat.startForegroundService(app, intent)
     }
 

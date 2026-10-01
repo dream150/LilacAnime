@@ -77,6 +77,8 @@ class MpvPlayerEngine(private val context: Context) {
     private var suppressEndFileUntilStartFile = false
 
     private val _endFileEvents = MutableSharedFlow<Long>(extraBufferCapacity = 8)
+    private val _subtitleEvents = MutableSharedFlow<String>(extraBufferCapacity = 32)
+    val subtitleEvents: SharedFlow<String> = _subtitleEvents
     val endFileEvents: SharedFlow<Long> = _endFileEvents
 
     /**
@@ -122,7 +124,14 @@ class MpvPlayerEngine(private val context: Context) {
         override fun eventProperty(property: String, value: Long) = updateProperty(property)
         override fun eventProperty(property: String, value: Double) = updateProperty(property)
         override fun eventProperty(property: String, value: Boolean) = updateProperty(property)
-        override fun eventProperty(property: String, value: String) = updateProperty(property)
+        override fun eventProperty(property: String, value: String) {
+            if (property == "sub-text") {
+                subtitleText = value
+                _subtitleEvents.tryEmit(value)
+            } else {
+                updateProperty(property)
+            }
+        }
 
         override fun event(eventId: Int) {
             when (eventId) {
@@ -237,6 +246,7 @@ class MpvPlayerEngine(private val context: Context) {
     }
 
     private fun updateProperty(property: String) {
+        if (property == "sub-text") return
         // During an episode/server switch libmpv can still deliver delayed
         // property notifications after the old media has already been torn
         // down. Querying time-pos/duration/eof-reached at that moment makes
@@ -261,7 +271,11 @@ class MpvPlayerEngine(private val context: Context) {
                         signalPlaybackEnded(loadedLoadGeneration)
                     }
                 }
-                "sub-text" -> subtitleText = mpv.getPropertyString("sub-text") ?: ""
+                "sub-text" -> {
+                    val value = mpv.getPropertyString("sub-text") ?: ""
+                    subtitleText = value
+                    _subtitleEvents.tryEmit(value)
+                }
             }
         }.onFailure {
             // A property can disappear while mpv is replacing the media.
@@ -404,6 +418,10 @@ class MpvPlayerEngine(private val context: Context) {
         runCatching { mpv.command(arrayOf("sub-reload")) }
             .onFailure { Log.w(TAG, "SUB_RELOAD_FAILED", it) }
     }
+
+    fun getCurrentSubtitleText(): String = runCatching {
+        mpv.getPropertyString("sub-text").orEmpty()
+    }.getOrDefault(subtitleText)
 
     fun setSubtitleDelay(offsetMs: Long) {
         runCatching { mpv.setPropertyDouble("sub-delay", offsetMs / 1000.0) }

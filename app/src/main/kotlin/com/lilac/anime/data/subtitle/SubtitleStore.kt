@@ -29,6 +29,10 @@ object SubtitleStore {
     private const val FONT_PATH_PREFIX = "font_path_"
     private const val FONT_SOURCE_PREFIX = "font_source_"
     private const val ALL_PATHS_PREFIX = "all_paths_"
+    private val SUPPORTED_SUBTITLE_EXTENSIONS = setOf(
+        "ass", "ssa", "srt", "vtt", "smi", "sami",
+        "sub", "mpl2", "mpsub", "jacosub", "aqt", "pjs", "rt", "sbv"
+    )
 
     data class SavedSubtitle(
         val source: String,
@@ -57,6 +61,12 @@ object SubtitleStore {
         }
 
         // New Linkkf VTT cache format.
+        // Jimaku cache format: ep_<episodeKey>_<urlHash>.<ext>.
+        Regex("^ep_([a-z0-9._-]+)_([a-f0-9]{8,64})$", RegexOption.IGNORE_CASE)
+            .find(name)?.groupValues?.getOrNull(1)?.let { key ->
+                return key.toIntOrNull() == episodeNumber
+            }
+
         Regex("(?:^|_)ep_([a-z0-9._-]+?)(?:_(?:linkkf|reanime))?$", RegexOption.IGNORE_CASE)
             .find(name)?.groupValues?.getOrNull(1)?.let { key ->
                 val numeric = key.toIntOrNull()
@@ -92,6 +102,12 @@ object SubtitleStore {
         if (!file.isFile || episodeNumber <= 0) return false
         val name = file.nameWithoutExtension.lowercase(java.util.Locale.ROOT)
         val normalizedKey = safeEpisodeKey(episodeKey)
+
+        // Jimaku cache format: ep_<episodeKey>_<urlHash>.<ext>.
+        Regex("^ep_([a-z0-9._-]+)_([a-f0-9]{8,64})$", RegexOption.IGNORE_CASE)
+            .find(name)?.groupValues?.getOrNull(1)?.let { generatedKey ->
+                return generatedKey == normalizedKey
+            }
 
         Regex("(?:^|_)ep_([a-z0-9._-]+?)(?:_(?:linkkf|reanime))?$", RegexOption.IGNORE_CASE)
             .find(name)?.groupValues?.getOrNull(1)?.let { generatedKey ->
@@ -193,7 +209,7 @@ object SubtitleStore {
 
     suspend fun list(context: Context, animeId: String, episodeKey: String, episodeNumber: Int): List<SavedSubtitle> = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        listOf("linkkf", "reanime", "kairan", "csora").flatMap { source ->
+        listOf("linkkf", "reanime", "jimaku", "kairan", "csora").flatMap { source ->
             val primary = prefs.getString(key(animeId, episodeKey, source), null)
             val stored = prefs.getStringSet(allPathsKey(animeId, episodeKey, source), emptySet()).orEmpty()
             val paths = (stored + listOfNotNull(primary)).distinct()

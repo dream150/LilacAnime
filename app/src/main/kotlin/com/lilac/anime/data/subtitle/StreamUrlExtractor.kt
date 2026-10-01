@@ -676,7 +676,26 @@ fun StreamUrlExtractor(
                             }
                         } catch (t: Throwable) {
                             Log.e("ReAnimeStream", "FLIX_RESOLVE_FAILED episode=$reAnimeEpisodeNumber", t)
-                            mainHandler.post { webView.loadUrl(targetUrl) }
+                            mainHandler.post {
+                                webView.loadUrl(targetUrl)
+                                mainHandler.postDelayed({
+                                    if (webView != null) {
+                                        webView.evaluateJavascript(
+                                            """(function(){try{var a=[].slice.call(document.querySelectorAll('a,[href],[data-url],[data-link],[data-server-url]'));return a.map(function(e){return e.href||e.getAttribute('data-url')||e.getAttribute('data-link')||e.getAttribute('data-server-url')||''}).filter(function(x){return /flixcloud\\.cc\\/e\\//i.test(x)}).join('\\n');}catch(e){return '';}})()"""
+                                        ) { raw ->
+                                            val decoded = raw.orEmpty().trim().trim('\"')
+                                                .replace("\\\"", "\"")
+                                                .replace("\\/", "/")
+                                            val flixUrl = decoded.split('\n')
+                                                .firstOrNull { it.startsWith("https://flixcloud.cc/e/", true) }
+                                            if (!flixUrl.isNullOrBlank()) {
+                                                Log.d("ReAnimeStream", "FLIX_DOM_RESOLVED episode=$reAnimeEpisodeNumber url=$flixUrl")
+                                                webView.loadUrl(flixUrl)
+                                            }
+                                        }
+                                    }
+                                }, 2500L)
+                            }
                         }
                     }
                 } else {
