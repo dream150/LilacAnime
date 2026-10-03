@@ -1,13 +1,9 @@
 #v2
-10
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/player/PlayerScreen.kt	83	0	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/search/SearchScreen.kt	1078	2	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/providers/LocalTranslator.kt	12240	241	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/TranslationManager.kt	1420	152	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/RealtimeSubtitleTranslator.kt	5331	116	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/AiSettingsScreen.kt	4204	39	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/offline/OfflineStore.kt	1278	33	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/localai/LocalAiRuntimeManager.kt	0	65	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/localai/LocalAiModelManager.kt	0	147	text
+6
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/providers/LocalTranslator.kt	0	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/localai/LocalAiModels.kt	0	0	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/viewmodel/AnimeViewModel.kt	8632	208	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/localai/LocalAiNative.kt	0	0	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/localai/LocalAiRuntimeManager.kt	0	0	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/AiSettingsScreen.kt	0	0	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/TranslationManager.kt	0	0	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/player/PlayerScreen.kt	0	0	text
