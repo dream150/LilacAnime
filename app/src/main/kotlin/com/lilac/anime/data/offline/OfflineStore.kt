@@ -108,7 +108,7 @@ object OfflineStore {
         PlayerSettings(
             defaultQuality = prefs.getString("pref_default_quality", "1080p") ?: "1080p",
             videoSourcePreference = prefs.getString("pref_video_source", "linkkf")
-                ?.takeIf { it == "linkkf" || it == "animenosub" } ?: "linkkf",
+                ?.takeIf { it in setOf("linkkf", "animenosub", "reanime") } ?: "linkkf",
             subtitleFont = prefs.getString("pref_subtitle_font", "기본체") ?: "기본체",
             subtitleSize = prefs.getFloat("pref_subtitle_size", 100f),
             textColor = prefs.getInt("pref_text_color", android.graphics.Color.WHITE),
@@ -165,12 +165,12 @@ object OfflineStore {
                 ?: com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime.DEFAULT_PROMPT,
             aiContextSize = prefs.getInt("pref_ai_context_size", 4096).coerceIn(1024, 16384),
             aiThreads = prefs.getInt("pref_ai_threads", 0).coerceIn(0, 12),
-            aiMaxTokens = prefs.getInt("pref_ai_max_tokens", 1536).coerceIn(256, 4096),
-            aiTemperature = prefs.getFloat("pref_ai_temperature", 0.7f).coerceIn(0.0f, 2.0f),
-            aiTopP = prefs.getFloat("pref_ai_top_p", 0.6f).coerceIn(0.05f, 1.0f),
-            aiTopK = prefs.getInt("pref_ai_top_k", 20).coerceIn(1, 100),
+            aiMaxTokens = prefs.getInt("pref_ai_max_tokens", 512).coerceIn(256, 4096),
+            aiTemperature = prefs.getFloat("pref_ai_temperature", 0.25f).coerceIn(0.0f, 2.0f),
+            aiTopP = prefs.getFloat("pref_ai_top_p", 0.85f).coerceIn(0.05f, 1.0f),
+            aiTopK = prefs.getInt("pref_ai_top_k", 40).coerceIn(1, 100),
             aiRepetitionPenalty = prefs.getFloat("pref_ai_repetition_penalty", 1.05f).coerceIn(1.0f, 1.5f),
-            aiContextCues = prefs.getInt("pref_ai_context_cues", 3).coerceIn(0, 10),
+            aiContextCues = prefs.getInt("pref_ai_context_cues", 6).coerceIn(0, 10),
             aiPrefetchEnabled = prefs.getBoolean("pref_ai_prefetch_enabled", true),
             aiPrefetchAhead = prefs.getInt("pref_ai_prefetch_ahead", 10).coerceIn(0, 40)
         )

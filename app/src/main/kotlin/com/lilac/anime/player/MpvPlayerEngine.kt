@@ -61,6 +61,17 @@ class MpvPlayerEngine(private val context: Context) {
         private set
     @Volatile var duration: Long = 0L
         private set
+    @Volatile var videoWidth: Int = 0
+        private set
+    @Volatile var videoHeight: Int = 0
+        private set
+    /** Actual display/output dimensions reported by mpv (after pixel aspect correction). */
+    @Volatile var videoDisplayWidth: Int = 0
+        private set
+    @Volatile var videoDisplayHeight: Int = 0
+        private set
+    @Volatile var videoDisplayAspect: Double = 0.0
+        private set
     @Volatile var subtitleText: String = ""
         private set
     @Volatile var playbackState: Int = STATE_IDLE
@@ -108,6 +119,11 @@ class MpvPlayerEngine(private val context: Context) {
         isPlaying = false
         currentPosition = 0L
         duration = 0L
+        videoWidth = 0
+        videoHeight = 0
+        videoDisplayWidth = 0
+        videoDisplayHeight = 0
+        videoDisplayAspect = 0.0
     }
 
     @Volatile var loadedLoadGeneration: Long = 0L
@@ -121,8 +137,21 @@ class MpvPlayerEngine(private val context: Context) {
 
     private val observer = object : MPVLib.EventObserver {
         override fun eventProperty(property: String) = updateProperty(property)
-        override fun eventProperty(property: String, value: Long) = updateProperty(property)
-        override fun eventProperty(property: String, value: Double) = updateProperty(property)
+        override fun eventProperty(property: String, value: Long) {
+            when (property) {
+                "video-params/w" -> videoWidth = value.toInt().coerceAtLeast(0)
+                "video-params/h" -> videoHeight = value.toInt().coerceAtLeast(0)
+                "video-params/dw" -> videoDisplayWidth = value.toInt().coerceAtLeast(0)
+                "video-params/dh" -> videoDisplayHeight = value.toInt().coerceAtLeast(0)
+            }
+            updateProperty(property)
+        }
+        override fun eventProperty(property: String, value: Double) {
+            if (property == "video-params/dar" && value.isFinite() && value > 0.01) {
+                videoDisplayAspect = value
+            }
+            updateProperty(property)
+        }
         override fun eventProperty(property: String, value: Boolean) = updateProperty(property)
         override fun eventProperty(property: String, value: String) {
             if (property == "sub-text") {
@@ -217,6 +246,9 @@ class MpvPlayerEngine(private val context: Context) {
             mpv.setOptionString("demuxer-max-back-bytes", "8MiB")
             mpv.setOptionString("cache-secs", "20")
         }
+        mpv.setOptionString("keepaspect", "yes")
+        mpv.setOptionString("video-zoom", "0")
+        mpv.setOptionString("panscan", "0")
         mpv.setOptionString("force-window", "no")
         mpv.setOptionString("idle", "once")
         mpv.setOptionString("sub-auto", "no")
@@ -233,6 +265,11 @@ class MpvPlayerEngine(private val context: Context) {
 
         observe("time-pos", MPV_FORMAT_DOUBLE)
         observe("duration", MPV_FORMAT_DOUBLE)
+        observe("video-params/dar", MPV_FORMAT_DOUBLE)
+        observe("video-params/w", MPV_FORMAT_DOUBLE)
+        observe("video-params/h", MPV_FORMAT_DOUBLE)
+        observe("video-params/dw", MPV_FORMAT_DOUBLE)
+        observe("video-params/dh", MPV_FORMAT_DOUBLE)
         observe("pause", MPV_FORMAT_FLAG)
         // 일부 HLS/로컬 MP4에서 END_FILE이 늦거나 누락되는 경우를 위한
         // 자동재생 완료 신호 fallback.
@@ -286,11 +323,34 @@ class MpvPlayerEngine(private val context: Context) {
 
     fun attachSurface(surface: Surface) {
         mpv.attachSurface(surface)
+        mpv.setOptionString("keepaspect", "yes")
+        mpv.setOptionString("video-zoom", "0")
+        mpv.setOptionString("panscan", "0")
         mpv.setOptionString("force-window", "yes")
+    }
+
+    /**
+     * Rebinds the currently displayed Surface after the Android TextureView
+     * changes size (fold/unfold, rotation, PiP resize, etc.). libmpv keeps the
+     * same media/time position; only the rendering target is refreshed.
+     */
+    fun refreshSurface(surface: Surface) {
+        runCatching {
+            mpv.attachSurface(surface)
+            mpv.setOptionString("keepaspect", "yes")
+            mpv.setOptionString("video-zoom", "0")
+            mpv.setOptionString("panscan", "0")
+            mpv.setOptionString("force-window", "yes")
+        }.onFailure {
+            Log.w(TAG, "Failed to refresh mpv surface", it)
+        }
     }
 
     fun detachSurface() {
         runCatching {
+            mpv.setOptionString("keepaspect", "yes")
+            mpv.setOptionString("video-zoom", "0")
+            mpv.setOptionString("panscan", "0")
             mpv.setOptionString("force-window", "no")
             mpv.detachSurface()
         }
@@ -580,6 +640,8 @@ class MpvPlayerEngine(private val context: Context) {
         suppressEndFileUntilStartFile = true
         currentPosition = 0L
         duration = 0L
+        videoWidth = 0
+        videoHeight = 0
         subtitleText = ""
 
         // ASS/SSA의 경우 caller가 customFontPath를 null로 전달한다.
@@ -666,6 +728,7 @@ class MpvPlayerSurfaceView(
     var onLongPress: (() -> Unit)? = null
 
     private var attached = false
+    private var currentSurface: Surface? = null
     private var longPressActive = false
     private var speedBeforeLongPress = 1.0f
 
@@ -760,15 +823,35 @@ class MpvPlayerSurfaceView(
     }
 
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-        engine.attachSurface(Surface(surface))
+        // TextureView can keep the same SurfaceTexture while its buffer size
+        // changes during fold/unfold and PiP transitions. Keep the buffer in
+        // lockstep with the actual view size before handing it to libmpv.
+        surface.setDefaultBufferSize(width.coerceAtLeast(1), height.coerceAtLeast(1))
+        currentSurface?.release()
+        currentSurface = Surface(surface)
+        engine.attachSurface(currentSurface!!)
         attached = true
     }
 
-    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
+    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
+        val safeWidth = width.coerceAtLeast(1)
+        val safeHeight = height.coerceAtLeast(1)
+        surface.setDefaultBufferSize(safeWidth, safeHeight)
+
+        // Do not reload/seek the media. Reattaching the same Surface causes
+        // libmpv to rebuild its video output for the new Android viewport.
+        currentSurface?.let { engine.refreshSurface(it) }
+
+        // Reset any TextureView transform left behind by a previous window
+        // size. mpv itself owns aspect-ratio correction (keepaspect=yes).
+        setTransform(android.graphics.Matrix())
+    }
 
     override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
         if (attached) engine.detachSurface()
         attached = false
+        currentSurface?.release()
+        currentSurface = null
         return true
     }
 

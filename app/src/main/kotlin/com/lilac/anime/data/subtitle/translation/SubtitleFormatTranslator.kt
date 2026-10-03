@@ -42,45 +42,68 @@ internal object SubtitleFormatTranslator {
         var totalModelMs = 0L
         val localProvider = provider as? com.lilac.anime.data.subtitle.translation.providers.LocalTranslator
         val prefs = context.getSharedPreferences("lilac_offline_store", Context.MODE_PRIVATE)
-        val contextCueCount = prefs.getInt("pref_ai_context_cues", 3).coerceIn(0, 10)
+        val contextCueCount = prefs.getInt("pref_ai_context_cues", 4).coerceIn(0, 6)
         val sessionProvider = provider as? TranslationSessionProvider
         if (sessionProvider != null) sessionProvider.beginSession()
         try {
-            // No chunked(10) grouping: every cue is an independent model request.
-            // Context is a sliding window over the entire subtitle file, so it never
-            // resets after an arbitrary group boundary.
-            parsed.forEachIndexed { index, cue ->
-                val source = modelText(cue.text, cue.kind)
-                val contextLines = parsed
-                    .subList((index - contextCueCount).coerceAtLeast(0), index)
-                    .map { modelText(it.text, it.kind) }
-                Log.d(
-                    "SubtitleProfile",
-                    "CUE_START index=${index + 1}/${parsed.size} contextCount=${contextLines.size}"
-                )
-                val modelStartedAt = System.nanoTime()
-                val result = try {
-                    if (localProvider != null) {
-                        localProvider.translateWithContext(source, contextLines)
-                    } else {
-                        // Other providers do not have the local HY-MT contextual API;
-                        // still send exactly one cue per request instead of 10-cue chunks.
-                        provider.translateBatch(listOf(source)).firstOrNull().orEmpty()
+            if (localProvider != null) {
+                parsed.forEachIndexed { index, cue ->
+                    val source = modelText(cue.text, cue.kind)
+                    val startIndex = (index - contextCueCount).coerceAtLeast(0)
+                    val contextItems = parsed
+                        .subList(startIndex, index)
+                        .map { previous ->
+                            com.lilac.anime.data.subtitle.translation.providers.LocalTranslator.LocalAiContext(
+                                source = modelText(previous.text, previous.kind),
+                                translation = translated[previous.index]?.takeIf { normalizeModelText(it) != normalizeModelText(previous.text) }
+                            )
+                        }
+                    val futureLines = parsed
+                        .subList(index + 1, (index + 3).coerceAtMost(parsed.size))
+                        .map { modelText(it.text, it.kind) }
+
+                    Log.d(
+                        "SubtitleProfile",
+                        "CUE_START index=${index + 1}/${parsed.size} contextCount=${contextItems.size} futureCount=${futureLines.size}"
+                    )
+                    val modelStartedAt = System.nanoTime()
+                    val result = try {
+                        localProvider.translateWithContext(source, contextItems, futureLines)
+                    } catch (error: CancellationException) {
+                        Log.e("SubtitleProfile", "CUE_CANCELLED index=${index + 1}/${parsed.size} type=${error::class.java.name} message=${error.message}", error)
+                        throw error
+                    } catch (error: Throwable) {
+                        // A single bad cue must never abort the entire subtitle file.
+                        // Keep the original cue and let the next cue continue.
+                        Log.e("SubtitleProfile", "CUE_FAILED_KEEP_ORIGINAL index=${index + 1}/${parsed.size} type=${error::class.java.name} message=${error.message}", error)
+                        cue.text
                     }
-                } catch (error: CancellationException) {
-                    Log.e("SubtitleProfile", "CUE_CANCELLED index=${index + 1}/${parsed.size} type=${error::class.java.name} message=${error.message}", error)
-                    throw error
-                } catch (error: Throwable) {
-                    Log.e("SubtitleProfile", "CUE_FAILED index=${index + 1}/${parsed.size} type=${error::class.java.name} message=${error.message}", error)
-                    throw error
+                    val modelMs = (System.nanoTime() - modelStartedAt) / 1_000_000L
+                    totalModelMs += modelMs
+                    translated[cue.index] = result.takeIf { it.isNotBlank() } ?: cue.text
+                    Log.d("SubtitleProfile", "CUE_DONE index=${index + 1}/${parsed.size} contextCount=${contextItems.size} futureCount=${futureLines.size} modelMs=$modelMs")
                 }
-                val modelMs = (System.nanoTime() - modelStartedAt) / 1_000_000L
-                totalModelMs += modelMs
-                translated[cue.index] = result.takeIf { it.isNotBlank() } ?: cue.text
-                Log.d(
-                    "SubtitleProfile",
-                    "CUE_DONE index=${index + 1}/${parsed.size} contextCount=${contextLines.size} modelMs=$modelMs"
-                )
+            } else {
+                parsed.chunked(10).forEachIndexed { chunkIndex, chunk ->
+                    val sources = chunk.map { modelText(it.text, it.kind) }
+                    val modelStartedAt = System.nanoTime()
+                    val results = try {
+                        provider.translateBatch(sources)
+                    } catch (error: CancellationException) {
+                        Log.e("SubtitleProfile", "API_BATCH_CANCELLED batch=${chunkIndex + 1} type=${error::class.java.name} message=${error.message}", error)
+                        throw error
+                    } catch (error: Throwable) {
+                        Log.e("SubtitleProfile", "API_BATCH_FAILED provider=${provider.id} batch=${chunkIndex + 1} type=${error::class.java.name} message=${error.message}", error)
+                        throw error
+                    }
+                    if (results.size != chunk.size) error("${provider.displayName} 응답 cue 수가 일치하지 않습니다. expected=${chunk.size} actual=${results.size}")
+                    val modelMs = (System.nanoTime() - modelStartedAt) / 1_000_000L
+                    totalModelMs += modelMs
+                    chunk.forEachIndexed { index, cue ->
+                        translated[cue.index] = results[index].takeIf { it.isNotBlank() } ?: error("${provider.displayName} ${chunkIndex * 10 + index + 1}번째 번역 결과가 비어 있습니다.")
+                    }
+                    Log.d("SubtitleProfile", "API_BATCH_DONE provider=${provider.id} batch=${chunkIndex + 1} cues=${chunk.size} modelMs=$modelMs")
+                }
             }
         } finally {
             Log.d("SubtitleProfile", "SESSION_CLEANUP_BEGIN")
@@ -173,6 +196,12 @@ internal object SubtitleFormatTranslator {
         "ttml", "xml" -> parseTtml(content)
         else -> parseByContent(content)
     }
+
+    private fun normalizeModelText(text: String): String = text
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .replace("\\N", "\n")
+        .trim()
 
     private fun modelText(text: String, kind: String): String {
         var value = text.replace("\r\n", "\n").replace('\r', '\n')
@@ -317,20 +346,20 @@ internal object SubtitleFormatTranslator {
 
     private fun render(original: String, ext: String, cues: List<Cue>, translated: Array<String?>): String = when (ext) {
         "ass", "ssa" -> {
-            val firstJapaneseDialogueLine = cues.firstOrNull()?.raw?.let { firstRaw ->
-                original.lineSequence().indexOfFirst { it == firstRaw }
-            } ?: -1
-            var i = 0
-            original.lineSequence().mapIndexed { lineIndex, line ->
-                if (!line.startsWith("Dialogue:", true) || lineIndex < firstJapaneseDialogueLine) return@mapIndexed line
-                val cue = cues.getOrNull(i) ?: return@mapIndexed line
+            original.replace("\r\n", "\n").replace('\r', '\n').lines().map { line ->
+                if (!line.startsWith("Dialogue:", true)) return@map line
+                val parts = line.substringAfter(':').trimStart().split(',', limit = 10)
+                if (parts.size < 10) return@map line
+                val start = assTime(parts[1]) ?: return@map line
+                val end = assTime(parts[2]) ?: return@map line
+                val rawText = parts[9].trim()
+                val cue = cues.firstOrNull { it.kind == "ass" && it.startMs == start && it.endMs == end && it.text.trim() == rawText }
+                    ?: cues.firstOrNull { it.kind == "ass" && it.startMs == start && it.endMs == end }
+                    ?: return@map line
                 val t = restoreTags(cue.text, translated[cue.index] ?: cue.text, cue.kind)
-                i++
-                val parts = line.substringAfter(':').trimStart().split(',', limit = 10).toMutableList()
-                if (parts.size >= 10) {
-                    parts[9] = t
-                    "Dialogue: " + parts.joinToString(",")
-                } else line
+                val mutable = parts.toMutableList()
+                mutable[9] = t
+                "Dialogue: " + mutable.joinToString(",")
             }.joinToString("\n")
         }
         "srt" -> renderSrtPreservingTiming(original, cues, translated)

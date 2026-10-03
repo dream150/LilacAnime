@@ -1,6 +1,7 @@
 package com.lilac.anime.player
 
 import android.app.Activity
+import android.content.Context
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.graphics.Typeface
@@ -157,6 +158,7 @@ fun PlayerScreen(
     var subtitleReferer by remember { mutableStateOf<String?>(null) }
     var reAnimeSubtitleTracks by remember { mutableStateOf<List<SubtitleTrack>>(emptyList()) }
     var selectedReAnimeSubtitleUrl by remember { mutableStateOf<String?>(null) }
+    var selectedReAnimeSubtitleKey by remember(anime.id) { mutableStateOf<String?>(null) }
     var localSubtitle by remember { mutableStateOf<String?>(null) }
     var resolvedVideoPageUrl by remember { mutableStateOf<String?>(null) }
     var parsedStreamingQualities by remember { mutableStateOf<List<StreamQuality>>(emptyList()) }
@@ -221,6 +223,13 @@ fun PlayerScreen(
     val realtimeTranslator = remember { RealtimeSubtitleTranslator(context.applicationContext) }
     var realtimeSubtitleText by remember { mutableStateOf("") }
 
+    fun subtitlePreferencePrefs() = context.getSharedPreferences("lilac_subtitle_preferences", Context.MODE_PRIVATE)
+    fun subtitleTrackKey(track: SubtitleTrack): String = "${track.language.trim().lowercase(Locale.ROOT)}|${track.label.trim().lowercase(Locale.ROOT)}"
+
+    LaunchedEffect(anime.id) {
+        selectedReAnimeSubtitleKey = subtitlePreferencePrefs().getString("reanime_track_${anime.id}", null)
+    }
+
     LaunchedEffect(anime.title, subtitleSource, localSubtitle) {
         discoveredSubtitleFonts = withContext(Dispatchers.IO) {
             val source = when (subtitleSource) { "kairan" -> "kairan"; "csora" -> "csora"; else -> subtitleSource }
@@ -235,8 +244,8 @@ fun PlayerScreen(
 
     LaunchedEffect(localSubtitle, currentEpisode.id, subtitleTranslationMode, vm.playerSettings.translationProvider) {
         realtimeSubtitleText = ""
-        if (subtitleTranslationMode == "korean" && vm.playerSettings.translationProvider == "local") {
-            realtimeTranslator.prepare(localSubtitle, engine.currentPosition, playerScope)
+        if (subtitleTranslationMode == "korean") {
+            realtimeTranslator.prepare(localSubtitle, engine.currentPosition, playerScope, vm.playerSettings.translationProvider)
             engine.setSubtitleVisible(false)
             realtimeTranslator.updatePlaybackPosition(engine.currentPosition)
         } else {
@@ -247,7 +256,7 @@ fun PlayerScreen(
 
     LaunchedEffect(engine, currentEpisode.id, subtitleTranslationMode, vm.playerSettings.translationProvider) {
         engine.subtitleEvents.collect { text ->
-            if (subtitleTranslationMode != "korean" || vm.playerSettings.translationProvider != "local") return@collect
+            if (subtitleTranslationMode != "korean") return@collect
             val normalized = text.trim()
             if (normalized.isBlank()) {
                 realtimeSubtitleText = ""
@@ -260,7 +269,7 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(currentEpisode.id, subtitleTranslationMode, vm.playerSettings.translationProvider) {
-        if (subtitleTranslationMode != "korean" || vm.playerSettings.translationProvider != "local") return@LaunchedEffect
+        if (subtitleTranslationMode != "korean") return@LaunchedEffect
         while (isActive) {
             realtimeTranslator.consumeTranslatedSubtitleUpdate()?.let { engine.replaceSubtitleTrack(it) }
             delay(150L)
@@ -404,12 +413,16 @@ fun PlayerScreen(
     // Playback is always landscape while this screen owns the player.
     // Hide the Android status/navigation bars (including the gesture handle) only
     // while the mobile player is on screen. They are restored when leaving it.
-    DisposableEffect(activity, isTv) {
+    DisposableEffect(activity, isTv, MainActivity.isInPictureInPicture) {
         val host = activity
         val hadKeepScreenOn =
             host?.window?.attributes?.flags?.and(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
         if (host != null) {
-            host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            if (!MainActivity.isInPictureInPicture) {
+                host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else {
+                host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
             host.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
             if (!isTv) {
@@ -807,11 +820,17 @@ fun PlayerScreen(
                     reAnimeSubtitleTracks = tracks
                     // Korean remains the default selection when available, but every
                     // track is exposed to the user below.
-                    selectedReAnimeSubtitleUrl = tracks.firstOrNull {
+                    val saved = selectedReAnimeSubtitleKey
+                    val remembered = saved?.let { key -> tracks.firstOrNull { subtitleTrackKey(it) == key } }
+                    val korean = tracks.firstOrNull {
                         it.language.contains("kor", true) ||
                             it.label.contains("korean", true) ||
                             it.url.contains("_kor_", true)
-                    }?.url ?: tracks.first().url
+                    }
+                    val chosen = remembered ?: korean ?: tracks.first()
+                    selectedReAnimeSubtitleUrl = chosen.url
+                    selectedReAnimeSubtitleKey = subtitleTrackKey(chosen)
+                    Log.d("SubtitleSelect", "REANIME_TRACK_SELECTED remembered=${remembered != null} label=${chosen.label}")
                     Log.d("SubtitleSelect", "REANIME_TRACKS_RECEIVED count=${tracks.size}")
                 }
             },
@@ -822,7 +841,9 @@ fun PlayerScreen(
                     foundUrl.isNotBlank()
                 ) {
                     subtitleUrl = foundUrl
-                    selectedReAnimeSubtitleUrl = foundUrl
+                    if (reAnimeSubtitleTracks.isEmpty()) {
+                        selectedReAnimeSubtitleUrl = foundUrl
+                    }
                     subtitleReferer = subtitleReferer ?: extractorTargetUrl
                     val subtitleGeneration = generation
                     val subtitleDownloadReferer = subtitleReferer?.takeIf { it.isNotBlank() }
@@ -1923,7 +1944,7 @@ fun PlayerScreen(
                             userSubtitles.forEach { saved ->
                                 Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(File(saved.path).name, color = Color.White.copy(.75f), fontSize = 9.sp, maxLines = 1, modifier = Modifier.weight(1f))
-                                    TextButton(onClick = { playerScope.launch { val playbackSubtitle = maybeTranslateSubtitle(saved.path) ?: saved.path; localSubtitle = playbackSubtitle; subtitleSource = "user"; engine.replaceSubtitleTrack(playbackSubtitle); engine.setSubtitleVisible(true) } }) { Text("사용", color = Color.White, fontSize = 9.sp) }
+                                    TextButton(onClick = { playerScope.launch { val playbackSubtitle = maybeTranslateSubtitle(saved.path) ?: saved.path; localSubtitle = playbackSubtitle; subtitleSource = "user"; vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = "user")); engine.replaceSubtitleTrack(playbackSubtitle); engine.setSubtitleVisible(true) } }) { Text("사용", color = Color.White, fontSize = 9.sp) }
                                     TextButton(onClick = { playerScope.launch { SubtitleStore.deleteOne(context, anime.id, currentEpisode.displayNumber, currentEpisode.number, "user", saved.path); userSubtitles = SubtitleStore.listUser(context, anime.id, currentEpisode.displayNumber, currentEpisode.number) } }) { Text("삭제", color = Color(0xFFFF8A80), fontSize = 9.sp) }
                                 }
                             }
@@ -2037,6 +2058,8 @@ fun PlayerScreen(
                                                 Surface(
                                                     onClick = {
                                                         selectedReAnimeSubtitleUrl = track.url
+                                                        selectedReAnimeSubtitleKey = subtitleTrackKey(track)
+                                                        subtitlePreferencePrefs().edit().putString("reanime_track_${anime.id}", selectedReAnimeSubtitleKey).apply()
                                                         subtitleSource = "reanime"
                                                         vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = "reanime"))
                                                         reAnimeSubtitleTrackPickerOpen = false

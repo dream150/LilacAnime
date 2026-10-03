@@ -52,7 +52,7 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var searching by remember { mutableStateOf(false) }
     var downloading by remember { mutableStateOf(false) }
-    var repoQuery by remember { mutableStateOf("tencent HY-MT1.5 GGUF") }
+    var repoQuery by remember { mutableStateOf("") }
     var repos by remember { mutableStateOf<List<HuggingFaceRepo>>(emptyList()) }
     var files by remember { mutableStateOf<List<HuggingFaceModelFile>>(emptyList()) }
     var selectedRepo by remember { mutableStateOf<String?>(null) }
@@ -65,8 +65,23 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
     var keyProvider by remember { mutableStateOf<String?>(null) }
     var keyText by remember { mutableStateOf("") }
     var keyMessage by remember { mutableStateOf<String?>(null) }
-    val keyProviders = listOf("openai" to "OpenAI", "deepl" to "DeepL", "qwen" to "Qwen")
+    val aiPrefs = remember { context.getSharedPreferences("lilac_offline_store", android.content.Context.MODE_PRIVATE) }
+    val keyProviders = listOf("gemini" to "Gemini", "openai" to "OpenAI", "deepl" to "DeepL", "qwen" to "Qwen")
+    var geminiModel by remember { mutableStateOf(aiPrefs.getString("pref_gemini_model", "gemini-3.5-flash-lite") ?: "gemini-3.5-flash-lite") }
+    var openAiModel by remember { mutableStateOf(aiPrefs.getString("pref_openai_model", "gpt-4.1-mini") ?: "gpt-4.1-mini") }
+    var qwenModel by remember { mutableStateOf(aiPrefs.getString("pref_qwen_model", "qwen-plus") ?: "qwen-plus") }
+    var qwenRegion by remember { mutableStateOf(aiPrefs.getString("pref_qwen_region", "international") ?: "international") }
     var expandedAdvanced by remember { mutableStateOf(false) }
+    var confirmDeleteModel by remember { mutableStateOf<LocalAiModel?>(null) }
+    var promptMode by remember { mutableStateOf(aiPrefs.getString("pref_ai_prompt_mode", "chat") ?: "chat") }
+    var thinkingMode by remember { mutableStateOf(aiPrefs.getString("pref_ai_thinking_mode", LocalAiTranslationRuntime.THINKING_OFF) ?: LocalAiTranslationRuntime.THINKING_OFF) }
+    var minP by remember { mutableStateOf(aiPrefs.getFloat("pref_ai_min_p", 0.0f)) }
+    var typicalP by remember { mutableStateOf(aiPrefs.getFloat("pref_ai_typical_p", 1.0f)) }
+    var repeatLastN by remember { mutableStateOf(aiPrefs.getInt("pref_ai_repeat_last_n", 64).toFloat()) }
+    var frequencyPenalty by remember { mutableStateOf(aiPrefs.getFloat("pref_ai_frequency_penalty", 0.0f)) }
+    var presencePenalty by remember { mutableStateOf(aiPrefs.getFloat("pref_ai_presence_penalty", 0.0f)) }
+    var seedText by remember { mutableStateOf(aiPrefs.getInt("pref_ai_seed", -1).toString()) }
+    var systemPrompt by remember { mutableStateOf(aiPrefs.getString("pref_ai_system_prompt", LocalAiTranslationRuntime.DEFAULT_SYSTEM_PROMPT) ?: LocalAiTranslationRuntime.DEFAULT_SYSTEM_PROMPT) }
     var contextSize by remember(settings.aiContextSize) { mutableStateOf(settings.aiContextSize.toFloat()) }
     var maxTokens by remember(settings.aiMaxTokens) { mutableStateOf(settings.aiMaxTokens.toFloat()) }
     var temperature by remember(settings.aiTemperature) { mutableStateOf(settings.aiTemperature) }
@@ -135,12 +150,15 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
             Text("번역 엔진", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("local" to "로컬 AI", "openai" to "OpenAI", "deepl" to "DeepL", "qwen" to "Qwen").forEach { (id,label) ->
+                listOf("local" to "로컬 AI", "gemini" to "Gemini", "openai" to "OpenAI", "deepl" to "DeepL", "qwen" to "Qwen").forEach { (id,label) ->
                     FilterChip(selected = settings.translationProvider == id, onClick = { vm.updatePlayerSettings(context, settings.copy(translationProvider=id)) }, label={Text(label)})
                 }
             }
             Spacer(Modifier.height(8.dp))
             Text("현재 선택: ${settings.translationProvider}", fontSize=11.sp, color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+            if (settings.translationProvider != "local") {
+                Text("클라우드 API는 네트워크와 API 사용량이 필요합니다. 재생 중 번역은 미리 자막을 읽어 한 cue씩 요청하므로 로컬 모델보다 지연될 수 있습니다.", fontSize=11.sp, color=MaterialTheme.colorScheme.onBackground.copy(alpha=.65f))
+            }
 
             Spacer(Modifier.height(20.dp))
             Text("설치된 로컬 모델", fontSize=16.sp, fontWeight=FontWeight.Bold)
@@ -169,7 +187,30 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                             candidates.forEach { rt -> OutlinedButton(onClick={RuntimeRegistry.setSelectedId(context,model,rt.id);expandedRuntime=null;refreshInstalled()}, modifier=Modifier.fillMaxWidth()){Text(if(selectedId==rt.id)"✓ ${rt.name} ${rt.version}" else "${rt.name} ${rt.version}")}}
                         }
                     }
+                    TextButton(onClick={confirmDeleteModel=model}, modifier=Modifier.fillMaxWidth()) { Text("모델 파일 삭제", color=MaterialTheme.colorScheme.error) }
                 }
+            }
+            confirmDeleteModel?.let { target ->
+                AlertDialog(
+                    onDismissRequest = { confirmDeleteModel = null },
+                    title = { Text("다운로드한 모델 삭제") },
+                    text = { Text("${target.fileName}\n${aiFormatBytes(target.sizeBytes)}\n\n모델 파일을 기기에서 영구 삭제할까요?") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val deleted = LocalAiModelManager.delete(context, target)
+                            if (deleted) {
+                                if (settings.translationModelId == target.id) {
+                                    vm.updatePlayerSettings(context, settings.copy(translationModelId = null))
+                                    aiPrefs.edit().remove("pref_translation_model_id").apply()
+                                }
+                                message = "모델을 삭제했습니다."
+                            } else message = "모델 파일을 삭제하지 못했습니다."
+                            confirmDeleteModel = null
+                            refreshInstalled()
+                        }) { Text("삭제", color=MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = { TextButton(onClick={confirmDeleteModel=null}) { Text("취소") } }
+                )
             }
             Spacer(Modifier.height(8.dp))
             Text("Hugging Face 모델 추가", fontSize=14.sp, fontWeight=FontWeight.Medium)
@@ -193,11 +234,46 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
             Spacer(Modifier.height(8.dp))
             OutlinedButton(onClick={expandedAdvanced=!expandedAdvanced},modifier=Modifier.fillMaxWidth()){Text(if(expandedAdvanced)"고급 설정 접기" else "고급 설정 열기")}
             if(expandedAdvanced){
+                Text("프롬프트 처리 모드",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected=promptMode=="chat", onClick={promptMode="chat"; aiPrefs.edit().putString("pref_ai_prompt_mode", promptMode).apply()}, label={Text("Chat template")})
+                    FilterChip(selected=promptMode=="completion", onClick={promptMode="completion"; aiPrefs.edit().putString("pref_ai_prompt_mode", promptMode).apply()}, label={Text("Completions / raw prompt")})
+                }
+                Text(if(promptMode=="chat") "GPU/NPU runtime에서 모델 GGUF의 chat template을 적용합니다." else "Native runtime에서 chat template을 적용하지 않고 프롬프트 원문을 전달합니다. 모델에 따라 출력 품질이 크게 달라질 수 있습니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+                Spacer(Modifier.height(12.dp))
+                Text("Thinking / 추론",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected=thinkingMode==LocalAiTranslationRuntime.THINKING_AUTO,
+                        onClick={thinkingMode=LocalAiTranslationRuntime.THINKING_AUTO; aiPrefs.edit().putString("pref_ai_thinking_mode", thinkingMode).apply()},
+                        label={Text("자동")}
+                    )
+                    FilterChip(
+                        selected=thinkingMode==LocalAiTranslationRuntime.THINKING_ON,
+                        onClick={thinkingMode=LocalAiTranslationRuntime.THINKING_ON; aiPrefs.edit().putString("pref_ai_thinking_mode", thinkingMode).apply()},
+                        label={Text("Thinking ON")}
+                    )
+                    FilterChip(
+                        selected=thinkingMode==LocalAiTranslationRuntime.THINKING_OFF,
+                        onClick={thinkingMode=LocalAiTranslationRuntime.THINKING_OFF; aiPrefs.edit().putString("pref_ai_thinking_mode", thinkingMode).apply()},
+                        label={Text("Thinking OFF")}
+                    )
+                }
+                Text(
+                    when (thinkingMode) {
+                        LocalAiTranslationRuntime.THINKING_ON -> "GGUF chat template이 enable_thinking을 지원하면 강제로 켭니다. Qwen3/Qwen3.5 계열에 적용됩니다."
+                        LocalAiTranslationRuntime.THINKING_OFF -> "GGUF chat template이 enable_thinking을 지원하면 강제로 끕니다. 지원하지 않는 모델은 기존 동작을 유지합니다."
+                        else -> "모델의 GGUF chat template 기본값을 그대로 사용합니다."
+                    },
+                    fontSize=10.sp,
+                    color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f)
+                )
+                Spacer(Modifier.height(10.dp))
                 Text("Context size: ${contextSize.roundToInt()} tokens",fontSize=13.sp,fontWeight=FontWeight.Medium)
                 Slider(value=contextSize,onValueChange={contextSize=it},valueRange=1024f..16384f,steps=14,onValueChangeFinished={vm.updatePlayerSettings(context,settings.copy(aiContextSize=contextSize.roundToInt()))})
                 Text("번역에 한 번에 유지할 최대 문맥입니다. 일본어 대화 흐름을 많이 볼수록 유리하지만 모델 메모리 사용량이 증가합니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
                 Spacer(Modifier.height(10.dp))
-                Text("CPU threads: ${if(settings.aiThreads==0)"자동" else settings.aiThreads}",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Text("Host threads: ${if(settings.aiThreads==0)"자동" else settings.aiThreads}",fontSize=13.sp,fontWeight=FontWeight.Medium)
                 Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){listOf(0,2,4,6,8,12).forEach{n->FilterChip(selected=settings.aiThreads==n,onClick={vm.updatePlayerSettings(context,settings.copy(aiThreads=n))},label={Text(if(n==0)"자동" else n.toString())})}}
                 Text("높이면 속도가 빨라질 수 있지만 발열/배터리와 다른 앱의 성능에 영향을 줄 수 있습니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
                 Spacer(Modifier.height(10.dp))
@@ -216,7 +292,25 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Text("Repetition penalty: ${String.format(java.util.Locale.US, "%.2f", repetitionPenalty)}",fontSize=13.sp,fontWeight=FontWeight.Medium)
                 Slider(value=repetitionPenalty,onValueChange={repetitionPenalty=it},valueRange=1.0f..1.3f,steps=29,onValueChangeFinished={vm.updatePlayerSettings(context,settings.copy(aiRepetitionPenalty=repetitionPenalty))})
-                Text("이 옵션은 native llama.cpp runtime에서 적용됩니다. 내장 llama-android runtime은 현재 샘플링 옵션을 노출하지 않아 적용되지 않습니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+                Spacer(Modifier.height(8.dp))
+                Text("Repeat last N: ${repeatLastN.roundToInt()}",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Slider(value=repeatLastN,onValueChange={repeatLastN=it},valueRange=0f..512f,steps=63,onValueChangeFinished={aiPrefs.edit().putInt("pref_ai_repeat_last_n",repeatLastN.roundToInt()).apply()})
+                Spacer(Modifier.height(8.dp))
+                Text("Min-p: ${String.format(java.util.Locale.US, "%.2f", minP)}",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Slider(value=minP.coerceIn(0f,1f),onValueChange={minP=it},valueRange=0f..0.5f,steps=49,onValueChangeFinished={aiPrefs.edit().putFloat("pref_ai_min_p",minP).apply()})
+                Text("0이면 비활성화됩니다. 런타임이 min-p sampler를 지원할 때 적용됩니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+                Spacer(Modifier.height(8.dp))
+                Text("Typical-p: ${String.format(java.util.Locale.US, "%.2f", typicalP)}",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Slider(value=typicalP.coerceIn(0.01f,1f),onValueChange={typicalP=it},valueRange=0.01f..1f,steps=98,onValueChangeFinished={aiPrefs.edit().putFloat("pref_ai_typical_p",typicalP).apply()})
+                Text("1.00이면 비활성화됩니다. 런타임에서 지원할 때만 적용됩니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+                Spacer(Modifier.height(8.dp))
+                Text("Frequency penalty: ${String.format(java.util.Locale.US, "%.2f", frequencyPenalty)}",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Slider(value=frequencyPenalty,onValueChange={frequencyPenalty=it},valueRange=(-2f)..2f,steps=39,onValueChangeFinished={aiPrefs.edit().putFloat("pref_ai_frequency_penalty",frequencyPenalty).apply()})
+                Spacer(Modifier.height(8.dp))
+                Text("Presence penalty: ${String.format(java.util.Locale.US, "%.2f", presencePenalty)}",fontSize=13.sp,fontWeight=FontWeight.Medium)
+                Slider(value=presencePenalty,onValueChange={presencePenalty=it},valueRange=(-2f)..2f,steps=39,onValueChangeFinished={aiPrefs.edit().putFloat("pref_ai_presence_penalty",presencePenalty).apply()})
+                OutlinedTextField(value=seedText,onValueChange={seedText=it.filter { ch -> ch=='-' || ch.isDigit() }.take(11); seedText.toIntOrNull()?.let { value -> if(value>=-1) aiPrefs.edit().putInt("pref_ai_seed",value).apply() }},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("Random seed (-1 = default/random)")},keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number))
+                Text("샘플러 옵션은 GPU/NPU llama.cpp runtime에 전달됩니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
                 Spacer(Modifier.height(10.dp))
                 Text("유지할 자막 문맥: ${contextCues.roundToInt()}개",fontSize=13.sp,fontWeight=FontWeight.Medium)
                 Slider(value=contextCues,onValueChange={contextCues=it},valueRange=0f..10f,steps=9,onValueChangeFinished={vm.updatePlayerSettings(context,settings.copy(aiContextCues=contextCues.roundToInt()))})
@@ -233,16 +327,32 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                             settings.copy(
                                 aiContextSize = 4096,
                                 aiThreads = 0,
-                                aiMaxTokens = 1536,
-                                aiTemperature = 0.7f,
-                                aiTopP = 0.6f,
-                                aiTopK = 20,
+                                aiMaxTokens = 512,
+                                aiTemperature = 0.25f,
+                                aiTopP = 0.85f,
+                                aiTopK = 40,
                                 aiRepetitionPenalty = 1.05f,
-                                aiContextCues = 0,
+                                aiContextCues = 6,
                                 aiPrefetchEnabled = true,
                                 aiPrefetchAhead = 10
                             )
                         )
+                        promptMode = "chat"
+                        minP = 0.0f
+                        typicalP = 1.0f
+                        repeatLastN = 64f
+                        frequencyPenalty = 0.0f
+                        presencePenalty = 0.0f
+                        seedText = "-1"
+                        aiPrefs.edit()
+                            .putString("pref_ai_prompt_mode", "chat")
+                            .putFloat("pref_ai_min_p", 0.0f)
+                            .putFloat("pref_ai_typical_p", 1.0f)
+                            .putInt("pref_ai_repeat_last_n", 64)
+                            .putFloat("pref_ai_frequency_penalty", 0.0f)
+                            .putFloat("pref_ai_presence_penalty", 0.0f)
+                            .putInt("pref_ai_seed", -1)
+                            .apply()
                     },
                     modifier=Modifier.fillMaxWidth()
                 ){Text("AI 고급 설정을 기본값으로 복원")}
@@ -251,6 +361,12 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
             }
 
             Spacer(Modifier.height(20.dp)); HorizontalDivider(); Spacer(Modifier.height(18.dp))
+            Text("시스템 프롬프트",fontSize=16.sp,fontWeight=FontWeight.Bold)
+            Text("모델의 역할과 번역 규칙을 지정합니다. Chat template 모드에서는 system 메시지로 전달되고, completions 모드에서는 입력 프롬프트 앞에 붙습니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+            OutlinedTextField(value=systemPrompt,onValueChange={systemPrompt=it;aiPrefs.edit().putString("pref_ai_system_prompt",it).apply()},modifier=Modifier.fillMaxWidth(),minLines=4,maxLines=12,label={Text("시스템 프롬프트")})
+            OutlinedButton(onClick={systemPrompt=LocalAiTranslationRuntime.DEFAULT_SYSTEM_PROMPT;aiPrefs.edit().putString("pref_ai_system_prompt",systemPrompt).apply()},modifier=Modifier.fillMaxWidth()){Text("기본 시스템 프롬프트로 복원")}
+
+            Spacer(Modifier.height(12.dp))
             Text("번역 프롬프트",fontSize=16.sp,fontWeight=FontWeight.Bold)
             Text("{source_text}는 실제 자막으로 치환됩니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
             OutlinedTextField(value=settings.translationPrompt,onValueChange={vm.updatePlayerSettings(context,settings.copy(translationPrompt=it))},modifier=Modifier.fillMaxWidth(),minLines=6,maxLines=14,label={Text("번역 프롬프트")})
@@ -264,6 +380,15 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
             Spacer(Modifier.height(18.dp)); Text("클라우드 번역 API",fontSize=16.sp,fontWeight=FontWeight.Bold)
             keyProviders.forEach{(id,label)->OutlinedButton(onClick={keyProvider=id;keyText=SecureApiKeyStore.get(context,id).orEmpty();keyMessage=null},modifier=Modifier.fillMaxWidth()){Text("$label API Key ${if(SecureApiKeyStore.has(context,id))"(저장됨)" else "(미설정)"}")}}
             Text("API Key는 Android Keystore로 암호화하여 저장합니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.55f))
+            Text("API 모델 이름", fontSize=14.sp, fontWeight=FontWeight.SemiBold)
+            OutlinedTextField(value=geminiModel,onValueChange={geminiModel=it;aiPrefs.edit().putString("pref_gemini_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("Gemini 모델")},supportingText={Text("기본값: gemini-3.5-flash-lite")})
+            OutlinedTextField(value=openAiModel,onValueChange={openAiModel=it;aiPrefs.edit().putString("pref_openai_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("OpenAI 모델")},supportingText={Text("기본값: gpt-4.1-mini")})
+            OutlinedTextField(value=qwenModel,onValueChange={qwenModel=it;aiPrefs.edit().putString("pref_qwen_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("Qwen 모델")},supportingText={Text("기본값: qwen-plus")})
+            Text("Qwen API 지역", fontSize=12.sp)
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected=qwenRegion=="international",onClick={qwenRegion="international";aiPrefs.edit().putString("pref_qwen_region",qwenRegion).apply()},label={Text("International / Singapore")})
+                FilterChip(selected=qwenRegion=="china",onClick={qwenRegion="china";aiPrefs.edit().putString("pref_qwen_region",qwenRegion).apply()},label={Text("China")})
+            }
 
             Spacer(Modifier.height(18.dp)); Text("파일 번역",fontSize=16.sp,fontWeight=FontWeight.Bold)
             OutlinedButton(onClick={translationPicker.launch(arrayOf("text/*","application/*","*/*"))},enabled=!translationImportWorking,modifier=Modifier.fillMaxWidth()){Text(if(translationImportWorking)"번역 중..." else "자막 파일을 넣어 번역본 다운로드")}

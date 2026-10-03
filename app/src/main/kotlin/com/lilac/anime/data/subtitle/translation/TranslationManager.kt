@@ -3,6 +3,7 @@ package com.lilac.anime.data.subtitle.translation
 import android.content.Context
 import com.lilac.anime.data.subtitle.translation.providers.DeepLTranslator
 import com.lilac.anime.data.subtitle.translation.providers.LocalTranslator
+import com.lilac.anime.data.subtitle.translation.providers.GeminiTranslator
 import com.lilac.anime.data.subtitle.translation.providers.OpenAITranslator
 import com.lilac.anime.data.subtitle.translation.providers.QwenTranslator
 import java.io.File
@@ -17,8 +18,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 object TranslationManager {
-    private fun provider(context: Context, providerId: String): TranslationProvider = when (providerId) {
+    fun createProvider(context: Context, providerId: String): TranslationProvider = when (providerId) {
         "openai" -> OpenAITranslator(context)
+        "gemini" -> GeminiTranslator(context)
         "deepl" -> DeepLTranslator(context)
         "qwen" -> QwenTranslator(context)
         else -> LocalTranslator(context)
@@ -31,8 +33,16 @@ object TranslationManager {
             android.util.Log.e("SubtitleProfile", "TRANSLATE_SOURCE_NOT_FILE path=${source.absolutePath}")
             return@withContext null
         }
-        val p = provider(context, providerId)
-        val cacheKey = TranslationCache.keyFor(source, p.id, "ko") + "_${animeId}_${episodeKey}"
+        val p = createProvider(context, providerId)
+        val prefs = context.getSharedPreferences("lilac_offline_store", Context.MODE_PRIVATE)
+        val modelSignature = when (p.id) {
+            "gemini" -> prefs.getString("pref_gemini_model", "gemini-3.5-flash-lite")
+            "openai" -> prefs.getString("pref_openai_model", "gpt-4.1-mini")
+            "qwen" -> prefs.getString("pref_qwen_model", "qwen-plus")
+            else -> null
+        }.orEmpty()
+        val safeModelSignature = modelSignature.replace(Regex("[^A-Za-z0-9._-]"), "_").take(80)
+        val cacheKey = TranslationCache.keyFor(source, if (safeModelSignature.isBlank()) p.id else "${p.id}_$safeModelSignature", "ko") + "_${animeId}_${episodeKey}"
         TranslationCache.get(context, cacheKey)?.let {
             val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
             android.util.Log.d("SubtitleProfile", "CACHE_HIT provider=${p.id} file=${source.name} elapsedMs=$elapsedMs")
@@ -122,14 +132,14 @@ object TranslationManager {
 
     suspend fun translateBatch(context: Context, providerId: String, texts: List<String>): List<String> = withContext(Dispatchers.IO) {
         if (texts.isEmpty()) return@withContext emptyList()
-        runCatching { provider(context, providerId).translateBatch(texts) }.getOrElse { texts }
+        createProvider(context, providerId).translateBatch(texts)
     }
 
     suspend fun translateText(context: Context, providerId: String, text: String): String? {
         val normalized = text.trim()
         if (normalized.isBlank()) return normalized
         return runCatching {
-            provider(context, providerId).translateBatch(listOf(normalized)).firstOrNull()
+            createProvider(context, providerId).translateBatch(listOf(normalized)).firstOrNull()
                 ?.trim()
                 ?.takeIf { it.isNotBlank() }
         }.getOrNull()
@@ -150,7 +160,7 @@ object TranslationManager {
                 sourceTexts += parts[9].trim()
             }
             if (sourceTexts.isEmpty()) error("번역할 Dialogue가 없습니다.")
-            val translated = provider(context, providerId).translateBatch(sourceTexts)
+            val translated = createProvider(context, providerId).translateBatch(sourceTexts)
             dialogueIndexes.forEachIndexed { i, lineIndex ->
                 val translatedText = translated.getOrNull(i)?.takeIf { it.isNotBlank() } ?: sourceTexts[i]
                 val parts = lines[lineIndex].substringAfter(':').trimStart().split(',', limit = 10).toMutableList()
@@ -161,8 +171,10 @@ object TranslationManager {
             }
             lines.joinToString("\n")
         } else {
-            val result = provider(context, providerId).translateBatch(listOf(text))
-            result.firstOrNull()?.takeIf { it.isNotBlank() } ?: error("번역 결과가 비어 있습니다.")
+            val result = createProvider(context, providerId).translateBatch(listOf(text))
+            val translated = result.firstOrNull()?.trim()?.takeIf { it.isNotBlank() } ?: error("번역 결과가 비어 있습니다.")
+            if (providerId != "local" && translated == text.trim()) error("API 요청은 성공했지만 번역 결과가 원문과 같습니다. 모델/프롬프트 응답을 확인하세요.")
+            translated
         }
     }
 }

@@ -175,6 +175,36 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun buildPictureInPictureParams(): PictureInPictureParams {
+        val player = MpvPlaybackManager.engine(this)
+
+        // PiP should use mpv's *display* dimensions, not the coded frame size
+        // or a transient DAR value. During HLS startup `video-params/dar` can
+        // briefly be 0/stale, which made PiP open with a visibly wrong shape.
+        val displayWidth = player.videoDisplayWidth
+        val displayHeight = player.videoDisplayHeight
+        val frameWidth = player.videoWidth
+        val frameHeight = player.videoHeight
+
+        val dimensionRatio = when {
+            displayWidth > 0 && displayHeight > 0 ->
+                displayWidth.toDouble() / displayHeight.toDouble()
+            frameWidth > 0 && frameHeight > 0 ->
+                frameWidth.toDouble() / frameHeight.toDouble()
+            else -> 16.0 / 9.0
+        }
+
+        // Use DAR only as a secondary correction when it agrees with a real
+        // display/frame ratio. Never let a transient/outlier DAR decide PiP.
+        val dar = player.videoDisplayAspect
+        val ratio = if (dar.isFinite() && dar > 0.4 && dar < 2.5 &&
+            dimensionRatio.isFinite() && dimensionRatio > 0.4 && dimensionRatio < 2.5 &&
+            kotlin.math.abs(dar - dimensionRatio) / dimensionRatio < 0.08
+        ) {
+            dar
+        } else {
+            dimensionRatio
+        }.coerceIn(1.0 / 2.39, 2.39)
+
         val toggleIcon = if (isVideoPlaying) R.drawable.ic_pip_pause else R.drawable.ic_pip_play
         val toggleLabel = if (isVideoPlaying) "정지" else "재생"
 
@@ -193,8 +223,13 @@ class MainActivity : FragmentActivity() {
             )
         }
 
-        return PictureInPictureParams.Builder()
-            .setAspectRatio(Rational(16, 9))
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(
+                Rational(
+                    (ratio * 10000.0).toInt().coerceAtLeast(1),
+                    10000
+                )
+            )
             .setActions(
                 listOf(
                     action(R.drawable.ic_pip_headphones, "소리만 듣기", PIP_ACTION_BACKGROUND_AUDIO, 7101),
@@ -202,7 +237,10 @@ class MainActivity : FragmentActivity() {
                     action(R.drawable.ic_pip_next, "다음 화", PIP_ACTION_NEXT, 7103)
                 )
             )
-            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setSeamlessResizeEnabled(true)
+        }
+        return builder.build()
     }
 
     private fun handlePipActionInternal(action: String) {
@@ -238,6 +276,14 @@ class MainActivity : FragmentActivity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode)
         isInPictureInPicture = isInPictureInPictureMode
+        if (isInPictureInPictureMode) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else if (isVideoPlaying) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                setPictureInPictureParams(buildPictureInPictureParams())
+            }
+        }
     }
 
     override fun onUserLeaveHint() {

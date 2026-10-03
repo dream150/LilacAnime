@@ -18,7 +18,9 @@ class RealtimeSubtitleTranslator(private val context: Context) {
 
     private val lock = Mutex()
     private val translationLock = Mutex()
-    private val localProvider = LocalTranslator(context)
+    private var activeProvider: TranslationProvider = LocalTranslator(context)
+    private var activeProviderId: String = "local"
+    private var sessionProvider: TranslationSessionProvider? = null
     private var sessionStarted = false
     private val cache = LinkedHashMap<String, String>(256, 0.75f, true)
     private var cues: List<Cue> = emptyList()
@@ -34,7 +36,7 @@ class RealtimeSubtitleTranslator(private val context: Context) {
     private var renderedSubtitleVersion = -1L
     private var offlineParseWarningLogged = false
 
-    suspend fun prepare(path: String?, positionMs: Long, scope: CoroutineScope) {
+    suspend fun prepare(path: String?, positionMs: Long, scope: CoroutineScope, providerId: String = "local") {
         val file = path?.let(::File)?.takeIf { it.isFile } ?: return
         val content = runCatching { file.readText(Charsets.UTF_8) }.getOrNull() ?: return
         val parsed = runCatching { parse(content, file.extension.lowercase()) }
@@ -57,6 +59,13 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             renderedSubtitleVersion = -1L
             cues = parsed
         }
+        if (sessionStarted) {
+            runCatching { sessionProvider?.endSession() }
+            sessionStarted = false
+        }
+        activeProviderId = providerId
+        activeProvider = TranslationManager.createProvider(context, providerId)
+        sessionProvider = activeProvider as? TranslationSessionProvider
         val localGeneration = generation
         prefetchPositionMs = positionMs
         worker = scope.launch(Dispatchers.IO) {
@@ -94,20 +103,25 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             appliedSubtitleVersion = -1L
             renderedSubtitleVersion = -1L
             if (sessionStarted) {
-                localProvider.endSession()
+                sessionProvider?.endSession()
                 sessionStarted = false
             }
+            activeProviderId = "local"
+            activeProvider = LocalTranslator(context)
+            sessionProvider = null
         }
     }
 
     private suspend fun ensureSession() {
         if (sessionStarted) return
-        localProvider.beginSession()
+        val provider = sessionProvider ?: return
+        provider.beginSession()
         sessionStarted = true
     }
 
     private suspend fun prefetchLoop(localGeneration: Int, initialPositionMs: Long) {
         var nextIndex = -1
+        val failures = mutableMapOf<String, Int>()
         while (true) {
             if (localGeneration != lock.withLock { generation }) return
 
@@ -121,7 +135,7 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             // request batch size. Every model invocation below receives exactly
             // one subtitle cue.
             val prefetchAhead = prefs.getInt("pref_ai_prefetch_ahead", 10).coerceIn(0, 40)
-            val contextCueCount = prefs.getInt("pref_ai_context_cues", 3).coerceIn(0, 10)
+            val contextCueCount = prefs.getInt("pref_ai_context_cues", 4).coerceIn(0, 6)
             val position = lock.withLock { prefetchPositionMs }
             val ordered = snapshot.sortedWith(compareBy<Cue> { it.startMs }.thenBy { it.endMs }.thenBy { it.index })
             val currentIndex = ordered.indexOfFirst { it.startMs >= position - 500L }
@@ -160,19 +174,32 @@ class RealtimeSubtitleTranslator(private val context: Context) {
                     if (!already) {
                         val orderedIndex = ordered.indexOf(cue)
                         val contextStart = (orderedIndex - contextCueCount).coerceAtLeast(0)
-                        val contextLines = ordered.subList(contextStart, orderedIndex)
+                        val contextCues = ordered.subList(contextStart, orderedIndex)
+                        val contextMemory = contextCues.map { previous ->
+                            LocalTranslator.LocalAiContext(
+                                source = modelText(previous.text, previous.kind),
+                                translation = lock.withLock { cache[cueCacheKey(previous)] }
+                            )
+                        }
+                        val futureLines = ordered
+                            .subList(orderedIndex + 1, (orderedIndex + 3).coerceAtMost(ordered.size))
                             .map { modelText(it.text, it.kind) }
                         val source = modelText(cue.text, cue.kind)
                         Log.i(
                             "RealtimeSubtitleTranslator",
-                            "CONTEXT_TRANSLATE cue=${cue.index} contextCount=${contextLines.size} configuredContext=$contextCueCount"
+                            "PREFETCH_TRANSLATE provider=$activeProviderId cue=${cue.index} contextCount=${if (activeProvider is LocalTranslator) contextMemory.size else 0}"
                         )
-                        // Exactly one cue per model invocation. Context is supplied only
-                        // as reference to HY-MT; it is never part of the output mapping.
-                        val result = localProvider.translateWithContext(source, contextLines).trim()
+                        val selectedProvider = activeProvider
+                        val result = if (selectedProvider is LocalTranslator) {
+                            selectedProvider.translateWithContext(source, contextMemory, futureLines).trim()
+                        } else {
+                            selectedProvider.translateBatch(listOf(source)).firstOrNull().orEmpty().trim()
+                        }
                         if (result.isNotBlank()) {
                             lock.withLock { cache[cueCacheKey(cue)] = result }
                             lock.withLock { subtitleVersion++ }
+                        } else {
+                            error("번역 결과가 비어 있습니다.")
                         }
                     }
                 }
@@ -182,8 +209,13 @@ class RealtimeSubtitleTranslator(private val context: Context) {
                 Log.d("RealtimeSubtitleTranslator", "PREFETCH_NEXT_CANCELLED cue=${cue.index}")
                 throw e
             } catch (t: Throwable) {
-                Log.e("RealtimeSubtitleTranslator", "PREFETCH_NEXT_FAILED cue=${cue.index}", t)
-                delay(500L)
+                Log.e("RealtimeSubtitleTranslator", "PREFETCH_NEXT_FAILED provider=$activeProviderId cue=${cue.index}", t)
+                val key = cueCacheKey(cue)
+                val attempt = (failures[key] ?: 0) + 1
+                failures[key] = attempt
+                if (attempt < 3) nextIndex = minOf(nextIndex, ordered.indexOf(cue))
+                else Log.e("RealtimeSubtitleTranslator", "PREFETCH_GIVE_UP provider=$activeProviderId cue=${cue.index} attempts=$attempt")
+                delay(if (activeProviderId == "local") 500L else 3000L)
             }
         }
     }
@@ -265,6 +297,9 @@ class RealtimeSubtitleTranslator(private val context: Context) {
         val tagRegex = if (kind == "ass") Regex("\\{[^}]*\\}") else Regex("(?is)<[^>]+>")
         val matches = tagRegex.findAll(original).toList()
         if (matches.isEmpty()) return if (kind == "ass") normalized.replace("\n", "\\N") else normalized
+        // ASS override tags belong at the same logical positions as the original
+        // cue. Do not let a model-generated label or echoed context become part of
+        // the subtitle payload.
         val visibleLength = original.replace(tagRegex, "").length.coerceAtLeast(1)
         val translatedText = if (kind == "ass") normalized.replace("\n", "\\N") else normalized
         val insertions = matches.map { match ->
@@ -331,24 +366,35 @@ class RealtimeSubtitleTranslator(private val context: Context) {
         cues: List<Cue>,
         value: (Cue) -> String
     ): String {
-        var cueIndex = 0
         return original.replace("\r\n", "\n").replace('\r', '\n').lines().joinToString("\n") { line ->
             if (!line.trimStart().startsWith("Dialogue:", ignoreCase = true)) return@joinToString line
-            val cue = cues.getOrNull(cueIndex++) ?: return@joinToString line
+            val body = line.substringAfter(':', "").trimStart().split(',', limit = 10)
+            if (body.size < 10) return@joinToString line
+            val start = parseAssTimeForRender(body[1])
+            val end = parseAssTimeForRender(body[2])
+            val rawText = body[9].trim()
+            val cue = cues.firstOrNull { it.kind == "ass" && it.startMs == start && it.endMs == end && it.text.trim() == rawText }
+                ?: cues.firstOrNull { it.kind == "ass" && it.startMs == start && it.endMs == end }
+                ?: return@joinToString line
             val colon = line.indexOf(':')
-            if (colon < 0) return@joinToString line
             val prefix = line.substring(0, colon + 1)
             val payload = line.substring(colon + 1)
             val leading = payload.takeWhile { it.isWhitespace() }
             val content = payload.drop(leading.length)
-            val commaPositions = content.mapIndexedNotNull { index, ch ->
-                if (ch == ',') index else null
-            }
+            val commaPositions = content.mapIndexedNotNull { index, ch -> if (ch == ',') index else null }
             if (commaPositions.size < 9) return@joinToString line
             val textStart = commaPositions[8] + 1
-            val translated = value(cue).replace("\n", "\\N")
-            prefix + leading + content.substring(0, textStart) + translated
+            prefix + leading + content.substring(0, textStart) + value(cue).replace("\n", "\\N")
         }
+    }
+
+    private fun parseAssTimeForRender(value: String): Long {
+        val p = value.trim().split(':')
+        return runCatching {
+            if (p.size != 3) return@runCatching -1L
+            val sec = p[2].replace(',', '.').toDouble()
+            ((p[0].toLong() * 3600 + p[1].toLong() * 60) * 1000 + (sec * 1000).toLong())
+        }.getOrDefault(-1L)
     }
 
     private fun renderTimedTextPreservingStructure(
