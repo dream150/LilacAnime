@@ -77,16 +77,16 @@ data class PlayerSettings(
     val translationProvider: String = "local",
     val translationModelId: String? = null,
     val translationPrompt: String = com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime.DEFAULT_PROMPT,
-    // Local AI advanced inference settings. 0 threads means automatic CPU thread selection.
+    // Local AI advanced inference settings. 0 threads means automatic host-thread selection.
     val aiContextSize: Int = 4096,
     val aiThreads: Int = 0,
-    val aiMaxTokens: Int = 1536,
-    val aiTemperature: Float = 0.7f,
-    val aiTopP: Float = 0.6f,
-    val aiTopK: Int = 20,
+    val aiMaxTokens: Int = 512,
+    val aiTemperature: Float = 0.25f,
+    val aiTopP: Float = 0.85f,
+    val aiTopK: Int = 40,
     val aiRepetitionPenalty: Float = 1.05f,
     // 번역 대상 자막 앞에서 모델에 참고로 유지할 이전 자막 Cue 수.
-    val aiContextCues: Int = 3,
+    val aiContextCues: Int = 6,
     val aiPrefetchEnabled: Boolean = true,
     val aiPrefetchAhead: Int = 10
 )

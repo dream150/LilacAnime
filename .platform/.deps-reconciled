@@ -18,7 +18,6 @@ app|com.google.mlkit:translate:17.0.3|
 app|com.squareup.okhttp3:okhttp:4.12.0|
 app|com.squareup.retrofit2:converter-gson:2.11.0|
 app|com.squareup.retrofit2:retrofit:2.11.0|
-app|dev.ffmpegkit-maintained:llama-android:0.1.1|
 app|dev.jdtech.mpv:libmpv:1.0.0|
 app|io.coil-kt.coil3:coil-compose:3.3.0|
 app|io.coil-kt.coil3:coil-network-okhttp:3.3.0|

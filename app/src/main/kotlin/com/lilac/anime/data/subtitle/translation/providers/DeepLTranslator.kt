@@ -14,17 +14,31 @@ import java.util.concurrent.TimeUnit
 class DeepLTranslator(private val context: Context) : TranslationProvider {
     override val id = "deepl"
     override val displayName = "DeepL"
-    private val client = OkHttpClient.Builder().callTimeout(60, TimeUnit.SECONDS).build()
+    private val client = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).callTimeout(75, TimeUnit.SECONDS).build()
+
     override suspend fun translateBatch(lines: List<String>): List<String> {
-        val key = SecureApiKeyStore.get(context, id) ?: error("DeepL API Key가 없습니다.")
-        val input = lines.mapIndexed { i, s -> "<LILAC_${i + 1}> $s" }.joinToString("\n")
-        val body = JSONObject().apply { put("text", JSONArray().put(input)); put("source_lang", "JA"); put("target_lang", "KO") }.toString().toRequestBody("application/json".toMediaType())
-        val req = Request.Builder().url("https://api.deepl.com/v2/translate").header("Authorization", "DeepL-Auth-Key $key").post(body).build()
-        client.newCall(req).execute().use { r ->
-            if (!r.isSuccessful) error("DeepL HTTP ${r.code}")
-            val arr = JSONObject(r.body?.string().orEmpty()).optJSONArray("translations") ?: error("DeepL 응답 오류")
-            val text = arr.optJSONObject(0)?.optString("text").orEmpty()
-            return lines.indices.map { i -> text.substringAfter("<LILAC_${i + 1}>", "").substringBefore("<LILAC_${i + 2}>").trim().ifBlank { lines[i] } }
+        if (lines.isEmpty()) return emptyList()
+        val key = SecureApiKeyStore.get(context, id)?.trim()?.takeIf { it.isNotEmpty() } ?: error("DeepL API Key가 없습니다.")
+        val endpoint = if (key.endsWith(":fx", true)) "https://api-free.deepl.com/v2/translate" else "https://api.deepl.com/v2/translate"
+        val body = JSONObject().apply {
+            put("text", JSONArray().apply { lines.forEach { put(it) } })
+            put("source_lang", "JA")
+            put("target_lang", "KO")
+            put("preserve_formatting", true)
+        }.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+        val request = Request.Builder().url(endpoint).header("Authorization", "DeepL-Auth-Key $key").post(body).build()
+        client.newCall(request).execute().use { response ->
+            val responseText = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val message = runCatching { JSONObject(responseText).optString("message") }.getOrDefault("")
+                error("DeepL HTTP ${response.code}${if (message.isNotBlank()) ": $message" else ""}")
+            }
+            val translations = JSONObject(responseText).optJSONArray("translations") ?: error("DeepL 응답에 translations가 없습니다.")
+            if (translations.length() != lines.size) error("DeepL 응답 줄 수가 일치하지 않습니다. expected=${lines.size} actual=${translations.length()}")
+            return lines.indices.map { index ->
+                translations.optJSONObject(index)?.optString("text")?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: error("DeepL 번역 결과 ${index + 1}번이 비어 있습니다.")
+            }
         }
     }
 }

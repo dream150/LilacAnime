@@ -75,7 +75,7 @@ data class RuntimePack(
             name = json.optString("name", json.getString("id")),
             version = json.optString("version", "1"),
             abi = json.optString("abi", "arm64-v8a"),
-            jniContract = json.optString("jniContract", "lilac-local-ai-v1"),
+            jniContract = json.optString("jniContract", "lilac-local-ai-v3"),
             libraryFile = json.getString("libraryFile"),
             supportedArchitectures = json.optJSONArray("supportedArchitectures")?.let { array ->
                 buildSet { for (i in 0 until array.length()) add(array.optString(i).lowercase()) }

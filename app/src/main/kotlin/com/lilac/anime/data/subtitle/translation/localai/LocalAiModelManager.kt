@@ -27,20 +27,7 @@ object LocalAiModelManager {
         ?.mapNotNull { file ->
             val inspection = GgufInspector.inspect(file)
             if (!inspection.valid) return@mapNotNull null
-            val specialRuntimeRequired = LocalAiRuntimeManager.requiresSpecialRuntime(inspection)
-            val runtime = if (specialRuntimeRequired) LocalAiRuntimeManager.findForModel(context, inspection) else null
-            LocalAiModel(
-                id = "local:${file.name}", repoId = "local", fileName = file.name,
-                displayName = file.nameWithoutExtension, sizeBytes = file.length(),
-                architecture = inspection.architecture, quantization = inspection.quantization,
-                chatTemplate = inspection.chatTemplate, localPath = file.absolutePath,
-                runtimeId = runtime?.id,
-                compatibility = when {
-                    !specialRuntimeRequired -> Compatibility.SUPPORTED
-                    runtime != null -> Compatibility.SUPPORTED
-                    else -> Compatibility.RUNTIME_REQUIRED
-                }
-            )
+            buildModel(context, file, "local", file.nameWithoutExtension, inspection)
         }
         ?.sortedBy { it.displayName.lowercase() }
         ?: emptyList()
@@ -96,19 +83,9 @@ object LocalAiModelManager {
         if (target.isFile && target.length() > 0L) {
             val inspection = GgufInspector.inspect(target)
             if (inspection.valid) {
-                val specialRuntimeRequired = LocalAiRuntimeManager.requiresSpecialRuntime(inspection)
-                val runtime = if (specialRuntimeRequired) LocalAiRuntimeManager.findForModel(context, inspection) else null
-                return@withContext LocalAiModel(
-                    id = "local:${target.name}", repoId = model.repoId, fileName = target.name,
-                    displayName = model.repoId.substringAfterLast('/') + " / " + target.name,
-                    sizeBytes = target.length(), architecture = inspection.architecture,
-                    quantization = inspection.quantization, chatTemplate = inspection.chatTemplate,
-                    localPath = target.absolutePath, runtimeId = runtime?.id,
-                    compatibility = when {
-                    !specialRuntimeRequired -> Compatibility.SUPPORTED
-                    runtime != null -> Compatibility.SUPPORTED
-                    else -> Compatibility.RUNTIME_REQUIRED
-                }
+                return@withContext buildModel(
+                    context, target, model.repoId,
+                    model.repoId.substringAfterLast('/') + " / " + target.name, inspection
                 )
             }
             target.delete()
@@ -143,19 +120,32 @@ object LocalAiModelManager {
         if (!partial.renameTo(target)) { partial.copyTo(target, true); partial.delete() }
         val inspection = GgufInspector.inspect(target)
         if (!inspection.valid) { target.delete(); throw IOException("다운로드한 파일이 유효한 GGUF가 아닙니다: ${inspection.error}") }
-        val specialRuntimeRequired = LocalAiRuntimeManager.requiresSpecialRuntime(inspection)
-        val runtime = if (specialRuntimeRequired) LocalAiRuntimeManager.findForModel(context, inspection) else null
-        LocalAiModel(
-            id = "local:${target.name}", repoId = model.repoId, fileName = target.name,
-            displayName = model.repoId.substringAfterLast('/') + " / " + target.name,
-            sizeBytes = target.length(), architecture = inspection.architecture,
-            quantization = inspection.quantization, chatTemplate = inspection.chatTemplate,
-            localPath = target.absolutePath, runtimeId = runtime?.id,
-            compatibility = when {
-                    !specialRuntimeRequired -> Compatibility.SUPPORTED
-                    runtime != null -> Compatibility.SUPPORTED
-                    else -> Compatibility.RUNTIME_REQUIRED
-                }
+        buildModel(
+            context, target, model.repoId,
+            model.repoId.substringAfterLast('/') + " / " + target.name, inspection
+        )
+    }
+
+    private fun buildModel(
+        context: Context,
+        file: File,
+        repoId: String,
+        displayName: String,
+        inspection: GgufInspection
+    ): LocalAiModel {
+        val runtime = LocalAiRuntimeManager.findForModel(context, inspection)
+        return LocalAiModel(
+            id = "local:${file.name}",
+            repoId = repoId,
+            fileName = file.name,
+            displayName = displayName,
+            sizeBytes = file.length(),
+            architecture = inspection.architecture,
+            quantization = inspection.quantization,
+            chatTemplate = inspection.chatTemplate,
+            localPath = file.absolutePath,
+            runtimeId = runtime?.id,
+            compatibility = if (runtime != null) Compatibility.SUPPORTED else Compatibility.RUNTIME_REQUIRED
         )
     }
 
