@@ -18,6 +18,9 @@ data class LocalAiModel(
     val runtimeId: String?,
     val compatibility: Compatibility = Compatibility.UNKNOWN
 ) {
+    val profile: LocalAiModelProfile
+        get() = LocalAiModelProfiles.resolve(this)
+
     val sizeLabel: String
         get() = when {
             sizeBytes >= GB -> String.format(java.util.Locale.US, "%.2f GB", sizeBytes / GB.toDouble())
@@ -66,6 +69,8 @@ data class RuntimePack(
     val libraryFile: String,
     val supportedArchitectures: Set<String>,
     val supportedQuantizations: Set<String>,
+    val nativeLibraries: List<String> = emptyList(),
+    val backendOrder: List<String> = listOf("npu", "gpu"),
     val directory: String,
     val installed: Boolean = true
 ) {
@@ -83,6 +88,12 @@ data class RuntimePack(
             supportedQuantizations = json.optJSONArray("supportedQuantizations")?.let { array ->
                 buildSet { for (i in 0 until array.length()) add(array.optString(i).uppercase()) }
             } ?: emptySet(),
+            nativeLibraries = json.optJSONArray("nativeLibraries")?.let { array ->
+                buildList { for (i in 0 until array.length()) array.optString(i).takeIf { it.isNotBlank() }?.let(::add) }
+            } ?: emptyList(),
+            backendOrder = json.optJSONArray("backendOrder")?.let { array ->
+                buildList { for (i in 0 until array.length()) array.optString(i).trim().lowercase().takeIf { it.isNotBlank() }?.let(::add) }
+            }?.ifEmpty { listOf("npu", "gpu") } ?: listOf("npu", "gpu"),
             directory = directory
         )
     }

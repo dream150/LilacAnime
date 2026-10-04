@@ -33,6 +33,7 @@ class RealtimeSubtitleTranslator(private val context: Context) {
     private var generation = 0
     private var subtitleVersion = 0L
     private var appliedSubtitleVersion = -1L
+    private var appliedRealtimeCueIndex = Int.MIN_VALUE
     private var renderedSubtitleVersion = -1L
     private var offlineParseWarningLogged = false
 
@@ -56,6 +57,7 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             translatedPath = null
             subtitleVersion++
             appliedSubtitleVersion = -1L
+            appliedRealtimeCueIndex = Int.MIN_VALUE
             renderedSubtitleVersion = -1L
             cues = parsed
         }
@@ -101,6 +103,7 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             translatedPath = null
             subtitleVersion++
             appliedSubtitleVersion = -1L
+            appliedRealtimeCueIndex = Int.MIN_VALUE
             renderedSubtitleVersion = -1L
             if (sessionStarted) {
                 sessionProvider?.endSession()
@@ -235,11 +238,26 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             ?: matching.minByOrNull { kotlin.math.abs(positionMs - it.startMs) }
     }
 
-    /** Returns the newly generated subtitle path only once per generated version. */
-    suspend fun consumeTranslatedSubtitleUpdate(): String? = lock.withLock {
-        if (translatedPath.isNullOrBlank() || renderedSubtitleVersion < 0L || appliedSubtitleVersion == renderedSubtitleVersion) return@withLock null
+    /**
+     * Apply a rendered update only when the currently displayed source cue has a
+     * translation ready. Future-cue renders stay on disk and are picked up when
+     * playback reaches that cue. This prevents the subtitle track from being
+     * reloaded once for every background translation.
+     */
+    suspend fun consumeTranslatedSubtitleUpdate(positionMs: Long): String? = lock.withLock {
+        val path = translatedPath
+        if (path.isNullOrBlank() || renderedSubtitleVersion < 0L) return@withLock null
+        val snapshot = cues
+        val current = snapshot
+            .filter { positionMs >= it.startMs && positionMs <= it.endMs }
+            .minByOrNull { kotlin.math.abs(positionMs - it.startMs) }
+            ?: return@withLock null
+        val key = cueCacheKey(current)
+        if (!cache.containsKey(key)) return@withLock null
+        if (appliedRealtimeCueIndex == current.index) return@withLock null
+        appliedRealtimeCueIndex = current.index
         appliedSubtitleVersion = renderedSubtitleVersion
-        translatedPath
+        path
     }
 
     private fun normalize(text: String): String = text

@@ -6,12 +6,16 @@ import com.lilac.anime.data.subtitle.translation.TranslationProvider
 import com.lilac.anime.data.subtitle.translation.TranslationSessionProvider
 import com.lilac.anime.data.subtitle.translation.localai.LocalAiModel
 import com.lilac.anime.data.subtitle.translation.localai.LocalAiModelManager
+import com.lilac.anime.data.subtitle.translation.localai.LocalAiAdapterRegistry
+import com.lilac.anime.data.subtitle.translation.localai.LocalAiPromptRequest
 import com.lilac.anime.data.subtitle.translation.localai.LocalAiNative
 import com.lilac.anime.data.subtitle.translation.localai.RuntimeRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.asCoroutineDispatcher
+import java.util.concurrent.Executors
 import java.io.IOException
 
 class LocalTranslator(private val context: Context) : TranslationSessionProvider {
@@ -85,52 +89,34 @@ class LocalTranslator(private val context: Context) : TranslationSessionProvider
 
 internal object LocalAiTranslationRuntime {
     private const val TAG = "LocalAiTranslation"
-    private const val PROMPT_VERSION = 1
+    private const val PROMPT_VERSION = 2
     private val lock = Mutex()
+    private val inferenceDispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "LilacLocalAiInference").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
 
     data class SubtitleContext(val source: String, val translation: String?)
 
     val DEFAULT_SYSTEM_PROMPT =
-        "You are a subtitle translator. Translate Japanese anime dialogue into natural Korean. Output only the translation."
-
-    /**
-     * Local reasoning control:
-     * - auto: use the GGUF chat template's default behavior.
-     * - on: force enable_thinking=true when the template exposes that variable.
-     * - off: force enable_thinking=false when the template exposes that variable.
-     *
-     * The native bridge forces enable_thinking=false/true at the Jinja template
-     * level when the selected mode is explicit. This keeps Qwen3.5 compatible
-     * without hard-coding a model name.
-     */
+        "너는 애니메이션 자막 번역가야. 이름은 번역없이 발음만 한국어로 쓰고, 주어진 문맥들을 참고해서, 번역 할 일본어 문장만 추가설명 없이 한국어 문장으로 번역해서 그것만 출력해."
+    /** Reasoning preference exposed to model adapters. Each adapter decides how it is implemented. */
     const val THINKING_AUTO = "auto"
     const val THINKING_ON = "on"
     const val THINKING_OFF = "off"
 
 
     val DEFAULT_PROMPT = """
-TRANSLATION TASK
-Translate only <CURRENT> into natural Korean dialogue.
-Output only the Korean translation. Never output instructions, labels, analysis, or the Japanese source.
-
-STYLE
-- Preserve the speaker's relationship and politeness level from the context.
-- Do not infer Korean honorifics from Japanese first-person pronouns alone.
-- Prefer natural spoken Korean over literal Japanese grammar.
-- Keep names, titles, nicknames, and established speech style consistent with the context.
-- Preserve line breaks inside a subtitle block.
-
-REFERENCE CONTEXT
+이전 맥락
 {context}
+이후 맥락
+{future_context}
 
-CURRENT
-<CURRENT>{source_text}</CURRENT>
-
-OUTPUT
-Only the Korean translation of CURRENT.
+번역해야 할 문장
+{source_text}
 """.trimIndent()
 
     private var sessionRuntime: RuntimeRegistry.Candidate? = null
+    private var sessionModel: LocalAiModel? = null
     private var sessionModelId: String? = null
     private var sessionChatTemplate: String? = null
 
@@ -144,6 +130,7 @@ Only the Korean translation of CURRENT.
                 throw IOException("GPU/NPU runtime 초기화 실패: ${LocalAiNative.error()?.message.orEmpty()}")
             }
             sessionRuntime = runtime
+            sessionModel = model
             sessionModelId = model.id
             sessionChatTemplate = model.chatTemplate
             Log.i(TAG, "SESSION_START runtime=${runtime.id} version=${runtime.version} model=${model.displayName}")
@@ -155,6 +142,7 @@ Only the Korean translation of CURRENT.
             if (sessionRuntime == null) return@withLock
             LocalAiNative.release()
             sessionRuntime = null
+            sessionModel = null
             sessionModelId = null
             sessionChatTemplate = null
             Log.i(TAG, "SESSION_END")
@@ -172,24 +160,23 @@ Only the Korean translation of CURRENT.
         lock.withLock {
             val runtime = sessionRuntime ?: throw IOException("local AI runtime이 초기화되지 않았습니다.")
             val prefs = context.getSharedPreferences("lilac_offline_store", Context.MODE_PRIVATE)
-            val savedPrompt = prefs.getString("pref_translation_prompt", null)?.trim()
-            val promptTemplate = if (savedPrompt.isNullOrBlank()) DEFAULT_PROMPT else savedPrompt
             prefs.edit().putInt("pref_ai_prompt_version", PROMPT_VERSION).apply()
 
+            val model = sessionModel ?: selectModel(context)
+            val adapter = LocalAiAdapterRegistry.resolve(model)
+            val cleanSource = cleanText(source)
+            val savedPrompt = prefs.getString("pref_translation_prompt", null)?.trim()
+            val promptTemplate = if (savedPrompt.isNullOrBlank()) DEFAULT_PROMPT else savedPrompt
             val contextCount = prefs.getInt("pref_ai_context_cues", 4).coerceIn(0, 10)
             val cleanContext = previousContext
-                .map { SubtitleContext(cleanText(it.source), it.translation?.let(::cleanText)) }
+                .map { SubtitleContext(cleanText(it.source), null) }
                 .filter { it.source.isNotBlank() }
                 .takeLast(contextCount)
-            val contextText = if (cleanContext.isEmpty()) "(no previous context)" else cleanContext.mapIndexed { i, item ->
-                val ko = item.translation?.takeIf { it.isNotBlank() }
-                if (ko == null) "${i + 1}. JP: ${item.source}" else "${i + 1}. JP: ${item.source}\n   KO: $ko"
-            }.joinToString("\n")
-
-            val cleanSource = cleanText(source)
+            val contextText = cleanContext.map { cleanText(it.source) }.filter { it.isNotBlank() }.joinToString("\n")
+            val futureText = futureLines.map(::cleanText).filter { it.isNotBlank() }.joinToString("\n")
             val prompt = promptTemplate
                 .replace("{context}", contextText)
-                .replace("{future_context}", futureLines.joinToString("\n").ifBlank { "(none)" })
+                .replace("{future_context}", futureText)
                 .replace("{source_text}", cleanSource)
 
             val systemPrompt = prefs.getString("pref_ai_system_prompt", null)?.trim()
@@ -207,35 +194,33 @@ Only the Korean translation of CURRENT.
             val seed = prefs.getInt("pref_ai_seed", -1)
             val promptMode = prefs.getString("pref_ai_prompt_mode", "chat") ?: "chat"
             val useChatTemplate = promptMode != "completion"
-            // The JNI bridge applies explicit thinking mode to the Jinja template
-            // because this app calls llama.cpp directly rather than llama-server.
+            // Thinking is a model capability, not a runtime capability. The selected
+            // model adapter translates this preference into the model's own template rules.
             val thinkingMode = prefs.getString("pref_ai_thinking_mode", THINKING_OFF) ?: THINKING_OFF
-            val thinkingEnabled = thinkingMode == THINKING_ON
-            val effectiveChatTemplate = sessionChatTemplate
-            val effectiveSystemPrompt = when (thinkingMode) {
-                THINKING_ON -> "$systemPrompt\\n\\nReasoning may be used internally, but the final response must contain only the translated subtitle."
-                THINKING_OFF -> "$systemPrompt\\n\\nDo not reason or output any thinking. Return only the final translated subtitle."
-                else -> systemPrompt
-            }
-
-            val messages = if (useChatTemplate) {
-                listOf("system" to effectiveSystemPrompt, "user" to prompt)
-            } else {
-                listOf("user" to "$systemPrompt\n\n$prompt")
-            }
+            val prepared = adapter.prepare(
+                LocalAiPromptRequest(
+                    systemPrompt = systemPrompt,
+                    userPrompt = prompt,
+                    chatTemplate = sessionChatTemplate,
+                    useChatTemplate = useChatTemplate,
+                    addGenerationPrompt = true,
+                    thinkingMode = thinkingMode
+                )
+            )
 
             Log.i(
                 TAG,
                 "TRANSLATE_START runtime=${runtime.id} model=${sessionModelId.orEmpty()} " +
-                    "template=${!effectiveChatTemplate.isNullOrBlank()} mode=${if (useChatTemplate) "chat" else "completion"} " +
-                    "thinking=$thinkingMode promptChars=${prompt.length} maxTokens=$maxTokens"
+                    "adapter=${adapter.id} template=${!prepared.chatTemplate.isNullOrBlank()} " +
+                    "mode=${if (prepared.useChatTemplate) "chat" else "completion"} " +
+                    "thinking=$thinkingMode promptChars=${prepared.messages.lastOrNull()?.second?.length ?: 0} maxTokens=$maxTokens"
             )
 
-            val output = LocalAiNative.translate(
-                messages = messages,
-                chatTemplate = effectiveChatTemplate,
-                useChatTemplate = useChatTemplate,
-                addGenerationPrompt = true,
+            val rawOutput = withContext(inferenceDispatcher) { LocalAiNative.translate(
+                messages = prepared.messages,
+                chatTemplate = prepared.chatTemplate,
+                useChatTemplate = prepared.useChatTemplate,
+                addGenerationPrompt = prepared.addGenerationPrompt,
                 maxTokens = maxTokens,
                 temperature = temperature,
                 topP = topP,
@@ -247,17 +232,28 @@ Only the Korean translation of CURRENT.
                 frequencyPenalty = frequencyPenalty,
                 presencePenalty = presencePenalty,
                 seed = seed,
-                thinkingEnabled = thinkingEnabled
-            ).orEmpty()
+                thinkingMode = prepared.nativeTemplateControl
+            ).orEmpty() }
+            val output = adapter.cleanOutput(rawOutput) ?: rawOutput
 
             val parsed = parseSingleOutput(output, cleanSource)
             if (parsed != null) parsed else {
                 Log.w(TAG, "MODEL_OUTPUT_INVALID retrying")
-                val retry = LocalAiNative.translate(
-                    listOf("system" to systemPrompt, "user" to "Translate only this subtitle.\n<CURRENT>$cleanSource</CURRENT>"),
-                    effectiveChatTemplate,
-                    true,
-                    true,
+                val retryPrepared = adapter.prepare(
+                    LocalAiPromptRequest(
+                        systemPrompt = systemPrompt,
+                        userPrompt = "Translate only this subtitle.\n<CURRENT>$cleanSource</CURRENT>",
+                        chatTemplate = sessionChatTemplate,
+                        useChatTemplate = true,
+                        addGenerationPrompt = true,
+                        thinkingMode = thinkingMode
+                    )
+                )
+                val retry = withContext(inferenceDispatcher) { LocalAiNative.translate(
+                    retryPrepared.messages,
+                    retryPrepared.chatTemplate,
+                    retryPrepared.useChatTemplate,
+                    retryPrepared.addGenerationPrompt,
                     maxTokens,
                     temperature,
                     topP,
@@ -269,8 +265,8 @@ Only the Korean translation of CURRENT.
                     frequencyPenalty,
                     presencePenalty,
                     seed,
-                    thinkingEnabled
-                ).orEmpty()
+                    retryPrepared.nativeTemplateControl
+                ).orEmpty() }
                 parseSingleOutput(retry, cleanSource) ?: cleanSource
             }
         }

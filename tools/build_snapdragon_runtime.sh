@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LLAMA_ROOT="${LLAMA_ROOT:-$HOME/src/llama.cpp}"
 OUT="${OUT:-$ROOT/build/snapdragon-runtime}"
 IMAGE="${IMAGE:-ghcr.io/snapdragon-toolchain/arm64-android:v0.7}"
-BRIDGE_REV="${BRIDGE_REV:-2}"
+BRIDGE_REV="${BRIDGE_REV:-3}"
 
 # llama.cpp packaging layout differs between the adb and Android builds.
 # Prefer pkg-adb when present, otherwise use pkg-android.
@@ -74,6 +74,20 @@ cat > "$OUT/runtime/runtime.json" <<JSON
   "abi": "arm64-v8a",
   "jniContract": "lilac-local-ai-v3",
   "libraryFile": "liblilac_local_ai_jni.so",
+  "nativeLibraries": [
+    "libggml-base.so",
+    "libggml-cpu.so",
+    "libggml-opencl.so",
+    "libggml-hexagon.so",
+    "libggml.so",
+    "libllama-common.so",
+    "libllama.so",
+    "libggml-htp-v73.so",
+    "libggml-htp-v75.so",
+    "libggml-htp-v79.so",
+    "libggml-htp-v81.so"
+  ],
+  "backendOrder": ["npu", "gpu", "cpu"],
   "supportedArchitectures": [],
   "supportedQuantizations": []
 }

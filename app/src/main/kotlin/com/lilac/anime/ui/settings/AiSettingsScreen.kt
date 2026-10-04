@@ -177,6 +177,17 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                         Column(Modifier.fillMaxWidth()) {
                             Text(if(settings.translationModelId==model.id) "✓ ${model.displayName}" else model.displayName)
                             Text("${model.sizeLabel} · ${model.quantization ?: "?"} · ${model.architecture ?: "?"}", fontSize=10.sp)
+                            val adapter = LocalAiAdapterRegistry.resolve(model)
+                            val profile = model.profile
+                            val featureNames = buildList {
+                                if (profile.supports(LocalAiFeature.THINKING_CONTROL)) add("Thinking")
+                                if (profile.supports(LocalAiFeature.VISION)) add("Vision")
+                                if (profile.supports(LocalAiFeature.TOOL_CALLING)) add("Tool")
+                            }
+                            Text("${profile.displayName} · ${adapter.displayName} · ${adapter.id}", fontSize=10.sp, color=MaterialTheme.colorScheme.primary)
+                            if (featureNames.isNotEmpty()) {
+                                Text("기능: ${featureNames.joinToString(" · ")}", fontSize=10.sp, color=MaterialTheme.colorScheme.onBackground.copy(alpha=.65f))
+                            }
                             Text(if(candidates.isEmpty()) "호환 runtime 없음" else "Runtime: $runtimeName", fontSize=10.sp)
                         }
                     }
@@ -227,6 +238,87 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
             if(downloading){LinearProgressIndicator(progress={if(total>0)(received.toFloat()/total).coerceIn(0f,1f)else 0f},modifier=Modifier.fillMaxWidth());Text("${aiFormatBytes(received)} / ${aiFormatBytes(total)}",fontSize=10.sp)}
             Text("설치된 runtime: "+runtimes.joinToString { "${it.name} ${it.version}" }.ifBlank{"없음"},fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
             message?.let{Text(it,fontSize=11.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.75f))}
+
+            Spacer(Modifier.height(22.dp)); HorizontalDivider(); Spacer(Modifier.height(18.dp))
+
+            // Local Dream-inspired: keep the most important inference controls
+            // visible as compact Material 3 cards instead of hiding them all
+            // behind the advanced section. The underlying LilacAnime/JNI
+            // runtime remains unchanged.
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                shape = MaterialTheme.shapes.large
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("추론 모드", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        if (thinkingMode == LocalAiTranslationRuntime.THINKING_OFF)
+                            "Thinking을 끄고 번역 결과만 생성합니다. Qwen 3.5에서는 chat template + /no_think + 빈 think 블록 보조가 함께 적용됩니다."
+                        else if (thinkingMode == LocalAiTranslationRuntime.THINKING_ON)
+                            "모델의 Thinking을 강제로 활성화합니다."
+                        else
+                            "GGUF chat template의 기본 Thinking 설정을 사용합니다.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Thinking Mode", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                if (thinkingMode == LocalAiTranslationRuntime.THINKING_OFF) "꺼짐 · 빠른 번역" else "켜짐/자동",
+                                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = thinkingMode == LocalAiTranslationRuntime.THINKING_ON,
+                            onCheckedChange = { enabled ->
+                                thinkingMode = if (enabled) LocalAiTranslationRuntime.THINKING_ON else LocalAiTranslationRuntime.THINKING_OFF
+                                aiPrefs.edit().putString("pref_ai_thinking_mode", thinkingMode).apply()
+                            }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = thinkingMode == LocalAiTranslationRuntime.THINKING_OFF,
+                            onClick = { thinkingMode = LocalAiTranslationRuntime.THINKING_OFF; aiPrefs.edit().putString("pref_ai_thinking_mode", thinkingMode).apply() },
+                            label = { Text("OFF") }
+                        )
+                        FilterChip(
+                            selected = thinkingMode == LocalAiTranslationRuntime.THINKING_AUTO,
+                            onClick = { thinkingMode = LocalAiTranslationRuntime.THINKING_AUTO; aiPrefs.edit().putString("pref_ai_thinking_mode", thinkingMode).apply() },
+                            label = { Text("자동") }
+                        )
+                        FilterChip(
+                            selected = thinkingMode == LocalAiTranslationRuntime.THINKING_ON,
+                            onClick = { thinkingMode = LocalAiTranslationRuntime.THINKING_ON; aiPrefs.edit().putString("pref_ai_thinking_mode", thinkingMode).apply() },
+                            label = { Text("ON") }
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.large
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("기본 생성 설정", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Temperature  ${String.format(java.util.Locale.US, "%.2f", temperature)}", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Slider(value = temperature, onValueChange = { temperature = it }, valueRange = 0f..1.5f, steps = 29, onValueChangeFinished = { vm.updatePlayerSettings(context, settings.copy(aiTemperature = temperature)) })
+                    Text("Top P  ${String.format(java.util.Locale.US, "%.2f", topP)}", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Slider(value = topP, onValueChange = { topP = it }, valueRange = 0.1f..1f, steps = 17, onValueChangeFinished = { vm.updatePlayerSettings(context, settings.copy(aiTopP = topP)) })
+                    Text("Top K  ${topK.roundToInt()}", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Slider(value = topK, onValueChange = { topK = it }, valueRange = 1f..100f, steps = 98, onValueChangeFinished = { vm.updatePlayerSettings(context, settings.copy(aiTopK = topK.roundToInt())) })
+                    Text("Max Tokens  ${maxTokens.roundToInt()}", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Slider(value = maxTokens, onValueChange = { maxTokens = it }, valueRange = 256f..4096f, steps = 15, onValueChangeFinished = { vm.updatePlayerSettings(context, settings.copy(aiMaxTokens = maxTokens.roundToInt())) })
+                }
+            }
 
             Spacer(Modifier.height(22.dp)); HorizontalDivider(); Spacer(Modifier.height(18.dp))
             Text("고급 추론 설정",fontSize=18.sp,fontWeight=FontWeight.Bold)
@@ -344,8 +436,10 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                         frequencyPenalty = 0.0f
                         presencePenalty = 0.0f
                         seedText = "-1"
+                        thinkingMode = LocalAiTranslationRuntime.THINKING_OFF
                         aiPrefs.edit()
                             .putString("pref_ai_prompt_mode", "chat")
+                            .putString("pref_ai_thinking_mode", LocalAiTranslationRuntime.THINKING_OFF)
                             .putFloat("pref_ai_min_p", 0.0f)
                             .putFloat("pref_ai_typical_p", 1.0f)
                             .putInt("pref_ai_repeat_last_n", 64)

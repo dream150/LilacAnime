@@ -36,7 +36,7 @@ internal object LocalAiNative {
         frequencyPenalty: Float,
         presencePenalty: Float,
         seed: Int,
-        thinkingEnabled: Boolean
+        thinkingMode: Int
     ): String?
     private external fun nativeRelease()
     private external fun nativeShutdown()
@@ -68,7 +68,7 @@ internal object LocalAiNative {
         }
 
         return runCatching {
-            loadRuntimeDependencies(directory)
+            loadRuntimeDependencies(directory, pack.nativeLibraries)
             System.load(bridge.absolutePath)
             Log.i(TAG, "JNI_BRIDGE_LOADED runtime=${runtime.id} path=${bridge.absolutePath}")
 
@@ -78,7 +78,8 @@ internal object LocalAiNative {
             currentThreads = if (configuredThreads > 0) configuredThreads
             else Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
 
-            check(nativeInit(directory.absolutePath, "auto")) { "GPU/NPU native runtime 초기화에 실패했습니다." }
+            val backendOrder = pack.backendOrder.joinToString(",").ifBlank { "auto" }
+            check(nativeInit(directory.absolutePath, backendOrder)) { "native runtime 초기화에 실패했습니다." }
             initialized = true
             loadedKey = key
             check(nativeLoad(modelPath, currentContextSize, currentThreads)) {
@@ -96,16 +97,12 @@ internal object LocalAiNative {
         }.getOrDefault(false)
     }
 
-    private fun loadRuntimeDependencies(directory: File) {
-        listOf(
-            "libggml-base.so",
-            "libggml-cpu.so",
-            "libggml-opencl.so",
-            "libggml-hexagon.so",
-            "libggml.so",
-            "libllama-common.so",
-            "libllama.so"
-        ).forEach { name ->
+    private fun loadRuntimeDependencies(directory: File, declared: List<String>) {
+        val names = if (declared.isNotEmpty()) declared else listOf(
+            "libggml-base.so", "libggml-cpu.so", "libggml-opencl.so",
+            "libggml-hexagon.so", "libggml.so", "libllama-common.so", "libllama.so"
+        )
+        names.forEach { name ->
             val file = File(directory, name)
             if (file.isFile) {
                 runCatching { System.load(file.absolutePath) }
@@ -130,7 +127,7 @@ internal object LocalAiNative {
         frequencyPenalty: Float,
         presencePenalty: Float,
         seed: Int,
-        thinkingEnabled: Boolean
+        thinkingMode: Int
     ): String? {
         if (!loaded || messages.isEmpty()) return null
         val roles = messages.map { it.first }.toTypedArray()
@@ -152,7 +149,7 @@ internal object LocalAiNative {
             frequencyPenalty,
             presencePenalty,
             seed,
-            thinkingEnabled
+            thinkingMode
         )
     }
 

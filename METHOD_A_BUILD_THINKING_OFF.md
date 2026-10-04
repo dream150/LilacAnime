@@ -80,3 +80,13 @@ LLAMA_ROOT=/home/gongiainr/src/llama.cpp ./tools/build_snapdragon_runtime.sh
 ```
 
 를 실행하면 됩니다.
+
+
+## 2026-10-03 UI + Qwen 3.5 Thinking control update
+
+- AI settings now expose a Local-Dream-inspired Material 3 inference card.
+- Thinking is a tri-state setting: `auto`, `on`, `off`.
+- `off` passes `/no_think` in the final user prompt, forces `enable_thinking=false` in the GGUF chat template, and closes an otherwise-open `<think>` generation prefix with an empty `</think>` prefill.
+- `auto` no longer accidentally behaves like `off`; the native bridge now receives a distinct mode code.
+- `on` leaves the model template in its normal reasoning-enabled path.
+- The Snapdragon/JNI runtime architecture is unchanged. The native bridge source must still be rebuilt into the runtime ZIP using the existing Method A build process.

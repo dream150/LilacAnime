@@ -271,7 +271,9 @@ fun PlayerScreen(
     LaunchedEffect(currentEpisode.id, subtitleTranslationMode, vm.playerSettings.translationProvider) {
         if (subtitleTranslationMode != "korean") return@LaunchedEffect
         while (isActive) {
-            realtimeTranslator.consumeTranslatedSubtitleUpdate()?.let { engine.replaceSubtitleTrack(it) }
+            realtimeTranslator.consumeTranslatedSubtitleUpdate(engine.currentPosition)?.let {
+                engine.updateRealtimeSubtitleTrack(it)
+            }
             delay(150L)
         }
     }

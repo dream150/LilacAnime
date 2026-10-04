@@ -8,6 +8,7 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 
 #include "llama.h"
 #include "ggml-backend.h"
@@ -279,6 +280,7 @@ ggml_backend_dev_t find_first_device_matching(const std::string & kind) {
         const int type = (int) g.ggml_backend_dev_type(d);
         if (kind == "npu" && name.rfind("HTP", 0) == 0) return d;
         if (kind == "gpu" && (name.find("GPU") != std::string::npos || name.find("OpenCL") != std::string::npos)) return d;
+        if (kind == "cpu" && type == GGML_BACKEND_DEVICE_TYPE_CPU) return d;
             }
     return nullptr;
 }
@@ -287,14 +289,27 @@ bool load_model(const char * model_path, int context_size, int threads) {
     LOGI("BACKEND_REQUESTED mode=%s", g_backend.c_str());
 
     std::vector<std::string> order;
-    if (g_backend == "auto") order = {"npu", "gpu"};
-    else order = {g_backend};
+    if (g_backend == "auto") {
+        order = {"npu", "gpu", "cpu"};
+    } else {
+        size_t start = 0;
+        while (start < g_backend.size()) {
+            const size_t comma = g_backend.find(',', start);
+            const size_t end = comma == std::string::npos ? g_backend.size() : comma;
+            std::string item = g_backend.substr(start, end - start);
+            item.erase(std::remove_if(item.begin(), item.end(), [](unsigned char c) { return std::isspace(c); }), item.end());
+            if (!item.empty()) order.push_back(item);
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+        if (order.empty()) order = {"npu", "gpu", "cpu"};
+    }
 
     for (const std::string & kind : order) {
         ggml_backend_dev_t d = find_first_device_matching(kind);
         if (!d) {
             LOGW("BACKEND_UNAVAILABLE kind=%s", kind.c_str());
-            if (g_backend != "auto") {
+            if (g_backend != "auto" && order.size() == 1) {
                 set_error("requested backend is unavailable: " + kind);
                 return false;
             }
@@ -330,7 +345,13 @@ struct FormattedPrompt {
     bool add_special = true;
 };
 
-FormattedPrompt apply_chat_template(const std::vector<std::string> & roles, const std::vector<std::string> & contents, const std::string & chat_template, bool add_generation_prompt) {
+// LilacAnime is a subtitle translation runtime. Reasoning is intentionally
+// disabled at the native boundary for every model. The Kotlin/UI setting is
+// still accepted for source compatibility, but it cannot re-enable reasoning.
+static constexpr bool FORCE_REASONING_OFF = true;
+
+FormattedPrompt apply_chat_template(const std::vector<std::string> & roles, const std::vector<std::string> & contents, const std::string & chat_template, bool add_generation_prompt, int thinking_mode) {
+    const int effective_thinking_mode = FORCE_REASONING_OFF ? 2 : thinking_mode;
     if (roles.size() != contents.size() || roles.empty()) {
         set_error("invalid chat messages");
         return {};
@@ -338,6 +359,47 @@ FormattedPrompt apply_chat_template(const std::vector<std::string> & roles, cons
 
     if (chat_template.empty()) {
         return {contents.back(), true};
+    }
+
+    // Gemma 4 introduced a new <|turn> / <turn|> template. Some llama.cpp
+    // C-API builds can load Gemma 4 successfully but still return -1 from
+    // llama_chat_apply_template() because the legacy template detector does
+    // not recognize the new format. The GGUF template itself contains this
+    // marker, so use a small model-agnostic fallback based on the template
+    // syntax rather than hard-coding a model name into the runtime.
+    if (chat_template.find("<|turn>") != std::string::npos &&
+        chat_template.find("<turn|>") != std::string::npos) {
+        std::string result;
+        for (size_t i = 0; i < roles.size(); ++i) {
+            std::string role = roles[i] == "assistant" ? "model" : roles[i];
+            result += "<|turn>" + role + "\n";
+            result += contents[i];
+            result += "<turn|>\n";
+        }
+        if (add_generation_prompt) {
+            // For Gemma 4 E4B, forced reasoning-off means the generation
+            // boundary ends directly at the model turn. Do not emit a
+            // thought/channel marker because that can re-enter reasoning.
+            result += "<|turn>model\n";
+        }
+        LOGI("GEMMA4_TEMPLATE_FALLBACK requested_thinking=%d effective_thinking=off chars=%zu", thinking_mode, result.size());
+        return {result, true};
+    }
+
+    // For templates that expose an enable_thinking Jinja variable (for
+    // example Qwen-family templates), force that variable off before the
+    // llama.cpp template renderer sees it. This is deliberately done in the
+    // native runtime as a final safety net rather than relying on the UI.
+    std::string effective_template = chat_template;
+    if (FORCE_REASONING_OFF && effective_template.find("enable_thinking") != std::string::npos) {
+        effective_template = "{%- set enable_thinking = false %}\n" + effective_template;
+        const std::string true_assignment = "enable_thinking = true";
+        size_t pos = 0;
+        while ((pos = effective_template.find(true_assignment, pos)) != std::string::npos) {
+            effective_template.replace(pos, true_assignment.size(), "enable_thinking = false");
+            pos += 24;
+        }
+        LOGI("REASONING_FORCE_OFF template_variable=enable_thinking");
     }
 
     std::vector<llama_chat_message> messages;
@@ -350,7 +412,7 @@ FormattedPrompt apply_chat_template(const std::vector<std::string> & roles, cons
     for (;;) {
         std::vector<char> buffer(static_cast<size_t>(capacity));
         const int32_t result = g.llama_chat_apply_template(
-            chat_template.empty() ? nullptr : chat_template.c_str(),
+            effective_template.empty() ? nullptr : effective_template.c_str(),
             messages.data(),
             messages.size(),
             add_generation_prompt,
@@ -564,36 +626,13 @@ Java_com_lilac_anime_data_subtitle_translation_localai_LocalAiNative_nativeLoad(
 }
 
 
-// The low-level llama_chat_apply_template() API used by this app does not expose
-// chat_template_kwargs. Qwen3.5's official template reads the Jinja variable
-// `enable_thinking` and emits an already-closed <think> block when it is false.
-// Injecting the variable assignment into the template is therefore the direct
-// equivalent of chat_template_kwargs={"enable_thinking": false}. This is much
-// more reliable than trying to patch the rendered prompt after the template ran.
-std::string force_template_thinking(const std::string & chat_template, bool thinking_enabled) {
-    if (thinking_enabled || chat_template.empty()) return chat_template;
-
-    // Do not add the assignment twice. It must be before the model template so
-    // templates using `enable_thinking is defined` or `default(true)` see false.
-    if (chat_template.find("enable_thinking = false") != std::string::npos ||
-        chat_template.find("enable_thinking=false") != std::string::npos) {
-        LOGI("THINKING_OFF_TEMPLATE_ALREADY_FORCED");
-        return chat_template;
-    }
-
-    const std::string prefix = "{%- set enable_thinking = false %}\n";
-    std::string result;
-    result.reserve(prefix.size() + chat_template.size());
-    result += prefix;
-    result += chat_template;
-    LOGI("THINKING_OFF_TEMPLATE_INJECTED originalChars=%zu effectiveChars=%zu",
-         chat_template.size(), result.size());
-    return result;
-}
+// The JNI layer remains model-agnostic. Model-family adapters may prepare the
+// prompt, but the translation runtime enforces reasoning OFF as a final safety
+// boundary because subtitle translation does not need hidden chain-of-thought.
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_lilac_anime_data_subtitle_translation_localai_LocalAiNative_nativeTranslateAdvanced(
-        JNIEnv * env, jclass, jobjectArray roles, jobjectArray contents, jstring chat_template, jboolean use_chat_template, jboolean add_generation_prompt, jint max_tokens, jfloat temperature, jfloat top_p, jint top_k, jfloat repetition_penalty, jint repeat_last_n, jfloat min_p, jfloat typical_p, jfloat frequency_penalty, jfloat presence_penalty, jint seed, jboolean thinking_enabled) {
+        JNIEnv * env, jclass, jobjectArray roles, jobjectArray contents, jstring chat_template, jboolean use_chat_template, jboolean add_generation_prompt, jint max_tokens, jfloat temperature, jfloat top_p, jint top_k, jfloat repetition_penalty, jint repeat_last_n, jfloat min_p, jfloat typical_p, jfloat frequency_penalty, jfloat presence_penalty, jint seed, jint thinking_mode) {
     std::lock_guard<std::mutex> guard(g_mutex);
     if (!roles || !contents || !chat_template) return env->NewStringUTF("");
 
@@ -622,10 +661,9 @@ Java_com_lilac_anime_data_subtitle_translation_localai_LocalAiNative_nativeTrans
         if (content_obj) env->DeleteLocalRef(content_obj);
     }
 
-    const bool thinkingEnabled = thinking_enabled == JNI_TRUE;
-    const std::string effectiveTemplate = use_chat_template == JNI_TRUE
-        ? force_template_thinking(tmpl, thinkingEnabled)
-        : std::string(tmpl);
+    const int effectiveThinkingMode = FORCE_REASONING_OFF ? 2 : static_cast<int>(thinking_mode);
+    LOGI("REASONING_FORCE_OFF requested_mode=%d effective_mode=off", static_cast<int>(thinking_mode));
+    const std::string effectiveTemplate = std::string(tmpl);
 
     FormattedPrompt formatted;
     if (use_chat_template == JNI_TRUE) {
@@ -633,7 +671,8 @@ Java_com_lilac_anime_data_subtitle_translation_localai_LocalAiNative_nativeTrans
             role_strings,
             content_strings,
             effectiveTemplate,
-            add_generation_prompt == JNI_TRUE
+            add_generation_prompt == JNI_TRUE,
+            effectiveThinkingMode
         );
     } else {
         formatted.text = content_strings.back();
@@ -643,26 +682,10 @@ Java_com_lilac_anime_data_subtitle_translation_localai_LocalAiNative_nativeTrans
     env->ReleaseStringUTFChars(chat_template, tmpl);
     if (formatted.text.empty()) return env->NewStringUTF("");
 
-    if (!thinkingEnabled && use_chat_template == JNI_TRUE) {
-        const size_t tailStart = formatted.text.size() > 160 ? formatted.text.size() - 160 : 0;
-        std::string tail = formatted.text.substr(tailStart);
-        std::replace(tail.begin(), tail.end(), '\n', '|');
-        LOGI("THINKING_OFF_RENDERED_TAIL %s", tail.c_str());
-    }
-
-    LOGI("PROMPT_FORMAT mode=%s messages=%d add_generation_prompt=%s thinking=%s chars=%zu addSpecial=%s",
+    LOGI("PROMPT_FORMAT mode=%s messages=%d add_generation_prompt=%s chars=%zu addSpecial=%s",
          use_chat_template == JNI_TRUE ? "chat" : "completion",
          static_cast<int>(role_count),
          add_generation_prompt == JNI_TRUE ? "true" : "false",
-         thinkingEnabled ? "on" : "off",
-         formatted.text.size(),
-         formatted.add_special ? "true" : "false");
-
-    LOGI("PROMPT_FORMAT_RAW mode=%s messages=%d add_generation_prompt=%s thinking=%s chars=%zu addSpecial=%s",
-         use_chat_template == JNI_TRUE ? "chat" : "completion",
-         static_cast<int>(role_count),
-         add_generation_prompt == JNI_TRUE ? "true" : "false",
-         thinkingEnabled ? "on" : "off",
          formatted.text.size(),
          formatted.add_special ? "true" : "false");
 
@@ -675,7 +698,7 @@ Java_com_lilac_anime_data_subtitle_translation_localai_LocalAiNative_nativeTrans
         JNIEnv * env, jclass, jobjectArray roles, jobjectArray contents, jstring chat_template, jboolean add_generation_prompt, jint max_tokens, jfloat temperature, jfloat top_p, jint top_k, jfloat repetition_penalty) {
     return Java_com_lilac_anime_data_subtitle_translation_localai_LocalAiNative_nativeTranslateAdvanced(
         env, nullptr, roles, contents, chat_template, JNI_TRUE, add_generation_prompt, max_tokens,
-        temperature, top_p, top_k, repetition_penalty, 64, 0.0f, 1.0f, 0.0f, 0.0f, 1234, JNI_FALSE);
+        temperature, top_p, top_k, repetition_penalty, 64, 0.0f, 1.0f, 0.0f, 0.0f, 1234, 0);
 }
 
 extern "C" JNIEXPORT void JNICALL

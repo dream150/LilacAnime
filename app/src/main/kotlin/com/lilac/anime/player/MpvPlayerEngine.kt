@@ -444,6 +444,31 @@ class MpvPlayerEngine(private val context: Context) {
     }
 
     /** Replace only the currently selected external subtitle; video playback is untouched. */
+    /** Update a realtime-generated subtitle without removing the current track first.
+     * If the generated file is the same track, reload it in place to avoid the blank
+     * frame caused by sub-remove -> sub-add.
+     */
+    fun updateRealtimeSubtitleTrack(path: String?) {
+        val value = path?.takeIf { it.isNotBlank() } ?: return
+        val sub = if (value.startsWith("http://", true) || value.startsWith("https://", true)) {
+            value
+        } else {
+            File(value.removePrefix("file://")).absolutePath
+        }
+        val current = currentSubtitlePath?.removePrefix("file://")?.let { File(it).absolutePath }
+        if (current != null && current == sub) {
+            runCatching {
+                mpv.command(arrayOf("sub-reload"))
+                mpv.setPropertyBoolean("sub-visibility", true)
+                Log.d(TAG, "REALTIME_SUB_RELOAD path=$sub")
+            }.onFailure {
+                Log.w(TAG, "REALTIME_SUB_RELOAD_FAILED path=$sub", it)
+            }
+            return
+        }
+        replaceSubtitleTrack(sub)
+    }
+
     fun replaceSubtitleTrack(path: String?) {
         val value = path?.takeIf { it.isNotBlank() } ?: return
         val sub = if (value.startsWith("http://", true) || value.startsWith("https://", true)) {
