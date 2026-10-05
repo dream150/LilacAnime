@@ -104,7 +104,21 @@ class AnimeRepository {
                 }
                 consecutiveFailures = 0
                 page.forEach { result[it.id] = it }
-                emit(result.values.toList())
+                val accumulated = result.values.toList()
+                emit(accumulated)
+                // Persist each completed page immediately. This makes the
+                // catalog usable after process death while the remaining pages
+                // are still being fetched.
+                runCatching {
+                    OfflineStore.mergeAnimeListCache(
+                        AppContextHolder.context,
+                        page,
+                        source = "reanime",
+                        markFresh = false
+                    )
+                }.onFailure {
+                    android.util.Log.w("ReAnime", "PAGE_CACHE_WRITE_FAILED offset=$offset", it)
+                }
                 if (page.size < 36) break
                 offset += 36
                 kotlinx.coroutines.delay(150L)
@@ -134,6 +148,73 @@ class AnimeRepository {
             kotlinx.coroutines.delay(100L)
         }
     }.flowOn(Dispatchers.IO)
+
+    /**
+     * Re:Anime's lightweight catalog refresh. The API is newest-first, so a
+     * 36-item page scan is normally enough to discover newly added titles.
+     * Continue while pages contain new IDs; once a page is entirely composed
+     * of cached IDs, the older part of the catalog is already synchronized.
+     */
+    suspend fun refreshReAnimeCatalogIncremental(
+        cachedIds: Set<String>,
+        maxPages: Int = 20
+    ): List<Anime> = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val discovered = LinkedHashMap<String, Anime>()
+        var offset = 0
+        var unchangedPages = 0
+
+        repeat(maxPages) {
+            val page = try {
+                android.util.Log.d(
+                    "ReAnime",
+                    "INCREMENTAL_CATALOG_REQUEST offset=$offset limit=36"
+                )
+                ReAnimeParser.parseAnimeApi(
+                    reAnimeClient.catalogAnime(limit = 36, offset = offset)
+                )
+            } catch (e: Exception) {
+                android.util.Log.w(
+                    "ReAnime",
+                    "INCREMENTAL_CATALOG_FAILED offset=$offset",
+                    e
+                )
+                return@withContext discovered.values.toList()
+            }
+
+            if (page.isEmpty()) return@withContext discovered.values.toList()
+
+            var newOnPage = false
+            page.forEach { anime ->
+                if (!cachedIds.contains(anime.id) && !discovered.containsKey(anime.id)) {
+                    discovered[anime.id] = anime
+                    newOnPage = true
+                }
+            }
+
+            android.util.Log.d(
+                "ReAnime",
+                "INCREMENTAL_CATALOG_PAGE offset=$offset size=${page.size} " +
+                    "new=${if (newOnPage) discovered.size else 0}"
+            )
+
+            if (newOnPage) {
+                unchangedPages = 0
+            } else {
+                unchangedPages++
+                if (unchangedPages >= 1) {
+                    return@withContext discovered.values.toList()
+                }
+            }
+
+            if (page.size < 36) {
+                return@withContext discovered.values.toList()
+            }
+            offset += 36
+            kotlinx.coroutines.delay(120L)
+        }
+
+        discovered.values.toList()
+    }
 
     suspend fun getLinkkfSchedule(categoryTagId: Int, limit: Int = 50): List<Anime> =
         kotlinx.coroutines.withContext(Dispatchers.IO) { linkkfApi.getSchedule(categoryTagId, limit) }

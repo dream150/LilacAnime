@@ -360,6 +360,32 @@ object OfflineStore {
         editor.apply()
     }
 
+    /**
+     * Merge a newly fetched catalog batch into the persisted catalog without
+     * replacing existing entries. The existing order is preserved and new
+     * entries are appended in the order returned by the source.
+     *
+     * Used by Re:Anime's incremental/background catalog loader so every page
+     * can become available even if the full crawl is still running.
+     */
+    suspend fun mergeAnimeListCache(
+        context: Context,
+        list: List<Anime>,
+        source: String = "linkkf",
+        markFresh: Boolean = false,
+        newFirst: Boolean = false
+    ) = withContext(Dispatchers.IO) {
+        if (list.isEmpty()) return@withContext
+        val existing = getSavedAnimeList(context, source)
+        val byId = LinkedHashMap<String, Anime>()
+        if (!newFirst) existing.forEach { byId[it.id] = it }
+        list.forEach { byId[it.id] = it }
+        if (newFirst) {
+            existing.forEach { if (!byId.containsKey(it.id)) byId[it.id] = it }
+        }
+        saveAnimeList(context, byId.values.toList(), source, markFresh)
+    }
+
     suspend fun getSavedAnimeList(context: Context, source: String = "linkkf"): List<Anime> = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val jsonString = prefs.getString("cached_anime_list_$source", null) ?: return@withContext emptyList()

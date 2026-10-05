@@ -149,5 +149,49 @@ object LocalAiModelManager {
         )
     }
 
+    suspend fun importFile(context: Context, sourceUri: android.net.Uri): LocalAiModel = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val displayName = resolver.query(
+            sourceUri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null, null, null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        } ?: "model.gguf"
+
+        if (!displayName.lowercase().endsWith(".gguf")) {
+            throw IOException("GGUF 모델 파일만 추가할 수 있습니다.")
+        }
+
+        val safeName = displayName.substringAfterLast('/')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .ifBlank { "model.gguf" }
+        val target = File(modelRoot(context), safeName)
+        val partial = File(modelRoot(context), "$safeName.importing")
+
+        resolver.openInputStream(sourceUri)?.use { input ->
+            partial.outputStream().buffered().use { output ->
+                input.copyTo(output, 1024 * 1024)
+            }
+        } ?: throw IOException("모델 파일을 읽을 수 없습니다.")
+
+        try {
+            if (!partial.isFile || partial.length() == 0L) throw IOException("모델 파일이 비어 있습니다.")
+            val inspection = GgufInspector.inspect(partial)
+            if (!inspection.valid) throw IOException("유효한 GGUF 모델이 아닙니다: ${inspection.error.orEmpty()}")
+            if (target.exists() && !target.delete()) throw IOException("기존 모델 파일을 교체할 수 없습니다.")
+            if (!partial.renameTo(target)) {
+                partial.copyTo(target, true)
+                partial.delete()
+            }
+            buildModel(
+                context, target, "local-import", target.nameWithoutExtension, inspection
+            )
+        } catch (t: Throwable) {
+            partial.delete()
+            throw t
+        }
+    }
+
     fun delete(context: Context, model: LocalAiModel): Boolean = File(model.localPath).delete()
 }

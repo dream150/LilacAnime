@@ -13,6 +13,7 @@ app|androidx.fragment:fragment-ktx:1.8.9|
 app|androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0|
 app|androidx.mediarouter:mediarouter:1.8.1|
 app|androidx.navigation:navigation-compose:2.9.4|
+app|androidx.work:work-runtime-ktx:2.10.2|
 app|com.google.android.gms:play-services-cast-framework:22.3.1|
 app|com.google.mlkit:translate:17.0.3|
 app|com.squareup.okhttp3:okhttp:4.12.0|

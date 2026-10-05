@@ -92,6 +92,15 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
     var prefetchAhead by remember(settings.aiPrefetchAhead) { mutableStateOf(settings.aiPrefetchAhead.toFloat()) }
     var translationImportMessage by remember { mutableStateOf<String?>(null) }
     var translationImportWorking by remember { mutableStateOf(false) }
+    fun refreshInstalled() {
+        scope.launch(Dispatchers.IO) {
+            val m = LocalAiModelManager.installed(context)
+            val r = LocalAiRuntimeManager.listInstalled(context)
+            withContext(Dispatchers.Main.immediate) { models = m; runtimes = r; loadingInstalled = false }
+        }
+    }
+    LaunchedEffect(Unit) { refreshInstalled() }
+
     val translationPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && !translationImportWorking) {
             scope.launch {
@@ -114,6 +123,18 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
             }
         }
     }
+    val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            message = "모델 파일 가져오는 중..."
+            runCatching { LocalAiModelManager.importFile(context, uri) }
+                .onSuccess {
+                    refreshInstalled()
+                    message = "모델을 추가했습니다: ${it.displayName}"
+                }
+                .onFailure { message = "모델 추가 실패: ${it.message.orEmpty()}" }
+        }
+    }
+
     val runtimePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             message = "runtime pack 설치 중..."
@@ -125,15 +146,6 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                 .onFailure { message = "runtime pack 설치 실패: ${it.message.orEmpty()}" }
         }
     }
-
-    fun refreshInstalled() {
-        scope.launch(Dispatchers.IO) {
-            val m = LocalAiModelManager.installed(context)
-            val r = LocalAiRuntimeManager.listInstalled(context)
-            withContext(Dispatchers.Main.immediate) { models = m; runtimes = r; loadingInstalled = false }
-        }
-    }
-    LaunchedEffect(Unit) { refreshInstalled() }
 
     AppScaffold(selected = "settings", onSelect = onNavigate) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState())) {
@@ -228,6 +240,7 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
             OutlinedTextField(value=repoQuery,onValueChange={repoQuery=it},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("검색어 또는 repo ID")})
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick={scope.launch { searching=true; runCatching { if(repoQuery.contains("/")){selectedRepo=repoQuery.trim(); LocalAiModelManager.listRepoFiles(selectedRepo!!)} else {repos=LocalAiModelManager.searchRepos(repoQuery);emptyList()} }.onSuccess{files=it}.onFailure{message="Hugging Face 조회 실패: ${it.message.orEmpty()}"};searching=false}},enabled=!searching&&repoQuery.isNotBlank(),modifier=Modifier.weight(1f)){Text(if(searching)"조회 중..." else "검색 / 조회")}
+                OutlinedButton(onClick={modelPicker.launch(arrayOf("application/octet-stream","application/x-gguf","*/*"))},modifier=Modifier.weight(1f)){Text("모델 파일 추가")}
                 OutlinedButton(onClick={runtimePicker.launch(arrayOf("application/zip","application/octet-stream","*/*"))},modifier=Modifier.weight(1f)){Text("Runtime 추가")}
             }
             repos.take(10).forEach { repo -> OutlinedButton(onClick={scope.launch{selectedRepo=repo.id;runCatching{LocalAiModelManager.listRepoFiles(repo.id)}.onSuccess{files=it}.onFailure{message="파일 목록 조회 실패: ${it.message.orEmpty()}"}}},modifier=Modifier.fillMaxWidth()){Text("${repo.id} · ${repo.downloads} downloads")}}

@@ -26,6 +26,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
+import android.os.SystemClock
 import dev.jdtech.mpv.MPVLib
 import dev.jdtech.mpv.MPVLib.MpvEvent
 import dev.jdtech.mpv.MPVLib.MpvFormat.MPV_FORMAT_DOUBLE
@@ -34,6 +35,13 @@ import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import kotlin.math.roundToInt
 import com.lilac.anime.data.subtitle.SubtitleAssetUtil
 
@@ -110,6 +118,9 @@ class MpvPlayerEngine(private val context: Context) {
      * The next `loadfile ... replace` will tear down the old media itself.
      */
     fun stopForEpisodeSwitch() {
+        realtimeReloadJob?.cancel()
+        realtimeReloadJob = null
+        realtimeReloadRequestedPath = null
         pendingSubtitlePath = null
         currentSubtitlePath = null
         currentSubtitleIsAss = false
@@ -132,6 +143,10 @@ class MpvPlayerEngine(private val context: Context) {
     private var pendingSubtitlePath: String? = null
     private var currentSubtitlePath: String? = null
     private var currentSubtitleIsAss: Boolean = false
+    private val realtimeReloadScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var realtimeReloadJob: Job? = null
+    private var realtimeReloadRequestedPath: String? = null
+    private var lastRealtimeReloadAt: Long = 0L
     private var playWhenLoaded: Boolean = false
     private var loadGeneration: Long = 0L
 
@@ -457,16 +472,37 @@ class MpvPlayerEngine(private val context: Context) {
         }
         val current = currentSubtitlePath?.removePrefix("file://")?.let { File(it).absolutePath }
         if (current != null && current == sub) {
-            runCatching {
-                mpv.command(arrayOf("sub-reload"))
-                mpv.setPropertyBoolean("sub-visibility", true)
-                Log.d(TAG, "REALTIME_SUB_RELOAD path=$sub")
-            }.onFailure {
-                Log.w(TAG, "REALTIME_SUB_RELOAD_FAILED path=$sub", it)
-            }
+            requestRealtimeSubtitleReload(sub)
             return
         }
         replaceSubtitleTrack(sub)
+    }
+
+    /**
+     * Coalesce realtime subtitle reloads. The translated subtitle file is updated
+     * in the background, but libmpv/libass must not re-read the whole file for
+     * every completed cue. If several requests arrive together, only the latest
+     * request causes one reload after a short debounce window.
+     */
+    private fun requestRealtimeSubtitleReload(path: String) {
+        realtimeReloadRequestedPath = path
+        realtimeReloadJob?.cancel()
+        realtimeReloadJob = realtimeReloadScope.launch {
+            delay(350L)
+            val requested = realtimeReloadRequestedPath ?: return@launch
+            val now = SystemClock.elapsedRealtime()
+            val wait = (500L - (now - lastRealtimeReloadAt)).coerceAtLeast(0L)
+            if (wait > 0L) delay(wait)
+            if (realtimeReloadRequestedPath != requested) return@launch
+            runCatching {
+                mpv.command(arrayOf("sub-reload"))
+                mpv.setPropertyBoolean("sub-visibility", true)
+                lastRealtimeReloadAt = SystemClock.elapsedRealtime()
+                Log.d(TAG, "REALTIME_SUB_RELOAD_COALESCED path=$requested")
+            }.onFailure {
+                Log.w(TAG, "REALTIME_SUB_RELOAD_FAILED path=$requested", it)
+            }
+        }
     }
 
     fun replaceSubtitleTrack(path: String?) {
@@ -728,6 +764,10 @@ class MpvPlayerEngine(private val context: Context) {
     }
 
     fun release() {
+        realtimeReloadJob?.cancel()
+        realtimeReloadJob = null
+        realtimeReloadRequestedPath = null
+        realtimeReloadScope.cancel()
         runCatching {
             mpv.removeObserver(observer)
             mpv.destroy()

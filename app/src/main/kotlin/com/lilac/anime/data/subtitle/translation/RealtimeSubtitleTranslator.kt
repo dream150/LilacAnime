@@ -29,6 +29,8 @@ class RealtimeSubtitleTranslator(private val context: Context) {
     private var sourceExt: String = ""
     private var translatedPath: String? = null
     private var worker: Job? = null
+    private var renderJob: Job? = null
+    private var renderScope: CoroutineScope? = null
     private var prefetchPositionMs: Long = 0L
     private var generation = 0
     private var subtitleVersion = 0L
@@ -50,6 +52,9 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             generation++
             worker?.cancel()
             worker = null
+            renderJob?.cancel()
+            renderJob = null
+            renderScope = scope
             cache.clear()
             sourcePath = file.absolutePath
             sourceContent = content
@@ -94,6 +99,9 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             generation++
             worker?.cancel()
             worker = null
+            renderJob?.cancel()
+            renderJob = null
+            renderScope = null
             cache.clear()
             cues = emptyList()
             sourcePath = null
@@ -206,8 +214,11 @@ class RealtimeSubtitleTranslator(private val context: Context) {
                         }
                     }
                 }
-                runCatching { rebuildTranslatedSubtitle() }
-                    .onFailure { Log.e("RealtimeSubtitleTranslator", "RENDER_TRANSLATED_FAILED", it) }
+                // Do not rebuild/write the entire subtitle file for every cue.
+                // Several background translations can complete close together;
+                // coalesce them into one render so playback never sees an IO/render
+                // operation for every subtitle cue.
+                scheduleTranslatedSubtitleRebuild(localGeneration)
             } catch (e: CancellationException) {
                 Log.d("RealtimeSubtitleTranslator", "PREFETCH_NEXT_CANCELLED cue=${cue.index}")
                 throw e
@@ -281,7 +292,21 @@ class RealtimeSubtitleTranslator(private val context: Context) {
 
     fun translatedSubtitlePath(): String? = translatedPath
 
-    private suspend fun rebuildTranslatedSubtitle() {
+    private fun scheduleTranslatedSubtitleRebuild(localGeneration: Int) {
+        val scope = renderScope ?: return
+        renderJob?.cancel()
+        renderJob = scope.launch(Dispatchers.IO) {
+            // Small debounce window: collect several completed translations into
+            // one file write/re-render instead of touching disk once per cue.
+            delay(350L)
+            if (localGeneration != lock.withLock { generation }) return@launch
+            runCatching { rebuildTranslatedSubtitle(localGeneration) }
+                .onFailure { Log.e("RealtimeSubtitleTranslator", "RENDER_TRANSLATED_FAILED", it) }
+        }
+    }
+
+    private suspend fun rebuildTranslatedSubtitle(localGeneration: Int) {
+        if (localGeneration != lock.withLock { generation }) return
         val content = lock.withLock { sourceContent } ?: return
         val ext = lock.withLock { sourceExt }
         val snapshot = lock.withLock { cues }
