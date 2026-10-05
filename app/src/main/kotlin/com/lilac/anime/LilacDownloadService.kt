@@ -465,6 +465,12 @@ class LilacDownloadService : Service() {
         episodeNumber: Int,
         episodeKey: String
     ) {
+        // ACTION_REMOVE marks the key before cancelling the coroutine. A network
+        // callback can still return once during cancellation; never let that
+        // late callback resurrect the job as DOWNLOADING.
+        synchronized(lock) {
+            if (cancelledForRemoval.contains(key)) return
+        }
         val old = MpvOfflineStore.findStatus(applicationContext, key)
         MpvOfflineStore.saveStatus(
             applicationContext,
@@ -501,6 +507,10 @@ class LilacDownloadService : Service() {
         flixCloudPk: String? = null,
         streamHeaders: String? = null
     ) {
+        // Do not write a terminal/paused state after an explicit removal.
+        synchronized(lock) {
+            if (cancelledForRemoval.contains(key)) return
+        }
         val old = MpvOfflineStore.findStatus(applicationContext, key)
         MpvOfflineStore.saveStatus(
             applicationContext,
@@ -527,12 +537,28 @@ class LilacDownloadService : Service() {
         val animeId = intent.getStringExtra(EXTRA_ANIME_ID) ?: return
         val episodeId = intent.getStringExtra(EXTRA_EPISODE_ID) ?: return
         val key = "$animeId::$episodeId"
+
+        // Mark the job as cancelled before touching the coroutine. The progress
+        // tracker runs independently and can otherwise observe the old
+        // downloading/queued state for one more tick, making the UI appear to
+        // require a second tap. CANCELLED is also intentionally not recovered
+        // when the service restarts.
+        // Block all late progress/state writes before changing the persisted state.
+        // This closes the small race where the first cancel tap was followed by a
+        // downloader callback that wrote DOWNLOADING again.
         synchronized(lock) {
-            jobs.remove(key)?.let {
-                cancelledForRemoval += key
-                it.cancel()
-            }
+            cancelledForRemoval += key
+            jobs.remove(key)?.cancel()
         }
+
+        val old = MpvOfflineStore.findStatus(applicationContext, key)
+        if (old != null) {
+            MpvOfflineStore.saveStatus(
+                applicationContext,
+                old.copy(state = STATE_CANCELLED, error = null)
+            )
+        }
+
         MpvOfflineStore.delete(applicationContext, animeId, episodeId)
         publishSummary()
         maybeStopService()
@@ -633,6 +659,7 @@ class LilacDownloadService : Service() {
         private const val STATE_DOWNLOADING = "downloading"
         private const val STATE_PAUSED = "paused"
         private const val STATE_FAILED = "failed"
+        private const val STATE_CANCELLED = "cancelled"
         private const val STATE_COMPLETED = "completed"
     }
 }

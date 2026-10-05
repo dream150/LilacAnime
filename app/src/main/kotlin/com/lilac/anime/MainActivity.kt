@@ -114,6 +114,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
+import com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -379,6 +380,12 @@ class MainActivity : FragmentActivity() {
             LaunchedEffect(Unit) {
                 viewModel.monitorNetwork(context)
                 viewModel.loadAnime(context)
+                // Start the local AI session in the background while the home screen is
+                // becoming usable. Detail/player sessions reuse this already-loaded model.
+                launch(Dispatchers.IO) {
+                    runCatching { LocalAiTranslationRuntime.warmForAnime(context, "__home__") }
+                        .onFailure { Log.w("LocalAiPreload", "HOME_PRELOAD_FAILED", it) }
+                }
 
                 val release = GithubReleaseChecker.check(context)
 

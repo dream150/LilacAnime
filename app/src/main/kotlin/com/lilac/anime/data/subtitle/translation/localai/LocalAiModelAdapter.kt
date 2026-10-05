@@ -158,7 +158,7 @@ object GemmaModelAdapter : LocalAiModelAdapter {
     override fun cleanOutput(output: String): String? {
         val cleaned = output
             .replace(Regex("(?is)<think>.*?</think>"), "")
-            .replace(Regex("(?is)<\\|think\\|>.*?<\\|channel\\|>"), "")
+            .replace(Regex("""(?is)<\|think\|>.*?<\|channel\|>"""), "")
             .trim()
         return cleaned.takeIf { it.isNotBlank() }
     }

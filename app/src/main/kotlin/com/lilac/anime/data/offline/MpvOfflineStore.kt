@@ -124,11 +124,33 @@ object MpvOfflineStore {
         status.referer?.let { obj.put("referer", it) }
         status.flixCloudPk?.let { obj.put("flixCloudPk", it) }
         status.streamHeaders?.let { obj.put("streamHeaders", it) }
+        // A remove/cancel request can delete the episode directory concurrently
+        // with a cancellation-state write. Re-create the directory immediately
+        // before opening the temp file so a transient ENOENT cannot crash the
+        // download service.
+        if (!dir.exists() && !dir.mkdirs() && !dir.isDirectory) {
+            android.util.Log.w("MpvOfflineStore", "STATUS_DIR_CREATE_FAILED path=${dir.absolutePath}")
+            return
+        }
         val temp = File(dir, "$META.tmp")
-        temp.writeText(obj.toString(), Charsets.UTF_8)
+        runCatching {
+            temp.writeText(obj.toString(), Charsets.UTF_8)
+        }.onFailure { first ->
+            // The directory may have been removed by ACTION_REMOVE between
+            // mkdirs() and writeText(). Re-create it once and retry.
+            if (!dir.exists()) dir.mkdirs()
+            runCatching {
+                temp.writeText(obj.toString(), Charsets.UTF_8)
+            }.getOrElse { second ->
+                android.util.Log.w("MpvOfflineStore", "STATUS_WRITE_SKIPPED path=${temp.absolutePath}", second)
+                return
+            }
+        }
         if (!temp.renameTo(File(dir, META))) {
             File(dir, META).delete()
-            check(temp.renameTo(File(dir, META))) { "다운로드 상태 저장 실패" }
+            if (!temp.renameTo(File(dir, META))) {
+                android.util.Log.w("MpvOfflineStore", "STATUS_RENAME_SKIPPED path=${dir.absolutePath}")
+            }
         }
     }
 

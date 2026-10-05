@@ -98,7 +98,8 @@ internal object LocalAiTranslationRuntime {
     data class SubtitleContext(val source: String, val translation: String?)
 
     val DEFAULT_SYSTEM_PROMPT =
-        "너는 애니메이션 자막 번역가야. 이름은 번역없이 발음만 한국어로 쓰고, 주어진 문맥들을 참고해서, 번역 할 일본어 문장만 추가설명 없이 한국어 문장으로 번역해서 그것만 출력해."
+        "너는 애니메이션 자막 번역가야. 주어진 문맥들을 참고해서 맨 아래 일본어 문장만 추가설명 없이 한국어 문장 그대로 번역해. 이름은 발음 그대로 써줘."
+
     /** Reasoning preference exposed to model adapters. Each adapter decides how it is implemented. */
     const val THINKING_AUTO = "auto"
     const val THINKING_ON = "on"
@@ -111,7 +112,6 @@ internal object LocalAiTranslationRuntime {
 이후 맥락
 {future_context}
 
-번역해야 할 문장
 {source_text}
 """.trimIndent()
 
@@ -119,6 +119,50 @@ internal object LocalAiTranslationRuntime {
     private var sessionModel: LocalAiModel? = null
     private var sessionModelId: String? = null
     private var sessionChatTemplate: String? = null
+    private var persistentAnimeId: String? = null
+
+    suspend fun warmForAnime(context: Context, animeId: String?) = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val requested = animeId?.takeIf { it.isNotBlank() }
+            if (sessionRuntime != null && persistentAnimeId == requested) return@withLock
+            if (sessionRuntime != null) {
+                LocalAiNative.release()
+                sessionRuntime = null
+                sessionModel = null
+                sessionModelId = null
+                sessionChatTemplate = null
+            }
+            val model = selectModel(context)
+            val runtime = RuntimeRegistry.select(context, model)
+                ?: throw IOException("GPU/NPU runtime이 설치되어 있지 않거나 이 GGUF와 호환되지 않습니다.")
+            if (!LocalAiNative.load(context, runtime, model.localPath)) {
+                throw IOException("GPU/NPU runtime 초기화 실패: ${LocalAiNative.error()?.message.orEmpty()}")
+            }
+            sessionRuntime = runtime
+            sessionModel = model
+            sessionModelId = model.id
+            sessionChatTemplate = model.chatTemplate
+            persistentAnimeId = requested
+            Log.i(TAG, "PERSISTENT_SESSION_START anime=${requested.orEmpty()} runtime=${runtime.id} model=${model.displayName}")
+        }
+    }
+
+    suspend fun clearPersistentSession(animeId: String? = null) = withContext(Dispatchers.IO) {
+        lock.withLock {
+            if (animeId != null && persistentAnimeId != animeId) return@withLock
+            if (sessionRuntime == null) {
+                persistentAnimeId = null
+                return@withLock
+            }
+            LocalAiNative.release()
+            sessionRuntime = null
+            sessionModel = null
+            sessionModelId = null
+            sessionChatTemplate = null
+            persistentAnimeId = null
+            Log.i(TAG, "PERSISTENT_SESSION_END")
+        }
+    }
 
     suspend fun beginSession(context: Context) = withContext(Dispatchers.IO) {
         lock.withLock {
@@ -140,11 +184,16 @@ internal object LocalAiTranslationRuntime {
     suspend fun endSession() = withContext(Dispatchers.IO) {
         lock.withLock {
             if (sessionRuntime == null) return@withLock
+            if (persistentAnimeId != null) {
+                Log.i(TAG, "SESSION_END_SKIPPED persistentAnime=${persistentAnimeId.orEmpty()}")
+                return@withLock
+            }
             LocalAiNative.release()
             sessionRuntime = null
             sessionModel = null
             sessionModelId = null
             sessionChatTemplate = null
+            persistentAnimeId = null
             Log.i(TAG, "SESSION_END")
         }
     }

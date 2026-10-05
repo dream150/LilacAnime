@@ -32,6 +32,8 @@ import java.util.concurrent.TimeUnit
  * 선택한다. 문서 페이지를 열거나 <h1>을 읽지는 않는다.
  */
 object NamuWikiTitleResolver {
+    fun isHangulTitle(value: String): Boolean = containsHangul(value)
+
     private const val TAG = "NamuWikiTitle"
     private const val PREFS = "namuwiki_title_cache"
     private const val CACHE_VERSION = 9

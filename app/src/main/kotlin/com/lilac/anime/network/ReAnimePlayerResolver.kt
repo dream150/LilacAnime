@@ -47,7 +47,7 @@ object ReAnimePlayerResolver {
         val flixCloudPk: String? = null
     )
 
-    suspend fun resolve(context: Context, episode: Episode): Result {
+    suspend fun resolve(context: Context, episode: Episode, anilistId: Int? = null): Result {
         val page = episode.videoUrl.orEmpty()
         val parsed = runCatching { Uri.parse(page) }.getOrNull()
         val path = parsed?.path.orEmpty()
@@ -67,7 +67,7 @@ object ReAnimePlayerResolver {
         // Android main thread. The WebView fallback itself posts all WebView work
         // back to the main thread internally.
         val flixUrl = withContext(Dispatchers.IO) {
-            findFlixUrl(slug, ep)
+            findFlixUrl(slug, ep, anilistId)
         } ?: findFlixUrlFromWatchPage(context, pageUrl)
             ?: return Result(null, null, null)
         android.util.Log.d(TAG, "FLIX_URL episode=$ep url=$flixUrl")
@@ -171,9 +171,33 @@ object ReAnimePlayerResolver {
             }
         }
 
-    private fun findFlixUrl(slug: String, episode: Int): String? {
-        // Current Re:ANIME exposes the episode links from /api/watch/{slug}/{ep}.
-        // /api/flix/{anilist}/{ep} is kept as a fallback for older responses.
+    private fun findFlixUrl(slug: String, episode: Int, suppliedAnilistId: Int? = null): String? {
+        // Re:ANIME's current streaming path resolves the FlixCloud server from
+        // /api/flix/{anilist}/{episode}. The /api/watch/{slug}/{episode} endpoint
+        // is not reliable for every title and can return 404 even when streaming
+        // works normally. Offline download must therefore use the same server
+        // lookup first, without changing StreamUrlExtractor.
+        suppliedAnilistId?.takeIf { it > 0 }?.let { anilist ->
+            val flix = getJson("$BASE/api/flix/$anilist/$episode")
+            val servers = flix?.optJSONArray("servers")
+            val candidates = mutableListOf<Pair<String, String>>()
+            if (servers != null) {
+                for (i in 0 until servers.length()) {
+                    val item = servers.optJSONObject(i) ?: continue
+                    val url = item.optString("dataLink").trim()
+                    if (url.startsWith("https://flixcloud.cc/e/", true)) {
+                        candidates += item.optString("serverName").trim() to url
+                    }
+                }
+            }
+            pickServer(candidates)?.let { selected ->
+                android.util.Log.d(TAG, "FLIX_API_RESOLVED episode=$episode anilist=$anilist url=$selected")
+                return selected
+            }
+        }
+
+        // Keep the existing watch endpoint as a fallback when an AniList ID is
+        // unavailable or the direct /api/flix lookup has no usable server.
         val watch = getJson("$BASE/api/watch/${Uri.encode(slug)}/$episode")
         val links = watch?.optJSONArray("episode_links")
         val candidates = mutableListOf<Pair<String, String>>()

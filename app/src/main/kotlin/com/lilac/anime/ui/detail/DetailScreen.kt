@@ -7,6 +7,7 @@ import com.lilac.anime.core.update.*
 import com.lilac.anime.data.matcher.*
 import com.lilac.anime.data.offline.*
 import com.lilac.anime.data.subtitle.*
+import com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime
 import com.lilac.anime.network.*
 import com.lilac.anime.player.*
 import com.lilac.anime.ui.*
@@ -104,6 +105,45 @@ private suspend fun findLocalKairanAssSubtitle(
  * saving the selected path is not enough to make every discovered file
  * available offline.
  */
+private data class OfflineSubtitleAssets(
+    val jimakuPaths: List<String>,
+    val reAnimePaths: List<String>
+)
+
+private suspend fun downloadAllOfflineSubtitleSources(
+    context: Context,
+    anime: Anime,
+    episode: Episode,
+    linkkfVttUrl: String?,
+    linkkfReferer: String?
+): OfflineSubtitleAssets = withContext(Dispatchers.IO) {
+    val jimakuPaths = mutableListOf<String>()
+    val reAnimePaths = mutableListOf<String>()
+
+    runCatching {
+        val options = JimakuSubtitleService.listEpisodeSubtitles(context, anime, episode.number, episode.displayNumber)
+        for (option in options) {
+            JimakuSubtitleService.downloadSelectedSubtitle(
+                context, anime, episode.number, episode.displayNumber, option
+            )?.let { jimakuPaths += it }
+        }
+        android.util.Log.d("OfflineDownload", "JIMAKU_ALL episode=${episode.displayNumber} count=${jimakuPaths.size}")
+    }.onFailure { android.util.Log.w("OfflineDownload", "JIMAKU_ALL_FAILED episode=${episode.displayNumber}", it) }
+
+    runCatching {
+        val resolved = com.lilac.anime.network.ReAnimePlayerResolver.resolve(context, episode, anime.anilistId)
+        resolved.subtitleUrl?.takeIf { it.isNotBlank() }?.let { url ->
+            downloadSubtitleFile(
+                context = context, animeId = anime.id, episodeNumber = episode.number,
+                episodeKey = episode.displayNumber, vttUrl = url,
+                referer = resolved.subtitleReferer ?: resolved.referer, source = "reanime"
+            )?.let { reAnimePaths += it }
+        }
+    }.onFailure { android.util.Log.w("OfflineDownload", "REANIME_SUBTITLE_FAILED episode=${episode.displayNumber}", it) }
+
+    OfflineSubtitleAssets(jimakuPaths.distinct(), reAnimePaths.distinct())
+}
+
 private suspend fun persistOfflineSubtitleAssets(
     context: Context,
     animeId: String,
@@ -112,7 +152,9 @@ private suspend fun persistOfflineSubtitleAssets(
     episodeNumber: Int,
     linkkfPath: String?,
     kairanPath: String?,
-    csoraPath: String?
+    csoraPath: String?,
+    jimakuPaths: Collection<String> = emptyList(),
+    reAnimePaths: Collection<String> = emptyList()
 ) = withContext(Dispatchers.IO) {
     /**
      * Provider services use a title-based cache directory for Kairan/Csora,
@@ -128,7 +170,9 @@ private suspend fun persistOfflineSubtitleAssets(
     val providerRoots = mapOf(
         "linkkf" to context.filesDir.resolve("linkkf_subtitles"),
         "kairan" to context.filesDir.resolve("kairan_subtitles").resolve(titleKey).resolve(safeEpisodeKey(episodeKey)),
-        "csora" to context.filesDir.resolve("csora_subtitles").resolve(titleKey)
+        "csora" to context.filesDir.resolve("csora_subtitles").resolve(titleKey),
+        "jimaku" to context.filesDir.resolve("jimaku_subtitles"),
+        "reanime" to context.filesDir.resolve("reanime_subtitles")
     )
     val primaries = mapOf(
         "linkkf" to linkkfPath,
@@ -155,6 +199,8 @@ private suspend fun persistOfflineSubtitleAssets(
     for ((source, root) in providerRoots) {
         try {
             val discovered = linkedSetOf<String>()
+            if (source == "jimaku") discovered += jimakuPaths.filter { File(it).isFile }
+            if (source == "reanime") discovered += reAnimePaths.filter { File(it).isFile }
 
             // First include everything already registered in the provider's
             // own SubtitleStore key. This also preserves older installations.
@@ -289,6 +335,13 @@ fun DetailScreen(
         newestFirst = OfflineStore.getEpisodeSortOrder(context, currentAnime.id)
         episodePage = 0
         episodeQuery = ""
+    }
+
+    LaunchedEffect(currentAnime.id) {
+        launch(Dispatchers.IO) {
+            runCatching { LocalAiTranslationRuntime.warmForAnime(context, currentAnime.id) }
+                .onFailure { Log.w("LocalAiPreload", "DETAIL_PRELOAD_FAILED anime=${currentAnime.id}", it) }
+        }
     }
 
     LaunchedEffect(currentAnime.id, vm.sourceRevision) {
@@ -526,7 +579,7 @@ fun DetailScreen(
             var kairanPath: String? = kairanReady
             if (kairanPath == null) {
                 kairanPath = try {
-                    when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                    when (val result = KairanSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
                         is KairanSubtitleResult.DirectFile -> result.path
                         null -> null
                     }
@@ -539,7 +592,7 @@ fun DetailScreen(
             var csoraPath = csoraReady
             if (csoraPath == null) {
                 csoraPath = try {
-                    when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                    when (val result = CsoraSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
                         is KairanSubtitleResult.DirectFile -> result.path
                         null -> null
                     }
@@ -607,7 +660,7 @@ fun DetailScreen(
             Toast.makeText(context, "${ep.displayNumber}화 다운로드 준비 중...", Toast.LENGTH_SHORT).show()
             scope.launch(Dispatchers.Main) {
                 try {
-                    val resolved = ReAnimePlayerResolver.resolve(context, ep)
+                    val resolved = ReAnimePlayerResolver.resolve(context, ep, currentAnime.anilistId)
                     val streamUrl = resolved.m3u8Url
                     if (streamUrl.isNullOrBlank()) {
                         Toast.makeText(context, "Re:ANIME 스트리밍 주소를 찾지 못했습니다.", Toast.LENGTH_SHORT).show()
@@ -621,11 +674,56 @@ fun DetailScreen(
                             episode = ep.copy(videoUrl = streamUrl, vttUrl = resolved.subtitleUrl.orEmpty())
                         )
                     }
+                    runCatching {
+                        val allSubtitleAssets = downloadAllOfflineSubtitleSources(
+                            context, currentAnime, ep.copy(videoUrl = ep.videoUrl), null, resolved.referer
+                        )
+                        persistOfflineSubtitleAssets(
+                            context = context, animeId = currentAnime.id, title = currentAnime.title,
+                            episodeKey = ep.displayNumber, episodeNumber = ep.number,
+                            linkkfPath = null, kairanPath = null, csoraPath = null,
+                            jimakuPaths = allSubtitleAssets.jimakuPaths,
+                            reAnimePaths = allSubtitleAssets.reAnimePaths
+                        )
+                    }.onFailure {
+                        Log.w("OfflineDownload", "REANIME_ALL_SUBTITLES_FAILED episode=${ep.displayNumber}", it)
+                    }
+                    // Re:ANIME streaming and offline use the same FlixCloud HLS material,
+                    // but the offline worker runs outside the WebView. Make sure the proxy
+                    // session receives the browser-equivalent headers even when Android's
+                    // WebView did not expose all request headers through shouldInterceptRequest.
+                    val offlineStreamHeaders = buildString {
+                        append(resolved.headers.orEmpty())
+                        fun addHeader(name: String, value: String?) {
+                            if (value.isNullOrBlank()) return
+                            val exists = lineSequence().any {
+                                it.substringBefore(':').trim().equals(name, ignoreCase = true)
+                            }
+                            if (!exists) {
+                                if (isNotEmpty()) append('\n')
+                                append(name).append(": ").append(value.trim())
+                            }
+                        }
+                        addHeader("Referer", resolved.referer)
+                        addHeader(
+                            "User-Agent",
+                            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
+                                "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+                        )
+                        addHeader("Origin", resolved.referer?.let {
+                            runCatching {
+                                val uri = java.net.URI(it)
+                                "${uri.scheme}://${uri.host}${if (uri.port > 0) ":${uri.port}" else ""}"
+                            }.getOrNull()
+                        })
+                    }.takeIf { it.isNotBlank() }
+
                     Log.i(
                         "OfflineDownload",
                         "REANIME_ENQUEUE episode=${ep.displayNumber} " +
                             "m3u8=${streamUrl.isNotBlank()} pkChars=${resolved.flixCloudPk?.length ?: 0} " +
-                            "referer=${resolved.referer?.take(80) ?: "<none>"}"
+                            "referer=${resolved.referer?.take(80) ?: "<none>"} " +
+                            "headers=${offlineStreamHeaders?.lineSequence()?.map { it.substringBefore(':') }?.joinToString(",").orEmpty()}"
                     )
                     startEpisodeDownload(
                         context = context,
@@ -637,7 +735,7 @@ fun DetailScreen(
                         subtitleUrl = resolved.subtitleUrl,
                         subtitleReferer = resolved.subtitleReferer ?: resolved.referer,
                         flixCloudPk = resolved.flixCloudPk,
-                        streamHeaders = resolved.headers
+                        streamHeaders = offlineStreamHeaders
                     )
                     Toast.makeText(context, "${ep.displayNumber}화 다운로드를 시작합니다.", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
@@ -723,7 +821,7 @@ fun DetailScreen(
                         null
                     }
                     val localKairanPath = try {
-                        when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                        when (val result = KairanSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
                             is KairanSubtitleResult.DirectFile -> result.path
                             null -> null
                         }
@@ -732,7 +830,7 @@ fun DetailScreen(
                         null
                     }
                     val localCsoraPath = try {
-                        when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                        when (val result = CsoraSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
                             is KairanSubtitleResult.DirectFile -> result.path
                             null -> null
                         }
@@ -740,10 +838,14 @@ fun DetailScreen(
                         Log.w("Csora", "OFFLINE_ASS_PRELOAD_FAILED episode=${ep.number}", e)
                         null
                     }
+                    val allSubtitleAssets = downloadAllOfflineSubtitleSources(
+                        context, currentAnime, ep, vttUrl, originalReferer
+                    )
                     persistOfflineSubtitleAssets(
                         context = context, animeId = currentAnime.id, title = currentAnime.title,
                         episodeKey = ep.displayNumber, episodeNumber = ep.number,
-                        linkkfPath = localLinkkfPath, kairanPath = localKairanPath, csoraPath = localCsoraPath
+                        linkkfPath = localLinkkfPath, kairanPath = localKairanPath, csoraPath = localCsoraPath,
+                        jimakuPaths = allSubtitleAssets.jimakuPaths, reAnimePaths = allSubtitleAssets.reAnimePaths
                     )
 
                     if (localLinkkfPath != null) {
@@ -838,7 +940,7 @@ fun DetailScreen(
                                 null
                             }
                             val localKairanPath = try {
-                                when (val result = KairanSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                                when (val result = KairanSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
                                     is KairanSubtitleResult.DirectFile -> result.path
                                     null -> null
                                 }
@@ -847,7 +949,7 @@ fun DetailScreen(
                                 null
                             }
                             val localCsoraPath = try {
-                                when (val result = CsoraSubtitleService.findSubtitle(context, currentAnime.title, ep.number, ep.displayNumber)) {
+                                when (val result = CsoraSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
                                     is KairanSubtitleResult.DirectFile -> result.path
                                     null -> null
                                 }
@@ -855,10 +957,14 @@ fun DetailScreen(
                                 Log.w("Csora", "OFFLINE_ASS_PRELOAD_FAILED episode=${ep.number}", e)
                                 null
                             }
+                            val allSubtitleAssets = downloadAllOfflineSubtitleSources(
+                                context, currentAnime, ep, vttUrl, originalReferer
+                            )
                             persistOfflineSubtitleAssets(
                                 context = context, animeId = currentAnime.id, title = currentAnime.title,
                                 episodeKey = ep.displayNumber, episodeNumber = ep.number,
-                                linkkfPath = localLinkkfPath, kairanPath = localKairanPath, csoraPath = localCsoraPath
+                                linkkfPath = localLinkkfPath, kairanPath = localKairanPath, csoraPath = localCsoraPath,
+                                jimakuPaths = allSubtitleAssets.jimakuPaths, reAnimePaths = allSubtitleAssets.reAnimePaths
                             )
 
                             if (localLinkkfPath != null) {
