@@ -70,6 +70,10 @@ object LocalAiRuntimeManager {
                 mkdirs()
             }
             staging.copyRecursively(finalDir, overwrite = true)
+            // Files extracted from a ZIP are normally created as writable (0644/0755).
+            // Android warns when native libraries are loaded directly from an app-private
+            // writable directory. Native binaries only need read/execute permission.
+            normalizeRuntimePermissions(finalDir)
             staging.deleteRecursively()
             Log.i(TAG, "RUNTIME_INSTALLED id=${pack.id} version=${pack.version}")
             RuntimePack.fromJson(JSONObject(File(finalDir, "runtime.json").readText()), finalDir.absolutePath)
@@ -77,5 +81,29 @@ object LocalAiRuntimeManager {
             staging.deleteRecursively()
             throw t
         }
+    }
+
+    /**
+     * Make native runtime payloads read/execute-only. This is also called by the
+     * native loader for runtimes installed by an older app version.
+     */
+    fun normalizeRuntimePermissions(directory: File) {
+        if (!directory.isDirectory) return
+        directory.walkTopDown()
+            .filter { it.isFile }
+            .forEach { file ->
+                val native = file.extension.equals("so", true) ||
+                    file.name == "llama-server"
+                if (native) {
+                    // 0555: owner/group/other can read and execute, nobody can write.
+                    runCatching {
+                        file.setReadable(true, false)
+                        file.setWritable(false, false)
+                        file.setExecutable(true, false)
+                    }.onFailure {
+                        Log.w(TAG, "RUNTIME_PERMISSION_FIX_FAILED path=${file.absolutePath}", it)
+                    }
+                }
+            }
     }
 }

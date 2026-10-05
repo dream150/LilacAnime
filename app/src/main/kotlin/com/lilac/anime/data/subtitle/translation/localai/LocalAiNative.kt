@@ -68,6 +68,10 @@ internal object LocalAiNative {
         }
 
         return runCatching {
+            // Runtime packs may have been copied by an older build with writable native
+            // files. Repair permissions before System.load() so Android does not treat
+            // the native payload as a writable executable.
+            LocalAiRuntimeManager.normalizeRuntimePermissions(directory)
             loadRuntimeDependencies(directory, pack.nativeLibraries)
             System.load(bridge.absolutePath)
             Log.i(TAG, "JNI_BRIDGE_LOADED runtime=${runtime.id} path=${bridge.absolutePath}")

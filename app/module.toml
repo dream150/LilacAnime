@@ -43,7 +43,7 @@ minSdk = 26
 targetSdk = 37
 manifest = "src/main/AndroidManifest.xml"
 versionCode = 30
-versionName = "0.4.0"
+versionName = "0.4.1-alpha-1"
 isApplication = true
 manifestPlaceholders = []
 buildTypes = [{ name = "debug", debuggable = true, minifyEnabled = false, shrinkResources = false }, { name = "release", debuggable = false, minifyEnabled = false, shrinkResources = false, proguardFiles = ["proguard-android-optimize.txt", "proguard-rules.pro"] }]
