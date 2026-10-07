@@ -36,7 +36,7 @@ object TranslationManager {
         val p = createProvider(context, providerId)
         val prefs = context.getSharedPreferences("lilac_offline_store", Context.MODE_PRIVATE)
         val modelSignature = when (p.id) {
-            "gemini" -> prefs.getString("pref_gemini_model", "gemini-3.5-flash-lite")
+            "gemini" -> prefs.getString("pref_gemini_model", "gemini-2.5-flash")
             "openai" -> prefs.getString("pref_openai_model", "gpt-4.1-mini")
             "qwen" -> prefs.getString("pref_qwen_model", "qwen-plus")
             else -> null

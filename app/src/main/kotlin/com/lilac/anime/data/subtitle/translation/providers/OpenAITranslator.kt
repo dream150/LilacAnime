@@ -34,26 +34,87 @@ class OpenAITranslator(private val context: Context) : TranslationProvider {
     }
 
     private fun request(key: String, model: String, lines: List<String>, shape: Int): List<String> {
-        val instruction = "Translate Japanese anime subtitles into natural Korean. Preserve every <LILAC_N> marker exactly and in order. Keep each line concise. Return only translated lines with markers, no commentary."
-        val body = JSONObject().apply {
-            put("model", model)
-            put("store", false)
-            put("instructions", instruction)
-            put("input", CloudTranslationText.markedInput(lines))
-            if (shape == 1) put("text", JSONObject().put("format", JSONObject().put("type", "json_object")))
-        }.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-        val request = Request.Builder().url("https://api.openai.com/v1/responses").header("Authorization", "Bearer $key").post(body).build()
-        client.newCall(request).execute().use { response ->
+        val instruction = """
+            Translate Japanese anime subtitles into natural Korean.
+            Keep the meaning, speaker tone, names and honorifics natural.
+            Keep each subtitle concise.
+            Return exactly one translated item for every input item.
+            Do not add explanations.
+        """.trimIndent()
+
+        val itemSchema = JSONObject()
+            .put("type", "object")
+            .put(
+                "properties",
+                JSONObject()
+                    .put("i", JSONObject().put("type", "integer"))
+                    .put("t", JSONObject().put("type", "string"))
+            )
+            .put("required", org.json.JSONArray().put("i").put("t"))
+            .put("additionalProperties", false)
+
+        val linesSchema = JSONObject()
+            .put("type", "array")
+            .put("items", itemSchema)
+
+        val schema = JSONObject()
+            .put("type", "object")
+            .put("properties", JSONObject().put("lines", linesSchema))
+            .put("required", org.json.JSONArray().put("lines"))
+            .put("additionalProperties", false)
+
+        val bodyJson = JSONObject()
+            .put("model", model)
+            .put("store", false)
+            .put("instructions", instruction)
+            .put("input", CloudTranslationText.markedInput(lines))
+
+        when (shape) {
+            0 -> {
+                bodyJson.put(
+                    "text",
+                    JSONObject().put(
+                        "format",
+                        JSONObject()
+                            .put("type", "json_schema")
+                            .put("name", "subtitles")
+                            .put("strict", true)
+                            .put("schema", schema)
+                    )
+                )
+                if (model.matches(Regex("^(o\\d|gpt-5).*", RegexOption.IGNORE_CASE))) {
+                    bodyJson.put("reasoning", JSONObject().put("effort", "low"))
+                }
+            }
+            1 -> bodyJson.put("text", JSONObject().put("format", JSONObject().put("type", "json_object")))
+            // shape 2 deliberately has no response-format restriction, matching the
+            // desktop fallback for models that reject structured output.
+        }
+
+        val request = Request.Builder()
+            .url("https://api.openai.com/v1/responses")
+            .header("Authorization", "Bearer $key")
+            .post(bodyJson.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .build()
+
+        return client.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                val msg = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message").orEmpty() }.getOrDefault("")
-                if (response.code == 400 && shape == 0) return request(key, model, lines, 1)
+                val msg = runCatching {
+                    JSONObject(raw).optJSONObject("error")?.optString("message").orEmpty()
+                }.getOrDefault("")
+                if (response.code == 400 && shape < 2) {
+                    return request(key, model, lines, shape + 1)
+                }
                 error("OpenAI HTTP ${response.code}${if (msg.isNotBlank()) ": $msg" else ""}")
             }
+
             val root = JSONObject(raw)
             val text = root.optString("output_text").ifBlank { extractOutputText(root) }.trim()
-            if (text.isBlank()) error("OpenAI 응답에 번역 텍스트가 없습니다.")
-            return CloudTranslationText.parseMarked(text, lines)
+            if (text.isBlank()) {
+                error("OpenAI 응답에 번역 텍스트가 없습니다.")
+            }
+            return@use CloudTranslationText.parseMarked(text, lines)
         }
     }
 

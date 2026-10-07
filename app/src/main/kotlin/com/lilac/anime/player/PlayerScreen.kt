@@ -68,6 +68,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -150,11 +151,13 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
-    val engine = remember { MpvPlaybackManager.engine(context) }
+    // Foreground playback gets a fresh libmpv session on every PlayerScreen
+    // entry.  The only time the process-wide instance is intentionally reused is
+    // background-audio/PiP continuation.
+    var engine by remember {
+        mutableStateOf(MpvPlaybackManager.foregroundEngine(context))
+    }
 
-    // MpvPlaybackManager intentionally shares one libmpv instance. Re-arm it for
-    // every new PlayerScreen so a previous screen cannot leave a stopped/paused
-    // force-window or END_FILE suppression state behind.
     LaunchedEffect(Unit) {
         if (!MpvPlaybackManager.isBackgroundAudio) {
             runCatching { FlixCloudHlsProxy.clearSessions() }
@@ -452,11 +455,15 @@ fun PlayerScreen(
     fun switchEpisode(target: Episode) {
         if (target.id == currentEpisode.id) return
         playbackGeneration += 1
-        // Do not call engine.stop() here: it emits END_FILE and can race the
-        // new episode load. stopForEpisodeSwitch() resets playback state
-        // without sending an mpv stop command.
-        runCatching { engine.stopForEpisodeSwitch() }
+        // Never reuse the previous foreground libmpv session for a new episode.
+        // The same clean-session lifecycle that fixed offline re-entry is required
+        // for auto-next/manual episode changes as well.
+        val oldEngine = engine
+        runCatching { oldEngine.stopForEpisodeSwitch() }
+        runCatching { oldEngine.detachSurface() }
+        runCatching { MpvPlaybackManager.releaseForegroundEngine(oldEngine) }
         runCatching { FlixCloudHlsProxy.clearSessions() }
+        engine = MpvPlaybackManager.foregroundEngine(context)
         currentEpisode = target
         streamUrl = null
         streamHeaders = null
@@ -538,6 +545,7 @@ fun PlayerScreen(
             if (!MainActivity.isInPictureInPicture) {
                 runCatching { engine.stop() }
                 runCatching { engine.detachSurface() }
+                runCatching { MpvPlaybackManager.releaseForegroundEngine(engine) }
                 MainActivity.isVideoPlaying = false
             }
             if (host != null) {
@@ -1436,7 +1444,8 @@ fun PlayerScreen(
                 } else false
             }
     ) {
-        AndroidView(
+        key(engine) {
+            AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 MpvPlayerSurfaceView(ctx, engine).apply {
@@ -1467,11 +1476,13 @@ fun PlayerScreen(
                 view.seekSeconds = vm.playerSettings.doubleTapSeekSeconds.coerceAtLeast(0L)
             }
         )
+        }
 
         // Translated ASS events are rendered directly by libass in memory.
         // This view never becomes an mpv subtitle track and never causes
         // sub-add/sub-remove/sub-reload during translation.
-        AndroidView(
+        key(engine) {
+            AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 LibassTranslationOverlay(ctx).also { view ->
@@ -1499,6 +1510,7 @@ fun PlayerScreen(
                 view.sync(engine.currentPosition, engine.isPlaying)
             }
         )
+        }
 
         LaunchedEffect(isTv, controlsVisible, settingsOpen) {
             if (isTv) {

@@ -70,7 +70,7 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
     var tmdbMessage by remember { mutableStateOf<String?>(null) }
     val aiPrefs = remember { context.getSharedPreferences("lilac_offline_store", android.content.Context.MODE_PRIVATE) }
     val keyProviders = listOf("gemini" to "Gemini", "openai" to "OpenAI", "deepl" to "DeepL", "qwen" to "Qwen")
-    var geminiModel by remember { mutableStateOf(aiPrefs.getString("pref_gemini_model", "gemini-3.5-flash-lite") ?: "gemini-3.5-flash-lite") }
+    var geminiModel by remember { mutableStateOf(aiPrefs.getString("pref_gemini_model", "gemini-2.5-flash") ?: "gemini-2.5-flash") }
     var openAiModel by remember { mutableStateOf(aiPrefs.getString("pref_openai_model", "gpt-4.1-mini") ?: "gpt-4.1-mini") }
     var qwenModel by remember { mutableStateOf(aiPrefs.getString("pref_qwen_model", "qwen-plus") ?: "qwen-plus") }
     var qwenRegion by remember { mutableStateOf(aiPrefs.getString("pref_qwen_region", "international") ?: "international") }
@@ -500,7 +500,7 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
             }
             tmdbMessage?.let{Text(it,fontSize=11.sp)}
             Text("API 모델 이름", fontSize=14.sp, fontWeight=FontWeight.SemiBold)
-            OutlinedTextField(value=geminiModel,onValueChange={geminiModel=it;aiPrefs.edit().putString("pref_gemini_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("Gemini 모델")},supportingText={Text("기본값: gemini-3.5-flash-lite")})
+            OutlinedTextField(value=geminiModel,onValueChange={geminiModel=it;aiPrefs.edit().putString("pref_gemini_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("Gemini 모델")},supportingText={Text("기본값: gemini-2.5-flash")})
             OutlinedTextField(value=openAiModel,onValueChange={openAiModel=it;aiPrefs.edit().putString("pref_openai_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("OpenAI 모델")},supportingText={Text("기본값: gpt-4.1-mini")})
             OutlinedTextField(value=qwenModel,onValueChange={qwenModel=it;aiPrefs.edit().putString("pref_qwen_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("Qwen 모델")},supportingText={Text("기본값: qwen-plus")})
             Text("Qwen API 지역", fontSize=12.sp)
