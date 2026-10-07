@@ -99,7 +99,7 @@ internal object LocalAiTranslationRuntime {
 
     val DEFAULT_SYSTEM_PROMPT =
         "너는 애니메이션 자막 번역가야. 이름은 번역없이 발음만 한국어로 쓰고, 주어진 문맥들을 참고해서, 번역해야 할 일본어 문장만 추가설명 없이 한국어 문장으로 번역해서 그것만 출력해."
-    
+
     /** Reasoning preference exposed to model adapters. Each adapter decides how it is implemented. */
     const val THINKING_AUTO = "auto"
     const val THINKING_ON = "on"

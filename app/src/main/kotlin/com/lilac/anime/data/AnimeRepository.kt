@@ -33,6 +33,7 @@ class AnimeRepository {
     private val linkkfApi = LinkkfApiClient()
     private val animenosubClient = AnimenosubHttpClient()
     private val reAnimeClient = ReAnimeClient()
+    private val reAnimeHarClient = ReAnimeHarClient()
 
     companion object {
         private const val LINKKF_BASE_URL = LinkkfApiClient.WEB_BASE
@@ -49,7 +50,7 @@ class AnimeRepository {
                 val document = animenosubClient.getDocument(ANIMENOSUB_BASE_URL, ANIMENOSUB_BASE_URL + "/")
                 AnimenosubParser.parseAnimeList(document)
             }
-            "reanime" -> ReAnimeParser.parseAnimeApi(reAnimeClient.catalogAnime(36, 0))
+            "reanime" -> ReAnimeHarParser.parseSearch(reAnimeHarClient.search(limit = 36, offset = 0))
             else -> linkkfApi.getHome(page = 1, limit = 12)
         }
     }
@@ -83,41 +84,30 @@ class AnimeRepository {
             var consecutiveFailures = 0
             while (consecutiveFailures < 3) {
                 var page: List<Anime> = emptyList()
-                var lastError: Throwable? = null
                 repeat(3) { attempt ->
                     if (page.isNotEmpty()) return@repeat
                     try {
-                        android.util.Log.d("ReAnime", "CATALOG_REQUEST offset=$offset limit=36 attempt=${attempt + 1}")
-                        page = ReAnimeParser.parseAnimeApi(reAnimeClient.catalogAnime(limit = 36, offset = offset))
-                        android.util.Log.d("ReAnime", "CATALOG_PAGE offset=$offset size=${page.size}")
+                        android.util.Log.d("ReAnimeHAR", "CATALOG_SEARCH offset=$offset limit=36 attempt=${attempt + 1}")
+                        page = ReAnimeHarParser.parseSearch(
+                            reAnimeHarClient.search(limit = 36, offset = offset)
+                        )
                     } catch (e: Exception) {
-                        lastError = e
-                        android.util.Log.e("ReAnime", "CATALOG_FAILED offset=$offset attempt=${attempt + 1}", e)
+                        android.util.Log.e("ReAnimeHAR", "CATALOG_SEARCH_FAILED offset=$offset attempt=${attempt + 1}", e)
                         kotlinx.coroutines.delay(400L)
                     }
                 }
                 if (page.isEmpty()) {
                     consecutiveFailures++
-                    if (lastError != null) android.util.Log.e("ReAnime", "CATALOG_PAGE_EMPTY offset=$offset failures=$consecutiveFailures")
                     if (consecutiveFailures >= 3) break
                     continue
                 }
                 consecutiveFailures = 0
                 page.forEach { result[it.id] = it }
-                val accumulated = result.values.toList()
-                emit(accumulated)
-                // Persist each completed page immediately. This makes the
-                // catalog usable after process death while the remaining pages
-                // are still being fetched.
+                emit(result.values.toList())
                 runCatching {
                     OfflineStore.mergeAnimeListCache(
-                        AppContextHolder.context,
-                        page,
-                        source = "reanime",
-                        markFresh = false
+                        AppContextHolder.context, page, source = "reanime", markFresh = false
                     )
-                }.onFailure {
-                    android.util.Log.w("ReAnime", "PAGE_CACHE_WRITE_FAILED offset=$offset", it)
                 }
                 if (page.size < 36) break
                 offset += 36
@@ -169,8 +159,8 @@ class AnimeRepository {
                     "ReAnime",
                     "INCREMENTAL_CATALOG_REQUEST offset=$offset limit=36"
                 )
-                ReAnimeParser.parseAnimeApi(
-                    reAnimeClient.catalogAnime(limit = 36, offset = offset)
+                ReAnimeHarParser.parseSearch(
+                    reAnimeHarClient.search(limit = 36, offset = offset)
                 )
             } catch (e: Exception) {
                 android.util.Log.w(
@@ -237,36 +227,56 @@ class AnimeRepository {
         linkkfApi.getFilteredAnime(page, limit, seasonTypeIds, genreIds, yearIds)
     }
 
+    suspend fun getReAnimeHomeData(): Triple<List<Anime>, List<Anime>, ReAnimeHarParser.Facets> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            val top = runCatching { ReAnimeHarParser.parseTop(reAnimeHarClient.topAnime("today", 12)) }.getOrDefault(emptyList())
+            val schedule = runCatching { ReAnimeHarParser.parseSchedule(reAnimeHarClient.schedule("Asia/Seoul", 0)) }.getOrDefault(emptyList())
+            val facets = runCatching { ReAnimeHarParser.parseFacets(reAnimeHarClient.facets()) }.getOrDefault(ReAnimeHarParser.Facets())
+            Triple(top, schedule, facets)
+        }
+
+    suspend fun searchReAnime(
+        query: String = "",
+        genre: List<String> = emptyList(),
+        year: Int? = null,
+        season: String? = null,
+        status: String? = null,
+        format: String? = null,
+        tag: List<String> = emptyList(),
+        character: List<String> = emptyList(),
+        staff: List<String> = emptyList(),
+        studio: List<String> = emptyList()
+    ): List<Anime> = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        ReAnimeHarParser.parseSearch(
+            reAnimeHarClient.search(
+                query = query, limit = 36, offset = 0, genre = genre, year = year,
+                season = season, status = status, format = format, tag = tag,
+                character = character, staff = staff, studio = studio
+            )
+        )
+    }
+
     suspend fun searchAnime(query: String, source: String = "linkkf"): List<Anime> {
         if (source != "reanime") return emptyList()
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return emptyList()
-        return ReAnimeParser.parseAnimeApi(reAnimeClient.searchAnime(trimmed, 36, 0))
+        return ReAnimeHarParser.parseSearch(reAnimeHarClient.search(query = trimmed, limit = 36, offset = 0))
     }
 
     suspend fun getAnimeDetail(anime: Anime, source: String = "linkkf"): Anime {
         if (source == "reanime") {
-            // Older persisted Re:Anime caches were written before detailUrl was
-            // stored, so their cached Anime objects can have an empty detailUrl.
-            // Re:Anime ids are generated as "reanime:<slug>"; reconstruct the
-            // canonical detail URL when necessary so both old and new caches work.
             val detailUrl = anime.detailUrl.trim().ifBlank {
-                anime.id.removePrefix("reanime:")
-                    .trim('/')
-                    .takeIf { it.isNotBlank() }
-                    ?.let { "$REANIME_BASE_URL/anime/$it" }
-                    .orEmpty()
+                anime.id.removePrefix("reanime:").trim('/').let { "$REANIME_BASE_URL/anime/$it" }
             }
-            if (detailUrl.isBlank()) {
-                throw IllegalArgumentException("Re:Anime detail URL is missing for id=${anime.id}")
-            }
-            val target = if (anime.detailUrl == detailUrl) anime else anime.copy(detailUrl = detailUrl)
-            android.util.Log.d("ReAnime", "DETAIL_REQUEST id=" + target.id + " detailUrl=" + detailUrl)
-            val parsed = ReAnimeParser.parseAnimeDetail(
-                reAnimeClient.getDocument(detailUrl, REANIME_BASE_URL + "/"),
-                target
-            )
-            return parsed.copy(episodes = getEpisodes(target, source))
+            val slug = detailUrl.substringAfter("/anime/").substringBefore("/").trim()
+            if (slug.isBlank()) throw IllegalArgumentException("Re:Anime slug missing: ${anime.id}")
+            android.util.Log.d("ReAnimeHAR", "DETAIL_DATA_REQUEST slug=$slug")
+            val data = reAnimeHarClient.detailData(slug)
+            val parsed = ReAnimeHarParser.parseDetail(data, anime.copy(detailUrl = detailUrl))
+            val total = parsedEpisodesTotal(parsed, data)
+            val watch = runCatching { reAnimeHarClient.watchData(slug) }.getOrDefault("")
+            val episodes = ReAnimeHarParser.parseWatchEpisodes(watch, parsed, total)
+            return parsed.copy(episodes = episodes)
         }
 
         if (source == "animenosub") {
@@ -289,6 +299,27 @@ class AnimeRepository {
         )
     }
 
+    private fun parsedEpisodesTotal(anime: Anime, rawDetail: String): Int {
+        // Anime.episodes is not populated until watch/__data.json is parsed.
+        // Pull episodes_total directly from the HAR reference table through the
+        // parser so the detail and watch requests stay source-accurate.
+        return runCatching {
+                val nodes = org.json.JSONObject(rawDetail).optJSONArray("nodes")
+                var total = 0
+                if (nodes != null) for (i in 0 until nodes.length()) {
+                    val node = nodes.optJSONObject(i) ?: continue
+                    val data = node.optJSONArray("data") ?: continue
+                    if (data.length() < 2) continue
+                    val root = data.optJSONObject(0) ?: continue
+                    val animeRef = root.optInt("anime", -1)
+                    val obj = if (animeRef >= 0) data.optJSONObject(animeRef) else null
+                    total = obj?.optInt("episodes_total", 0) ?: 0
+                    if (total > 0) break
+                }
+                total
+            }.getOrDefault(0)
+    }
+
     suspend fun getLinkkfEpisodeServers(postId: String): List<LinkkfApiClient.EpisodeServer> =
         kotlinx.coroutines.withContext(Dispatchers.IO) { linkkfApi.getEpisodeServers(postId) }
 
@@ -305,108 +336,17 @@ class AnimeRepository {
 
     suspend fun getEpisodes(anime: Anime, source: String = "linkkf"): List<Episode> {
         if (source == "reanime") {
-            val slug = anime.detailUrl
-                .substringAfter("/anime/", "")
-                .substringBefore("?")
-                .substringBefore("/")
-                .trim()
+            val slug = anime.detailUrl.substringAfter("/anime/").substringBefore("/").trim()
+                .ifBlank { anime.id.removePrefix("reanime:").trim('/') }
             if (slug.isBlank()) return emptyList()
-
-            // The anime page contains the complete episode selector on the current
-            // Re:Anime site. The /watch/... page is episode-specific and may expose
-            // only the current episode, so do not use it as the primary source.
-            android.util.Log.d("ReAnime", "EPISODE_REQUEST detail=${anime.detailUrl}")
-            val detailDocument = reAnimeClient.getDocument(anime.detailUrl, REANIME_BASE_URL + "/")
-            val firstPage = ReAnimeParser.parseEpisodePage(detailDocument, anime)
-            if (firstPage.episodes.isNotEmpty()) {
-                val allEpisodes = LinkedHashMap<Int, Episode>()
-                firstPage.episodes.forEach { allEpisodes[it.number] = it }
-
-                // Re:ANIME embeds only one page (normally 100 episodes) in the
-                // initial HTML. The payload also exposes totalPages/offset, so
-                // fetch the remaining pages lazily from the same detail route.
-                if (firstPage.totalPages > 1) {
-                    for (page in 1 until firstPage.totalPages) {
-                        val expectedOffset = page * firstPage.limit
-                        val candidates = listOf(
-                            "${anime.detailUrl}?page=${page + 1}",
-                            "${anime.detailUrl}?episode_page=${page + 1}",
-                            "${anime.detailUrl}?ep_page=${page + 1}",
-                            "${anime.detailUrl}?offset=$expectedOffset&limit=${firstPage.limit}"
-                        )
-                        var fetched: ReAnimeParser.EpisodePage? = null
-                        for (candidate in candidates) {
-                            try {
-                                val doc = reAnimeClient.getDocument(candidate, anime.detailUrl)
-                                val parsed = ReAnimeParser.parseEpisodePage(doc, anime)
-                                if (parsed.episodes.isNotEmpty() &&
-                                    parsed.offset == expectedOffset &&
-                                    parsed.episodes.any { it.number > (allEpisodes.keys.maxOrNull() ?: 0) }) {
-                                    fetched = parsed
-                                    android.util.Log.d(
-                                        "ReAnime",
-                                        "EPISODE_PAGE_FETCHED page=${page + 1}/${firstPage.totalPages} " +
-                                            "offset=${parsed.offset} count=${parsed.episodes.size} url=$candidate"
-                                    )
-                                    break
-                                }
-                            } catch (e: Exception) {
-                                android.util.Log.w("ReAnime", "EPISODE_PAGE_REQUEST_FAILED url=$candidate", e)
-                            }
-                        }
-                        if (fetched == null) {
-                            android.util.Log.w(
-                                "ReAnime",
-                                "EPISODE_PAGE_NOT_FOUND page=${page + 1}/${firstPage.totalPages} expectedOffset=$expectedOffset"
-                            )
-                            break
-                        }
-                        fetched.episodes.forEach { allEpisodes[it.number] = it }
-                    }
-                }
-
-                // Re:ANIME exposes the authoritative total in the first SSR payload,
-                // but the captured detail page only embeds the first 100 records.
-                // If the site does not expose the remaining page payload to the
-                // client, do not truncate the app's episode selector at 100.
-                // Create lightweight entries for the missing numeric episodes.
-                // Their watch URL is fully deterministic and opening it lets the
-                // normal Re:ANIME player resolve the actual episode metadata/source.
-                val expectedTotal = firstPage.total.coerceAtLeast(allEpisodes.keys.maxOrNull() ?: 0)
-                if (expectedTotal > 0) {
-                    for (number in 1..expectedTotal) {
-                        if (!allEpisodes.containsKey(number)) {
-                            allEpisodes[number] = Episode(
-                                id = "reanime:$slug:$number",
-                                number = number,
-                                title = "Episode $number",
-                                videoUrl = "$REANIME_BASE_URL/watch/$slug?ep=$number",
-                                displayNumber = number.toString(),
-                                playable = true,
-                                subbed = true
-                            )
-                        }
-                    }
-                }
-
-                val result = allEpisodes.values.sortedBy { it.number }
-                android.util.Log.d(
-                    "ReAnime",
-                    "EPISODE_RESULT slug=$slug count=${result.size} expected=${firstPage.total} " +
-                        "loadedPayload=${firstPage.episodes.size}"
-                )
-                return result
-            }
-
-            // Fallback for pages that render the selector only after opening the
-            // watch route.
-            val episodeUrl = REANIME_BASE_URL + "/watch/" + slug + "?ep=1"
-            android.util.Log.d("ReAnime", "EPISODE_FALLBACK url=$episodeUrl")
-            val watchDocument = reAnimeClient.getDocument(episodeUrl, anime.detailUrl)
-            val fallbackEpisodes = ReAnimeParser.parseEpisodes(watchDocument, anime)
-            android.util.Log.d("ReAnime", "EPISODE_FALLBACK_RESULT slug=$slug count=${fallbackEpisodes.size}")
-            return fallbackEpisodes
+            android.util.Log.d("ReAnimeHAR", "EPISODES_DATA_REQUEST slug=$slug")
+            val detail = reAnimeHarClient.detailData(slug)
+            val parsed = ReAnimeHarParser.parseDetail(detail, anime)
+            val watch = runCatching { reAnimeHarClient.watchData(slug) }.getOrDefault("")
+            val total = parsedEpisodesTotal(parsed, detail)
+            return ReAnimeHarParser.parseWatchEpisodes(watch, parsed, total)
         }
+
         if (source == "animenosub") {
             val document = animenosubClient.getDocument(anime.detailUrl, ANIMENOSUB_BASE_URL + "/")
             return AnimenosubParser.parseEpisodes(document, anime)

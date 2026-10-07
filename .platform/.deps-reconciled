@@ -22,6 +22,8 @@ app|com.squareup.retrofit2:retrofit:2.11.0|
 app|dev.jdtech.mpv:libmpv:1.0.0|
 app|io.coil-kt.coil3:coil-compose:3.3.0|
 app|io.coil-kt.coil3:coil-network-okhttp:3.3.0|
+app|io.github.peerless2012:ass-kt:0.5.1|
+app|io.github.peerless2012:ass:0.5.1|
 app|kotlin-stdlib|
 app|org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2|
 app|org.jsoup:jsoup:1.23.1|

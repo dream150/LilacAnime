@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.net.URLDecoder
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -116,10 +117,20 @@ suspend fun downloadSubtitleFile(
                     if (text.startsWith("WEBVTT")) text.toByteArray(Charsets.UTF_8)
                     else ("WEBVTT\n\n" + normalized.removePrefix("WEBVTT")).toByteArray(Charsets.UTF_8)
                 } else bytes
+
+                // Keep the local cache filename deterministic for playback, but also
+                // remember the real remote subtitle filename so the UI can show the
+                // useful source filename instead of sub_<animeId>_ep_....vtt.
+                val remoteName = extractRemoteSubtitleName(
+                    response.header("Content-Disposition"),
+                    vttUrl,
+                    extension
+                )
                 val file = File(context.filesDir, "sub_${animeId}_ep_${safeKey}_${safeSource}.$extension")
                 file.writeBytes(payload)
+                SubtitleStore.setDisplayName(context, file.absolutePath, remoteName)
 
-                Log.d("Subtitle", "REMOTE_SUBTITLE_SAVED source=$source path=${file.absolutePath} bytes=${file.length()} referer=$candidateRef")
+                Log.d("Subtitle", "REMOTE_SUBTITLE_SAVED source=$source path=${file.absolutePath} displayName=$remoteName bytes=${file.length()} referer=$candidateRef")
                 return@withContext file.absolutePath
             }
         } catch (e: Exception) {
@@ -129,4 +140,22 @@ suspend fun downloadSubtitleFile(
 
     Log.e("Subtitle", "REMOTE_SUBTITLE_DOWNLOAD_FAILED source=$source url=$vttUrl")
     null
+}
+
+private fun extractRemoteSubtitleName(contentDisposition: String?, subtitleUrl: String, extension: String): String {
+    val fromDisposition = contentDisposition?.let { header ->
+        Regex("filename\\*=UTF-8''([^;]+)", RegexOption.IGNORE_CASE).find(header)?.groupValues?.getOrNull(1)
+            ?: Regex("""filename=\"?([^;\"]+)\"?""", RegexOption.IGNORE_CASE).find(header)?.groupValues?.getOrNull(1)
+    }?.let { runCatching { URLDecoder.decode(it.trim(), "UTF-8") }.getOrNull() }
+
+    val fromUrl = runCatching {
+        java.net.URI(subtitleUrl).path.substringAfterLast('/').takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    val candidate = (fromDisposition ?: fromUrl ?: "subtitle.$extension")
+        .substringAfterLast('/')
+        .trim()
+        .replace(Regex("[\\r\\n]"), "_")
+        .take(180)
+    return if (candidate.contains('.')) candidate else "$candidate.$extension"
 }

@@ -17,19 +17,21 @@ object SubtitleTitleResolver {
             anime.native.trim().takeIf { it.isNotBlank() }?.let(::add)
         }.distinct()
 
+
+        TmdbTitleResolver.resolveBest(
+            context,
+            candidates
+        )?.takeIf { it.isNotBlank() }?.let {
+            Log.d(TAG, "TMDB queryCandidates=${candidates.joinToString(" | ")} korean=[$it]")
+            return@withContext it
+        }
+
         candidates.firstOrNull { NamuWikiTitleResolver.isHangulTitle(it) }?.let { return@withContext it }
 
         for (candidate in candidates) {
             if (candidate.isBlank()) continue
             NamuWikiTitleResolver.resolve(context, candidate)?.takeIf { it.isNotBlank() }?.let {
                 Log.d(TAG, "NAMUWIKI query=[$candidate] korean=[$it]")
-                return@withContext it
-            }
-        }
-
-        for (candidate in candidates) {
-            TmdbTitleResolver.resolve(context, candidate)?.takeIf { it.isNotBlank() }?.let {
-                Log.d(TAG, "TMDB query=[$candidate] korean=[$it]")
                 return@withContext it
             }
         }

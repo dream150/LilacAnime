@@ -72,25 +72,70 @@ object JimakuSubtitleService {
         if (episodeNumber <= 0) return@withContext emptyList()
         runCatching {
             val entryId = resolveEntryId(context, anilistId) ?: return@runCatching emptyList()
-            scoreEpisodeFiles(loadEntryFiles(entryId), episodeNumber, anime.title)
-                .map { candidate ->
+            scoreEpisodeFiles(
+                candidates = loadEntryFiles(entryId),
+                episodeNumber = episodeNumber,
+                animeTitle = anime.title,
+                animeFormat = anime.format,
+                episodeTitle = anime.episodes.firstOrNull { it.number == episodeNumber }?.title.orEmpty()
+            ).map { candidate ->
                     val ext = candidate.name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                     val range = episodeRange(candidate.name)
+                    val bundle = range != null || isBundleHint(candidate.name.lowercase(Locale.ROOT))
                     SubtitleOption(
                         name = candidate.name,
                         url = candidate.url,
                         format = ext,
                         size = candidate.size,
                         cachedPath = cachedPathFor(context, anilistId, episodeKey, candidate),
-                        isBundle = range != null,
-                        bundleStartEpisode = range?.first,
-                        bundleEndEpisode = range?.second
+                        isBundle = bundle,
+                        bundleStartEpisode = range?.first ?: if (bundle) 1 else null,
+                        bundleEndEpisode = range?.second ?: if (bundle) Int.MAX_VALUE else null
                     )
                 }
         }.getOrElse {
             Log.w(TAG, "LIST_FAILED anilistId=$anilistId episode=$episodeNumber", it)
             emptyList()
         }
+    }
+
+    /**
+     * Returns only Jimaku files physically cached for this exact AniList title
+     * and matching the requested episode. This intentionally does not trust the
+     * generic SubtitleStore index because older versions could contain stale or
+     * cross-title paths under the same local subtitle key.
+     */
+    suspend fun listCachedSubtitles(
+        context: Context,
+        anime: Anime,
+        episodeNumber: Int,
+        episodeKey: String = episodeNumber.toString()
+    ): List<SubtitleOption> = withContext(Dispatchers.IO) {
+        val anilistId = anime.anilistId?.takeIf { it > 0 } ?: return@withContext emptyList()
+        if (episodeNumber <= 0) return@withContext emptyList()
+
+        val dir = File(context.filesDir, "$CACHE_DIR/$anilistId")
+        if (!dir.isDirectory) return@withContext emptyList()
+
+        val episodeKeys = linkedSetOf(episodeKey, episodeNumber.toString())
+        dir.listFiles()
+            ?.asSequence()
+            ?.filter { it.isFile && it.length() > 0L }
+            ?.filter { it.extension.lowercase(Locale.ROOT) in SUPPORTED_FORMATS }
+            ?.filter { file -> episodeKeys.any { key -> SubtitleStore.subtitleMatchesEpisode(file.absolutePath, key, episodeNumber) } }
+            ?.sortedBy { it.name.lowercase(Locale.ROOT) }
+            ?.map { file ->
+                SubtitleOption(
+                    name = SubtitleStore.getDisplayName(context, file.absolutePath),
+                    url = "",
+                    format = file.extension.lowercase(Locale.ROOT),
+                    size = file.length(),
+                    cachedPath = file.absolutePath,
+                    isBundle = false
+                )
+            }
+            ?.toList()
+            .orEmpty()
     }
 
     suspend fun downloadSelectedSubtitle(
@@ -109,6 +154,7 @@ object JimakuSubtitleService {
             ?: resolveEntryId(context, anilistId)
             ?: return@withContext null
         val candidate = FileCandidate(option.name, option.url, option.size)
+        option.cachedPath?.let { SubtitleStore.setDisplayName(context, it, option.name) }
         downloadSubtitle(
             context = context,
             anilistId = anilistId,
@@ -154,7 +200,9 @@ object JimakuSubtitleService {
                 val selected = selectEpisodeFile(
                     candidates = candidates,
                     episodeNumber = episodeNumber,
-                    animeTitle = anime.title
+                    animeTitle = anime.title,
+                    animeFormat = anime.format,
+                    episodeTitle = anime.episodes.firstOrNull { it.number == episodeNumber }?.title.orEmpty()
                 ) ?: run {
                     Log.d(
                         TAG,
@@ -254,13 +302,17 @@ object JimakuSubtitleService {
     private fun selectEpisodeFile(
         candidates: List<FileCandidate>,
         episodeNumber: Int,
-        animeTitle: String
-    ): FileCandidate? = scoreEpisodeFiles(candidates, episodeNumber, animeTitle).firstOrNull()
+        animeTitle: String,
+        animeFormat: String = "",
+        episodeTitle: String = ""
+    ): FileCandidate? = scoreEpisodeFiles(candidates, episodeNumber, animeTitle, animeFormat, episodeTitle).firstOrNull()
 
     private fun scoreEpisodeFiles(
         candidates: List<FileCandidate>,
         episodeNumber: Int,
-        animeTitle: String
+        animeTitle: String,
+        animeFormat: String = "",
+        episodeTitle: String = ""
     ): List<FileCandidate> {
         data class Scored(val candidate: FileCandidate, val score: Int)
 
@@ -269,12 +321,25 @@ object JimakuSubtitleService {
             val ext = name.substringAfterLast('.', "")
             if (ext !in SUPPORTED_FORMATS) return@mapNotNull null
 
+            val expectedSeason = detectSeasonNumber(animeTitle)
+            val parsed = SubtitleEpisodeMatcher.parse(name)
+            if (expectedSeason != null && parsed?.season != null && parsed.season != expectedSeason) {
+                return@mapNotNull null
+            }
             val range = episodeRange(name)
+            val movie = animeFormat.contains("movie", ignoreCase = true)
+            val bundleHint = isBundleHint(name)
             val episodeScore = if (range != null) {
                 if (episodeNumber !in range.first..range.second) return@mapNotNull null
                 45
             } else {
-                exactEpisodeScore(name, episodeNumber)
+                val exact = exactEpisodeScore(name, episodeNumber)
+                when {
+                    exact > 0 -> exact
+                    movie -> 58
+                    bundleHint -> 34
+                    else -> 0
+                }
             }
             if (episodeScore <= 0) return@mapNotNull null
 
@@ -298,12 +363,35 @@ object JimakuSubtitleService {
             val seasonBonus = detectSeasonNumber(animeTitle)?.let { season ->
                 if (Regex("""(?:^|[^a-z0-9])s0*$season(?:e|[-_ ])""").containsMatchIn(name)) 12 else 0
             } ?: 0
-            Scored(candidate, episodeScore + formatScore + assQuality + seasonBonus)
+            val titleBonus = titleMatchScore(name, animeTitle, episodeTitle)
+            val movieBonus = if (movie && range == null) 12 else 0
+            Scored(candidate, episodeScore + formatScore + assQuality + seasonBonus + titleBonus + movieBonus)
         }.sortedWith(
             compareByDescending<Scored> { it.score }
                 .thenByDescending { it.candidate.size }
                 .thenBy { it.candidate.name.lowercase(Locale.ROOT) }
         ).map { it.candidate }
+    }
+
+    private fun isBundleHint(name: String): Boolean =
+        Regex("""(?:complete|batch|bundle|pack|batchset|全集|全話|all[-_ ]?episodes?)""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(name)
+
+    private fun titleMatchScore(name: String, animeTitle: String, episodeTitle: String): Int {
+        val tokens = (animeTitle + " " + episodeTitle)
+            .lowercase(Locale.ROOT)
+            .replace(Regex("[^a-z0-9가-힣]+"), " ")
+            .split(' ')
+            .filter { it.length >= 3 }
+            .distinct()
+        if (tokens.isEmpty()) return 0
+        val hits = tokens.count { name.contains(it) }
+        return when {
+            hits >= 3 -> 10
+            hits == 2 -> 6
+            hits == 1 -> 2
+            else -> 0
+        }
     }
 
     /** Detect an explicit season number from an anime title.
@@ -329,35 +417,11 @@ object JimakuSubtitleService {
         return null
     }
 
-    private fun exactEpisodeScore(name: String, episodeNumber: Int): Int {
-        val ep = episodeNumber.toString().padStart(2, '0')
-        val patterns = listOf(
-            Regex("""(?:^|[^a-z0-9])s\d{1,2}e0*$ep(?:[^0-9]|$)"""),
-            Regex("""(?:^|[^a-z0-9])(?:ep|episode|e)0*$ep(?:[^0-9]|$)"""),
-            Regex("""(?:^|[^a-z0-9])0*$ep(?:[^a-z0-9]|$)""")
-        )
-        return when {
-            patterns[0].containsMatchIn(name) -> 65
-            patterns[1].containsMatchIn(name) -> 58
-            patterns[2].containsMatchIn(name) -> 50
-            Regex("""(?:^|[^a-z0-9])0*$ep\s*(?:화|회|편|話)(?:$|[^a-z0-9])""").containsMatchIn(name) -> 55
-            else -> 0
-        }
-    }
+    private fun exactEpisodeScore(name: String, episodeNumber: Int): Int =
+        SubtitleEpisodeMatcher.score(name, episodeNumber)
 
-    private fun episodeRange(name: String): Pair<Int, Int>? {
-        val patterns = listOf(
-            Regex("""(?:s\d{1,2}e)0*(\d{1,3})\s*[-~〜–—]\s*(?:s\d{1,2}e)?0*(\d{1,3})""", RegexOption.IGNORE_CASE),
-            Regex("""(?:^|[^a-z0-9])(?:e|ep|episode)?0*(\d{1,3})\s*[-~〜–—]\s*(?:e|ep|episode)?0*(\d{1,3})(?:$|[^0-9])""", RegexOption.IGNORE_CASE)
-        )
-        for (pattern in patterns) {
-            val m = pattern.find(name) ?: continue
-            val a = m.groupValues.getOrNull(1)?.toIntOrNull() ?: continue
-            val b = m.groupValues.getOrNull(2)?.toIntOrNull() ?: continue
-            if (a < b) return a to b
-        }
-        return null
-    }
+    private fun episodeRange(name: String): Pair<Int, Int>? =
+        SubtitleEpisodeMatcher.range(name)?.let { it.first to it.last }
 
     private fun containsEpisodeRange(name: String): Boolean = episodeRange(name) != null
 
@@ -442,6 +506,7 @@ object JimakuSubtitleService {
                     }
             } else bytes
             output.writeBytes(finalBytes)
+            SubtitleStore.setDisplayName(context, output.absolutePath, candidate.name)
 
             if (!SubtitleStore.subtitleMatchesEpisode(output.absolutePath, episodeKey, episodeNumber)) {
                 output.delete()
@@ -510,8 +575,8 @@ object JimakuSubtitleService {
             val normalized = b.raw.trim()
             val lines = normalized.lines().toMutableList()
             if (lines.firstOrNull()?.trim()?.matches(Regex("\\d+")) == true) lines[0] = (i + 1).toString()
-            lines.joinToString("\\n")
-        }.joinToString("\\n\\n", postfix = "\\n")
+            lines.joinToString("\n")
+        }.joinToString("\n\n", postfix = "\n")
     }
 
     private fun extractVttBundle(text: String, index: Int): String? {
@@ -520,7 +585,7 @@ object JimakuSubtitleService {
         if (blocks.isEmpty()) return null
         val parts = splitByReset(blocks) { it.start }
         val chosen = parts.getOrNull(index) ?: return null
-        return "WEBVTT\\n\\n" + chosen.joinToString("\\n\\n") { it.raw.trim() } + "\\n"
+        return "WEBVTT\n\n" + chosen.joinToString("\n\n") { it.raw.trim() } + "\n"
     }
 
     private fun extractAssBundle(text: String, index: Int): String? {
@@ -555,7 +620,7 @@ object JimakuSubtitleService {
         val parts = splitByReset(matches) { it.start }
         val chosen = parts.getOrNull(index) ?: return null
         val header = text.substringBefore(matches.first().raw)
-        return header + chosen.joinToString("\\n") { it.raw } + "\\n</body>\\n</sami>"
+        return header + chosen.joinToString("\n") { it.raw } + "\n</body>\n</sami>"
     }
 
     private fun extractGenericTimedBundle(text: String, index: Int): String? {
@@ -569,7 +634,7 @@ object JimakuSubtitleService {
         val parts = splitByReset(timed) { it.start }
         val chosen = parts.getOrNull(index) ?: return null
         val indices = chosen.mapNotNull { it.raw.toIntOrNull() }.toSet()
-        return lines.filterIndexed { i, _ -> i in indices }.joinToString("\\n", postfix = "\\n")
+        return lines.filterIndexed { i, _ -> i in indices }.joinToString("\n", postfix = "\n")
     }
 
     private fun parseSrtTime(value: String): Long = parseClock(value.replace(',', '.'))

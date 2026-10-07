@@ -29,6 +29,7 @@ object SubtitleStore {
     private const val FONT_PATH_PREFIX = "font_path_"
     private const val FONT_SOURCE_PREFIX = "font_source_"
     private const val ALL_PATHS_PREFIX = "all_paths_"
+    private const val DISPLAY_NAME_PREFIX = "display_name_"
     private val SUPPORTED_SUBTITLE_EXTENSIONS = setOf(
         "ass", "ssa", "srt", "vtt", "smi", "sami",
         "sub", "mpl2", "mpsub", "jacosub", "aqt", "pjs", "rt", "sbv"
@@ -38,7 +39,8 @@ object SubtitleStore {
         val source: String,
         val path: String,
         val ignored: Boolean,
-        val episodeMatch: Boolean
+        val episodeMatch: Boolean,
+        val displayName: String = ""
     )
 
     /**
@@ -53,43 +55,14 @@ object SubtitleStore {
         val file = File(path)
         if (!file.isFile || episodeNumber <= 0) return false
         val name = file.nameWithoutExtension.lowercase(java.util.Locale.ROOT)
-
-        // Csora flat anime cache: 1.ass, 2.ass, 3.vtt, ...
-        // The filename is the authoritative episode identity.
-        name.toIntOrNull()?.let { numericEpisode ->
-            return numericEpisode == episodeNumber
-        }
-
-        // New Linkkf VTT cache format.
-        // Jimaku cache format: ep_<episodeKey>_<urlHash>.<ext>.
+        name.toIntOrNull()?.let { return it == episodeNumber }
         Regex("^ep_([a-z0-9._-]+)_([a-f0-9]{8,64})$", RegexOption.IGNORE_CASE)
-            .find(name)?.groupValues?.getOrNull(1)?.let { key ->
-                return key.toIntOrNull() == episodeNumber
-            }
-
+            .find(name)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it == episodeNumber }
         Regex("(?:^|_)ep_([a-z0-9._-]+?)(?:_(?:linkkf|reanime))?$", RegexOption.IGNORE_CASE)
-            .find(name)?.groupValues?.getOrNull(1)?.let { key ->
-                val numeric = key.toIntOrNull()
-                return numeric == episodeNumber
-            }
-
-        // Existing generated ASS/SSA cache names.
+            .find(name)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it == episodeNumber }
         Regex("_(\\d{1,3})_(?:direct|archive)(?:_|$)", RegexOption.IGNORE_CASE)
-            .find(name)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let {
-                return it == episodeNumber
-            }
-
-        // Legacy subtitle filenames. Keep compatibility for files downloaded
-        // before the authoritative ep_ filename was introduced.
-        val patterns = listOf(
-            Regex("(?:^|[^0-9])(?:episode|ep|e|#)\\s*0*(\\d{1,3})(?:$|[^0-9])", RegexOption.IGNORE_CASE),
-            Regex("(?:^|[^0-9])0*(\\d{1,3})\\s*(?:화|회|편|話)(?:$|[^0-9])")
-        )
-        val explicit = patterns.asSequence()
-            .flatMap { it.findAll(name).asSequence() }
-            .mapNotNull { it.groupValues.getOrNull(1)?.toIntOrNull() }
-            .firstOrNull()
-        return explicit == null || explicit == episodeNumber
+            .find(name)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it == episodeNumber }
+        return SubtitleEpisodeMatcher.matches(name, episodeNumber)
     }
 
     /**
@@ -138,33 +111,15 @@ object SubtitleStore {
                 .takeWhile { !it.trim().equals("[Events]", true) }
                 .filter {
                     val t = it.trimStart()
-                    t.startsWith("Title:", true) ||
-                        t.startsWith("Original Script:", true) ||
-                        t.startsWith("Comment:", true) ||
-                        t.startsWith("Notes:", true)
-                }
-                .joinToString(" ")
+                    t.startsWith("Title:", true) || t.startsWith("Original Script:", true) ||
+                        t.startsWith("Comment:", true) || t.startsWith("Notes:", true)
+                }.joinToString(" ")
             if (header.isBlank()) return true
-
-            val normalized = header.lowercase(java.util.Locale.ROOT)
-            val explicitNumbers = mutableListOf<Int>()
-            val patterns = listOf(
-                Regex("(?:episode|ep)\\s*0*(\\d{1,3})\\b", RegexOption.IGNORE_CASE),
-                Regex("(?:^|[^0-9])0*(\\d{1,3})\\s*(?:화|회|편|話)(?:$|[^0-9])"),
-                Regex("(?:^|[^a-z0-9])e0*(\\d{1,3})(?:$|[^a-z0-9])", RegexOption.IGNORE_CASE)
-            )
-            patterns.forEach { regex ->
-                regex.findAll(normalized).forEach { m ->
-                    m.groupValues.getOrNull(1)?.toIntOrNull()?.let { explicitNumbers += it }
-                }
-            }
-            explicitNumbers.isEmpty() || explicitNumbers.all { it == episodeNumber }
-        } catch (_: Exception) {
-            true
-        }
+            SubtitleEpisodeMatcher.parse(header)?.episode?.let { it == episodeNumber } ?: true
+        } catch (_: Exception) { true }
     }
 
-    suspend fun save(context: Context, animeId: String, episodeKey: String, episodeNumber: Int, source: String, path: String?) = withContext(Dispatchers.IO) {
+    suspend fun save(context: Context, animeId: String, episodeKey: String, episodeNumber: Int, source: String, path: String?, displayName: String? = null) = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val primaryKey = key(animeId, episodeKey, source)
         val allKey = allPathsKey(animeId, episodeKey, source)
@@ -173,8 +128,10 @@ object SubtitleStore {
             prefs.edit().remove(primaryKey).remove(allKey).remove(ignoredKey(animeId, episodeKey, source)).apply()
         } else {
             existing.add(path)
-            prefs.edit().putString(primaryKey, path).putStringSet(allKey, existing)
-                .remove(ignoredKey(animeId, episodeKey, source)).apply()
+            val edit = prefs.edit().putString(primaryKey, path).putStringSet(allKey, existing)
+                .remove(ignoredKey(animeId, episodeKey, source))
+            if (!displayName.isNullOrBlank()) edit.putString(displayNameKey(path), displayName.trim())
+            edit.apply()
         }
     }
 
@@ -216,7 +173,7 @@ object SubtitleStore {
             val ignored = prefs.getBoolean(ignoredKey(animeId, episodeKey, source), false)
             paths.mapNotNull { path ->
                 if (!File(path).isFile) null
-                else SavedSubtitle(source, path, ignored, subtitleMatchesEpisode(path, episodeKey, episodeNumber))
+                else SavedSubtitle(source, path, ignored, subtitleMatchesEpisode(path, episodeKey, episodeNumber), prefs.getString(displayNameKey(path), File(path).name).orEmpty())
             }
         }
     }
@@ -233,7 +190,7 @@ object SubtitleStore {
         val ignored = prefs.getBoolean(ignoredKey(animeId, episodeKey, source), false)
         paths.mapNotNull { path ->
             if (!File(path).isFile) null
-            else SavedSubtitle(source, path, ignored, subtitleMatchesEpisode(path, episodeKey, episodeNumber))
+            else SavedSubtitle(source, path, ignored, subtitleMatchesEpisode(path, episodeKey, episodeNumber), prefs.getString(displayNameKey(path), File(path).name).orEmpty())
         }
     }
 
@@ -258,6 +215,7 @@ object SubtitleStore {
             if (nextPrimary.isNullOrBlank()) remove(primaryKey) else putString(primaryKey, nextPrimary)
             if (stored.isEmpty()) remove(allKey) else putStringSet(allKey, stored)
         }.apply()
+        prefs.edit().remove(displayNameKey(path)).apply()
         File(path).takeIf(File::isFile)?.delete()
     }
 
@@ -267,7 +225,10 @@ object SubtitleStore {
         val paths = prefs.getStringSet(allPathsKey(animeId, episodeKey, source), emptySet()).orEmpty() +
             listOfNotNull(prefs.getString(k, null))
         prefs.edit().remove(k).remove(allPathsKey(animeId, episodeKey, source)).remove(ignoredKey(animeId, episodeKey, source)).apply()
-        paths.forEach { File(it).takeIf(File::isFile)?.delete() }
+        paths.forEach { path ->
+            prefs.edit().remove(displayNameKey(path)).apply()
+            File(path).takeIf(File::isFile)?.delete()
+        }
     }
 
     fun getSelectedFont(context: Context, animeId: String, source: String): String? =
@@ -290,6 +251,21 @@ object SubtitleStore {
             .remove(fontSourceKey(animeId, source))
             .apply()
     }
+    fun setDisplayName(context: Context, path: String, displayName: String?) {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        prefs.edit().apply {
+            if (displayName.isNullOrBlank()) remove(displayNameKey(path))
+            else putString(displayNameKey(path), displayName.trim())
+        }.apply()
+    }
+
+    fun getDisplayName(context: Context, path: String): String =
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getString(displayNameKey(path), null)
+            ?.takeIf { it.isNotBlank() }
+            ?: File(path).name
+
+    private fun displayNameKey(path: String): String = DISPLAY_NAME_PREFIX + path
     private fun ignoredKey(animeId: String, episodeNumber: Int, source: String) = IGNORED_PREFIX + key(animeId, episodeNumber, source)
     private fun ignoredKey(animeId: String, episodeKey: String, source: String) = IGNORED_PREFIX + key(animeId, episodeKey, source)
 

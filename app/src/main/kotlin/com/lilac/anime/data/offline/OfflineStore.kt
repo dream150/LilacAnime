@@ -155,7 +155,7 @@ object OfflineStore {
             assEffectsEnabled = prefs.getBoolean("pref_ass_effects_enabled", true),
             translationAutoEnabled = prefs.getBoolean("pref_translation_auto_enabled", false),
             translationProvider = prefs.getString("pref_translation_provider", "local")
-                ?.takeIf { it in setOf("local", "openai", "deepl", "qwen") } ?: "local",
+                ?.takeIf { it in setOf("local", "gemini", "openai", "deepl", "qwen") } ?: "local",
             translationModelId = prefs.getString("pref_translation_model_id", null),
             translationPrompt = prefs.getString("pref_translation_prompt", null)
                 ?.takeIf { it.isNotBlank() && !it.contains("LILAC_N") }

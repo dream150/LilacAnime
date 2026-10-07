@@ -83,6 +83,35 @@ object MpvOfflineStore {
         }
     }
 
+    /**
+     * Resolve an offline episode even when the online catalog regenerated a
+     * different Episode.id. Downloads are keyed by animeId::episodeId, but the
+     * stable user-facing identity is the episode number stored in metadata.
+     */
+    fun completedPathForEpisode(
+        context: Context,
+        animeId: String,
+        episodeId: String,
+        episodeNumber: Int
+    ): String? {
+        completedPath(context, animeId, episodeId)?.let { return it }
+        if (episodeNumber <= 0) return null
+
+        return listStatuses(context)
+            .asSequence()
+            .filter { it.animeId == animeId && it.episodeNumber == episodeNumber }
+            .sortedByDescending { it.progress }
+            .mapNotNull { status ->
+                val candidate = status.videoPath
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(::File)
+                    ?: videoFile(context, animeId, status.episodeId)
+                candidate.takeIf { it.isFile && it.length() > 0L && hasPlayableVideoTrack(it) }
+                    ?.absolutePath
+            }
+            .firstOrNull()
+    }
+
     private fun hasPlayableVideoTrack(file: File): Boolean = runCatching {
         val extractor = MediaExtractor()
         try {

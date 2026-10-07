@@ -18,10 +18,22 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
+        externalNativeBuild {
+            cmake {
+                cppFlags += listOf("-std=c++17")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     buildFeatures {
         compose = true
+        prefab = true
     }
 
     compileOptions {

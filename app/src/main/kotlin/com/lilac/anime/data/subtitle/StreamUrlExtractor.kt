@@ -36,7 +36,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Hidden WebView stream detector. It never exposes the provider page to the user.
@@ -49,6 +51,31 @@ data class SubtitleTrack(
     val label: String,
     val format: String
 )
+
+/**
+ * Short-lived in-memory cache for the cheap Re:Anime /api/flix lookup.
+ * The FlixCloud __pk and m3u8 are intentionally NOT cached because they belong
+ * to a live player page/session. Caching only dataLink removes repeated API
+ * latency when the user re-enters the player or revisits an episode.
+ */
+private object ReAnimeFlixLinkCache {
+    private const val TTL_MS = 5 * 60 * 1000L
+    private data class Entry(val url: String, val atMs: Long)
+    private val entries = ConcurrentHashMap<String, Entry>()
+
+    fun get(key: String): String? {
+        val entry = entries[key] ?: return null
+        if (System.currentTimeMillis() - entry.atMs > TTL_MS) {
+            entries.remove(key, entry)
+            return null
+        }
+        return entry.url
+    }
+
+    fun put(key: String, url: String) {
+        entries[key] = Entry(url, System.currentTimeMillis())
+    }
+}
 
 @Composable
 fun StreamUrlExtractor(
@@ -70,12 +97,44 @@ fun StreamUrlExtractor(
     var isSubtitleFound by remember(targetUrl, restartKey) { mutableStateOf(false) }
     var subtitleTracksReported by remember(targetUrl, restartKey) { mutableStateOf(false) }
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    // Every polling handler and resolver thread belongs to this extractor instance.
+    // Without explicit cancellation, old episodes can keep touching a destroyed WebView
+    // and steal/replace FlixCloud state from the next episode.
+    val extractorHandlers = remember(targetUrl, restartKey) { mutableListOf<Handler>() }
+    val extractorActive = remember(targetUrl, restartKey) { AtomicBoolean(true) }
+    // Candidate index is owned by the composable session so every resolver callback
+    // sees the same mutable value even when the WebView factory is recreated.
+    var reAnimeCandidateIndex by remember(targetUrl, restartKey) { mutableIntStateOf(0) }
+    var reAnimeActiveCandidate by remember(targetUrl, restartKey) { mutableStateOf<String?>(null) }
+    val resolverThreads = remember(targetUrl, restartKey) { mutableListOf<Thread>() }
+    // Explicitly destroy the hidden Chromium instance when this extractor leaves the
+    // composition. Re:Anime can create one extractor per episode; retaining them
+    // eventually exhausts WebView/Chromium resources and playback starts failing.
+    val webViewRef = remember(targetUrl, restartKey) { mutableStateOf<WebView?>(null) }
+    DisposableEffect(targetUrl, restartKey) {
+        onDispose {
+            extractorActive.set(false)
+            mainHandler.removeCallbacksAndMessages(null)
+            extractorHandlers.toList().forEach { runCatching { it.removeCallbacksAndMessages(null) } }
+            resolverThreads.toList().forEach { runCatching { it.interrupt() } }
+            extractorHandlers.clear()
+            resolverThreads.clear()
+            webViewRef.value?.let { view ->
+                runCatching { view.stopLoading() }
+                runCatching { view.loadUrl("about:blank") }
+                runCatching { view.clearHistory() }
+                runCatching { view.destroy() }
+            }
+            webViewRef.value = null
+        }
+    }
 
     key(targetUrl, restartKey) {
         AndroidView(
         modifier = modifier,
         factory = { ctx ->
             WebView(ctx).apply {
+                webViewRef.value = this
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                 settings.apply {
@@ -137,7 +196,15 @@ fun StreamUrlExtractor(
                 var reanimeMasterFallbackPosted = false
                 var flixCloudPk: String? = null
                 var flixPkPollStarted = false
+                var reanimeCandidates: List<String> = emptyList()
+                var reanimeCandidateTimeout: Runnable? = null
+                var reanimeStreamReady = false
                 var linkkfPlayerResolved = false
+
+                fun cancelReAnimeCandidateTimeout() {
+                    reanimeCandidateTimeout?.let { mainHandler.removeCallbacks(it) }
+                    reanimeCandidateTimeout = null
+                }
 
                 fun observePlayHd(url: String?) {
                     val value = url?.trim().orEmpty()
@@ -164,6 +231,12 @@ fun StreamUrlExtractor(
 
                     val urls = detectedUrls.toList()
                     mainHandler.post {
+                        if ((targetHost == "reanime.to" || targetHost == "www.reanime.to") &&
+                            urls.isNotEmpty() && !flixCloudPk.isNullOrBlank()
+                        ) {
+                            reanimeStreamReady = true
+                            cancelReAnimeCandidateTimeout()
+                        }
                         val ordered = urls.sortedWith(
                             compareByDescending<String> {
                                 runCatching {
@@ -200,9 +273,10 @@ fun StreamUrlExtractor(
                     flixPkPollStarted = true
                     var attempts = 0
                     val handler = Handler(Looper.getMainLooper())
+                    extractorHandlers += handler
                     val poll = object : Runnable {
                         override fun run() {
-                            if (flixCloudPk != null || attempts++ >= 40) return
+                            if (!extractorActive.get() || flixCloudPk != null || attempts++ >= 40) return
                             view.evaluateJavascript(
                                 """(function(){try{return window.__pk||''}catch(e){return ''}})()"""
                             ) { raw ->
@@ -238,6 +312,16 @@ fun StreamUrlExtractor(
                     if (!detectedUrls.add(url)) return
 
                     if (isReAnime) {
+                        val active = reAnimeActiveCandidate
+                        val requestRef = lastM3u8Referer.orEmpty()
+                        if (active != null && requestRef.isNotBlank()) {
+                            val activePath = runCatching { android.net.Uri.parse(active).path.orEmpty() }.getOrDefault("")
+                            val refPath = runCatching { android.net.Uri.parse(requestRef).path.orEmpty() }.getOrDefault("")
+                            if (activePath.isNotBlank() && refPath.isNotBlank() && activePath != refPath) {
+                                Log.d("ReAnimeStream", "STALE_M3U8_IGNORED active=$active requestRef=$requestRef url=$url")
+                                return
+                            }
+                        }
                         Log.d("ReAnimeStream", "FLIXCLOUD_M3U8_CAPTURED $url")
                     }
 
@@ -263,9 +347,10 @@ fun StreamUrlExtractor(
 
                     var attempts = 0
                     val pollHandler = Handler(Looper.getMainLooper())
+                    extractorHandlers += pollHandler
                     val poll = object : Runnable {
                         override fun run() {
-                            if (reanimeDecryptedM3u8Reported || attempts++ >= 30) return
+                            if (!extractorActive.get() || reanimeDecryptedM3u8Reported || attempts++ >= 30) return
 
                             view.evaluateJavascript(
                                 """(function(){
@@ -280,7 +365,6 @@ fun StreamUrlExtractor(
                                 })()"""
                             ) { raw ->
                                 val decoded = raw.orEmpty()
-                                    .trim('"')
                                     .replace("\\u003d", "=")
                                     .replace("\\u0026", "&")
                                     .replace("\\/", "/")
@@ -491,15 +575,45 @@ fun StreamUrlExtractor(
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
-                        observePlayHd(url)
-                        if (view != null) {
-                            resolveLinkkfPlayer(view, url)
-                        }
                         val finishedHost = runCatching {
                             android.net.Uri.parse(url.orEmpty()).host?.lowercase()
                         }.getOrNull()
                         if (finishedHost == "flixcloud.cc" || finishedHost == "www.flixcloud.cc") {
-                            view?.let { pollFlixCloudPk(it) }
+                            view?.let { flixView ->
+                                pollFlixCloudPk(flixView)
+                                // Match the desktop port: do not wait for a human/server-button click.
+                                // Start every video element and inspect JW/Artplayer resources immediately.
+                                flixView.evaluateJavascript(
+                                    """(function(){
+                                        try {
+                                            document.querySelectorAll('video').forEach(function(v){v.muted=true;v.play().catch(function(){});});
+                                            var els=Array.from(document.querySelectorAll('button,[role=button],.play,.vjs-big-play-button,.jw-display-icon-container,.jw-icon-display'));
+                                            var play=els.find(function(e){
+                                                var t=((e.innerText||e.getAttribute('aria-label')||'')+' '+(e.className||'')).toLowerCase();
+                                                return /play|watch|재생|jw-display|jw-icon-display/.test(t);
+                                            });
+                                            if(play&&!play.dataset.lilacClicked){play.dataset.lilacClicked='1';play.click();}
+                                            var urls=[];
+                                            try {
+                                                var jw=window.jwplayer&&window.jwplayer();
+                                                var item=jw&&jw.getPlaylistItem&&jw.getPlaylistItem();
+                                                if(item){if(item.file)urls.push(item.file);(item.sources||[]).forEach(function(x){if(x.file)urls.push(x.file);});}
+                                                if(jw&&jw.play)jw.play();
+                                            } catch(e){}
+                                            urls=urls.concat((performance.getEntriesByType('resource')||[]).map(function(e){return e.name||'';}));
+                                            return urls.filter(function(u){return /\.(m3u8|mp4|webm)(?:\?|$)/i.test(u);}).join('\n');
+                                        } catch(e){return '';}
+                                    })()"""
+                                ) { raw ->
+                                    val decoded = raw.orEmpty().trim().trim('"')
+                                        .replace("\\\"", "\"").replace("\\/", "/").replace("\\u0026", "&").replace("\\n", "\n")
+                                    decoded.split('\n').map { it.trim() }.filter { it.isNotBlank() }.forEach { reportM3u8(it) }
+                                }
+                            }
+                        }
+                        observePlayHd(url)
+                        if (view != null) {
+                            resolveLinkkfPlayer(view, url)
                         }
                         // FlixCloud embeds the complete subtitle track array in the player HTML.
                         // Re:ANIME can expose multiple languages; report all of them so the player
@@ -549,7 +663,7 @@ fun StreamUrlExtractor(
                         // to it ourselves. Ads opened by the player cannot become the
                         // app's main frame because of shouldOverrideUrlLoading above.
                         view?.evaluateJavascript(
-                            """(function(){return Array.from(document.querySelectorAll('iframe[src],video[src],source[src],a[href], [data-src]')).map(function(x){return x.src || x.href || x.getAttribute('data-src') || '';}).filter(Boolean).join('\\n');})()""",
+                            """(function(){return Array.from(document.querySelectorAll('iframe[src],video[src],source[src],a[href], [data-src]')).map(function(x){return x.src || x.href || x.getAttribute('data-src') || '';}).filter(Boolean).join('\n');})()""",
                             { raw ->
                                 val decoded = raw.orEmpty()
                                     .trim('"')
@@ -599,10 +713,11 @@ fun StreamUrlExtractor(
                             if (!reanimeServerSelectionStarted && !reanimeServerSelected) {
                                 reanimeServerSelectionStarted = true
                                 val pollHandler = Handler(Looper.getMainLooper())
+                                extractorHandlers += pollHandler
                                 var pollCount = 0
                                 val poll = object : Runnable {
                                     override fun run() {
-                                        if (pollCount++ >= 20 || view == null || reanimeServerSelected) return
+                                        if (!extractorActive.get() || pollCount++ >= 20 || view == null || reanimeServerSelected) return
                                         view.evaluateJavascript("""(function(){
                                             var els=Array.from(document.querySelectorAll('button,a,[role=button],[data-server],[data-provider]'));
                                             var labels=els.map(function(e){var t=(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ');var d=((e.getAttribute('data-server')||'')+' '+(e.getAttribute('data-provider')||'')).trim();return t+' ['+d+']';}).filter(Boolean);
@@ -630,18 +745,76 @@ fun StreamUrlExtractor(
                 }
 
                 // Re:ANIME: resolve the FlixCloud player for THIS anime/episode first.
-                // Never reuse a FlixCloud /e/... URL from another episode.
+                // Follow the desktop port's lifecycle: get every server candidate, try HD-2 first,
+                // then HD-1/remaining candidates in fresh page sessions, and fail over quickly.
                 val isReAnime = targetHost == "reanime.to" || targetHost == "www.reanime.to"
                 if (isReAnime && reAnimeAnilistId != null && reAnimeEpisodeNumber != null) {
                     val webView = this
                     val resolverClient = OkHttpClient.Builder()
                         .followRedirects(true)
                         .followSslRedirects(true)
-                        .connectTimeout(10, TimeUnit.SECONDS)
-                        .readTimeout(15, TimeUnit.SECONDS)
+                        .connectTimeout(8, TimeUnit.SECONDS)
+                        .readTimeout(12, TimeUnit.SECONDS)
                         .build()
-                    thread(name = "ReAnimeFlixResolve", isDaemon = true) {
+
+                    fun resetCandidateState() {
+                        cancelReAnimeCandidateTimeout()
+                        detectedUrls.clear()
+                        flixCloudPk = null
+                        flixPkPollStarted = false
+                        reanimeEncryptedMasterUrl = null
+                        reanimeDecryptedM3u8Reported = false
+                        reanimeMasterFallbackPosted = false
+                        lastM3u8Referer = null
+                        lastM3u8Headers = null
+                        reanimeStreamReady = false
+                    }
+
+                    fun loadReAnimeCandidate(reason: String) {
+                        if (!extractorActive.get() || reAnimeCandidateIndex >= reanimeCandidates.size || reanimeStreamReady) return
+                        resetCandidateState()
+                        val candidate = reanimeCandidates[reAnimeCandidateIndex]
+                        reAnimeActiveCandidate = candidate
+                        Log.d(
+                            "ReAnimeStream",
+                            "FLIX_CANDIDATE_START index=$reAnimeCandidateIndex/${reanimeCandidates.size} reason=$reason url=$candidate"
+                        )
+                        // The desktop resolver creates a fresh browser session per server. AndroidView
+                        // cannot cheaply replace the Composable WebView, so force a real navigation reset
+                        // and clear page-local state before loading the next candidate.
+                        runCatching { webView.stopLoading() }
+                        runCatching { webView.loadUrl("about:blank") }
+                        mainHandler.postDelayed({
+                            if (extractorActive.get() && reAnimeActiveCandidate == candidate) {
+                                webView.loadUrl(candidate, mapOf("Referer" to "https://reanime.to/"))
+                            }
+                        }, 80L)
+                        val timeout = Runnable {
+                            if (!extractorActive.get() || reanimeStreamReady) return@Runnable
+                            Log.w(
+                                "ReAnimeStream",
+                                "FLIX_CANDIDATE_TIMEOUT index=$reAnimeCandidateIndex url=$candidate"
+                            )
+                            reAnimeCandidateIndex++
+                            reAnimeActiveCandidate = null
+                            if (reAnimeCandidateIndex < reanimeCandidates.size) {
+                                loadReAnimeCandidate("timeout")
+                            } else {
+                                Log.e("ReAnimeStream", "FLIX_ALL_CANDIDATES_FAILED episode=$reAnimeEpisodeNumber")
+                                mainHandler.post {
+                                    onQualitiesFound(emptyList())
+                                }
+                            }
+                        }
+                        reanimeCandidateTimeout = timeout
+                        // 12 s per candidate is enough for normal FlixCloud bootstrap while
+                        // preventing a dead HD-2 server from blocking the next episode indefinitely.
+                        mainHandler.postDelayed(timeout, 12_000L)
+                    }
+
+                    val resolverThread = thread(name = "ReAnimeFlixResolve", isDaemon = true) {
                         try {
+                            if (!extractorActive.get()) return@thread
                             val apiUrl = "https://reanime.to/api/flix/$reAnimeAnilistId/$reAnimeEpisodeNumber"
                             val request = Request.Builder()
                                 .url(apiUrl)
@@ -651,53 +824,67 @@ fun StreamUrlExtractor(
                                 .build()
                             resolverClient.newCall(request).execute().use { response ->
                                 val body = response.body?.string().orEmpty()
-                                if (!response.isSuccessful) throw IllegalStateException("HTTP ${response.code}")
+                                if (!response.isSuccessful) throw IllegalStateException("HTTP ${'$'}{response.code}")
                                 val root = JSONObject(body)
                                 val servers = root.optJSONArray("servers") ?: throw IllegalStateException("servers missing")
-                                var hd2: String? = null
-                                var hd1: String? = null
-                                for (i in 0 until servers.length()) {
-                                    val item = servers.optJSONObject(i) ?: continue
-                                    val link = item.optString("dataLink").trim()
-                                    if (link.isBlank()) continue
-                                    val name = item.optString("serverName").uppercase()
-                                    if (name.contains("HD-2")) hd2 = link
-                                    if (name.contains("HD-1")) hd1 = link
+                                val candidates = buildList {
+                                    for (i in 0 until servers.length()) {
+                                        val item = servers.optJSONObject(i) ?: continue
+                                        val link = item.optString("dataLink").trim()
+                                        if (!link.startsWith("https://flixcloud.cc/e/", true)) continue
+                                        add(item.optString("serverName").trim() to link)
+                                    }
                                 }
-                                val flixUrl = hd2 ?: hd1 ?: (0 until servers.length())
-                                    .asSequence()
-                                    .mapNotNull { servers.optJSONObject(it)?.optString("dataLink")?.trim() }
-                                    .firstOrNull { it.startsWith("https://flixcloud.cc/e/", true) }
-                                    ?: throw IllegalStateException("No FlixCloud dataLink")
-                                Log.d("ReAnimeStream", "FLIX_RESOLVED episode=$reAnimeEpisodeNumber url=$flixUrl")
+                                val ordered = candidates
+                                    .sortedWith(compareBy<Pair<String, String>> {
+                                        when {
+                                            it.first.equals("HD-2", true) -> 0
+                                            it.first.contains("HD-2", true) -> 1
+                                            it.first.equals("HD-1", true) -> 2
+                                            it.first.contains("HD-1", true) -> 3
+                                            else -> 4
+                                        }
+                                    })
+                                    .map { it.second }
+                                    .distinct()
+                                if (ordered.isEmpty()) throw IllegalStateException("No FlixCloud dataLink")
+                                if (!extractorActive.get()) return@thread
                                 mainHandler.post {
-                                    webView.loadUrl(flixUrl)
+                                    if (!extractorActive.get()) return@post
+                                    reanimeCandidates = ordered
+                                    reAnimeCandidateIndex = 0
+                                    Log.d("ReAnimeStream", "FLIX_CANDIDATES count=${'$'}{ordered.size} order=${'$'}{ordered.joinToString()}")
+                                    loadReAnimeCandidate("api")
                                 }
                             }
                         } catch (t: Throwable) {
                             Log.e("ReAnimeStream", "FLIX_RESOLVE_FAILED episode=$reAnimeEpisodeNumber", t)
+                            if (!extractorActive.get()) return@thread
                             mainHandler.post {
-                                webView.loadUrl(targetUrl)
+                                if (!extractorActive.get()) return@post
+                                // Only use the watch page as a last-resort DOM fallback.
+                                webView.loadUrl(targetUrl, mapOf("Referer" to "https://reanime.to/"))
                                 mainHandler.postDelayed({
-                                    if (webView != null) {
-                                        webView.evaluateJavascript(
-                                            """(function(){try{var a=[].slice.call(document.querySelectorAll('a,[href],[data-url],[data-link],[data-server-url]'));return a.map(function(e){return e.href||e.getAttribute('data-url')||e.getAttribute('data-link')||e.getAttribute('data-server-url')||''}).filter(function(x){return /flixcloud\\.cc\\/e\\//i.test(x)}).join('\\n');}catch(e){return '';}})()"""
-                                        ) { raw ->
-                                            val decoded = raw.orEmpty().trim().trim('\"')
-                                                .replace("\\\"", "\"")
-                                                .replace("\\/", "/")
-                                            val flixUrl = decoded.split('\n')
-                                                .firstOrNull { it.startsWith("https://flixcloud.cc/e/", true) }
-                                            if (!flixUrl.isNullOrBlank()) {
-                                                Log.d("ReAnimeStream", "FLIX_DOM_RESOLVED episode=$reAnimeEpisodeNumber url=$flixUrl")
-                                                webView.loadUrl(flixUrl)
-                                            }
+                                    if (!extractorActive.get() || reanimeStreamReady) return@postDelayed
+                                    webView.evaluateJavascript(
+                                        """(function(){try{var a=[].slice.call(document.querySelectorAll('a,[href],[data-url],[data-link],[data-server-url]'));return a.map(function(e){return e.href||e.getAttribute('data-url')||e.getAttribute('data-link')||e.getAttribute('data-server-url')||''}).filter(function(x){return /flixcloud\\.cc\\/e\\//i.test(x)}).join('\n');}catch(e){return '';}})()"""
+                                    ) { raw ->
+                                        val decoded = raw.orEmpty().trim().trim('"')
+                                            .replace("\\\"", "\"")
+                                            .replace("\\/", "/")
+                                        val fallback = decoded.split('\n')
+                                            .firstOrNull { it.startsWith("https://flixcloud.cc/e/", true) }
+                                        if (!fallback.isNullOrBlank()) {
+                                            reanimeCandidates = listOf(fallback)
+                                            reAnimeCandidateIndex = 0
+                                            loadReAnimeCandidate("dom-fallback")
                                         }
                                     }
-                                }, 2500L)
+                                }, 1200L)
                             }
                         }
                     }
+                    resolverThreads += resolverThread
                 } else {
                     Log.d("ReAnimeStream", "INITIAL_WEBVIEW_URL $targetUrl")
                     loadUrl(targetUrl)

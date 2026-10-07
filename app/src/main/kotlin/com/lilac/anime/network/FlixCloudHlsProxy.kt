@@ -45,7 +45,8 @@ object FlixCloudHlsProxy : Closeable {
 
     private data class Session(
         val pkBase64: String,
-        val headers: Map<String, String>
+        val headers: Map<String, String>,
+        @Volatile var lastAccessMs: Long = System.currentTimeMillis()
     )
 
     private val sessions = ConcurrentHashMap<String, Session>()
@@ -81,6 +82,7 @@ object FlixCloudHlsProxy : Closeable {
         require(upstreamUrl.startsWith("http://", true) || upstreamUrl.startsWith("https://", true))
         require(pkBase64.isNotBlank()) { "FlixCloud __pk is empty" }
         ensureStarted()
+        cleanupStaleSessions()
 
         val id = UUID.randomUUID().toString().replace("-", "")
         sessions[id] = Session(
@@ -98,6 +100,13 @@ object FlixCloudHlsProxy : Closeable {
 
     fun isProxyUrl(url: String): Boolean =
         url.startsWith("http://127.0.0.1:") && url.contains("/__flix/")
+
+    /** Drop only playback sessions; keep the local proxy socket alive for fast next-episode startup. */
+    @Synchronized
+    fun clearSessions() {
+        sessions.clear()
+        Log.d(TAG, "PLAYBACK_SESSIONS_CLEARED")
+    }
 
     /**
      * Handles one local HTTP client connection. A player is allowed to cancel an
@@ -158,6 +167,7 @@ object FlixCloudHlsProxy : Closeable {
                 writeResponse(output, 410, "text/plain; charset=utf-8", "Session expired".toByteArray())
                 return
             }
+            session.lastAccessMs = System.currentTimeMillis()
 
             val encodedUrl = pathParts.drop(2).joinToString("/")
             val upstreamUrl = runCatching {
@@ -245,6 +255,18 @@ object FlixCloudHlsProxy : Closeable {
                 )
                 Log.d(TAG, "PROXY_RESPONSE kind=$kind bytes=${decoded.size} url=$upstreamUrl")
             }
+        }
+    }
+
+    private fun cleanupStaleSessions() {
+        val staleBefore = System.currentTimeMillis() - 30L * 60L * 1000L
+        sessions.entries.removeIf { it.value.lastAccessMs < staleBefore }
+        // Prevent abandoned episode sessions from growing without bound after long sessions.
+        if (sessions.size > 128) {
+            sessions.entries
+                .sortedBy { it.value.lastAccessMs }
+                .take(sessions.size - 128)
+                .forEach { sessions.remove(it.key, it.value) }
         }
     }
 

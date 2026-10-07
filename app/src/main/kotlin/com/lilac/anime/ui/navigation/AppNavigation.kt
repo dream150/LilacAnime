@@ -13,6 +13,7 @@ import com.lilac.anime.ui.*
 import com.lilac.anime.ui.detail.*
 import com.lilac.anime.ui.home.*
 import com.lilac.anime.ui.search.*
+import com.lilac.anime.ui.reanime.*
 import com.lilac.anime.ui.settings.*
 import com.lilac.anime.ui.theme.*
 import com.lilac.anime.viewmodel.*
@@ -187,6 +188,8 @@ fun LilacApp(vm: AnimeViewModel = viewModel()) {
         NavHost(navController = nav, startDestination = "home") {
             composable("home") {
                 if (isTv) TvHomeScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
+                else if (vm.playerSettings.videoSourcePreference == "reanime")
+                    ReAnimeHomeScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
                 else HomeScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
             }
 
@@ -200,6 +203,8 @@ fun LilacApp(vm: AnimeViewModel = viewModel()) {
 
             composable("search") {
                 if (isTv) TvSearchScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
+                else if (vm.playerSettings.videoSourcePreference == "reanime")
+                    ReAnimeSearchScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
                 else SearchScreen(vm, { nav.navigate("detail/${it.id}") }, { nav.navigate(it) })
             }
 
@@ -237,6 +242,14 @@ fun LilacApp(vm: AnimeViewModel = viewModel()) {
                     currentItem != null -> {
                         if (isTv) {
                             TvDetailScreen(
+                                vm = vm,
+                                anime = currentItem,
+                                back = { nav.popBackStack() },
+                                playEpisode = { ep -> nav.navigate("player/${currentItem.id}/${Uri.encode(ep.id)}") },
+                                openRelated = { related -> vm.cacheAnime(related); nav.navigate("detail/${related.id}") }
+                            )
+                        } else if (vm.playerSettings.videoSourcePreference == "reanime") {
+                            ReAnimeDetailScreen(
                                 vm = vm,
                                 anime = currentItem,
                                 back = { nav.popBackStack() },

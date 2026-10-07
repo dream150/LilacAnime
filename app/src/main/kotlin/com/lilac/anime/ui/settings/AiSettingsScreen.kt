@@ -26,6 +26,7 @@ import com.lilac.anime.core.model.PlayerSettings
 import com.lilac.anime.data.subtitle.translation.SecureApiKeyStore
 import com.lilac.anime.data.subtitle.translation.TranslationCache
 import com.lilac.anime.data.subtitle.translation.TranslationManager
+import com.lilac.anime.data.subtitle.TmdbTitleResolver
 import com.lilac.anime.data.subtitle.translation.localai.*
 import com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime
 import com.lilac.anime.viewmodel.AnimeViewModel
@@ -65,6 +66,8 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
     var keyProvider by remember { mutableStateOf<String?>(null) }
     var keyText by remember { mutableStateOf("") }
     var keyMessage by remember { mutableStateOf<String?>(null) }
+    var tmdbKeyText by remember { mutableStateOf(SecureApiKeyStore.get(context, "tmdb").orEmpty()) }
+    var tmdbMessage by remember { mutableStateOf<String?>(null) }
     val aiPrefs = remember { context.getSharedPreferences("lilac_offline_store", android.content.Context.MODE_PRIVATE) }
     val keyProviders = listOf("gemini" to "Gemini", "openai" to "OpenAI", "deepl" to "DeepL", "qwen" to "Qwen")
     var geminiModel by remember { mutableStateOf(aiPrefs.getString("pref_gemini_model", "gemini-3.5-flash-lite") ?: "gemini-3.5-flash-lite") }
@@ -481,12 +484,21 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
 
             Spacer(Modifier.height(18.dp)); Text("번역 테스트",fontSize=16.sp,fontWeight=FontWeight.Bold)
             OutlinedTextField(value=testText,onValueChange={testText=it},modifier=Modifier.fillMaxWidth(),minLines=2,maxLines=4,label={Text("일본어 문장")},enabled=!testing)
-            OutlinedButton(onClick={scope.launch{testing=true;testResult="번역 중...";val r=TranslationManager.test(context,"local",testText);testResult=r.fold({it},{"테스트 실패: ${it.message.orEmpty()}"});testing=false}},enabled=!testing&&models.any{it.compatibility==Compatibility.SUPPORTED},modifier=Modifier.fillMaxWidth()){Text(if(testing)"번역 테스트 중..." else "번역 테스트 실행")}
+            OutlinedButton(onClick={scope.launch{testing=true;testResult="번역 중...";val r=TranslationManager.test(context,settings.translationProvider,testText);testResult=r.fold({it},{"테스트 실패: ${it.message.orEmpty()}"});testing=false}},enabled=!testing && (settings.translationProvider != "local" || models.any{it.compatibility==Compatibility.SUPPORTED}),modifier=Modifier.fillMaxWidth()){Text(if(testing)"번역 테스트 중..." else "번역 테스트 실행")}
             testResult?.let{Text(it,fontSize=12.sp)}
 
             Spacer(Modifier.height(18.dp)); Text("클라우드 번역 API",fontSize=16.sp,fontWeight=FontWeight.Bold)
             keyProviders.forEach{(id,label)->OutlinedButton(onClick={keyProvider=id;keyText=SecureApiKeyStore.get(context,id).orEmpty();keyMessage=null},modifier=Modifier.fillMaxWidth()){Text("$label API Key ${if(SecureApiKeyStore.has(context,id))"(저장됨)" else "(미설정)"}")}}
             Text("API Key는 Android Keystore로 암호화하여 저장합니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.55f))
+            Spacer(Modifier.height(14.dp))
+            Text("TMDB 제목 매칭",fontSize=16.sp,fontWeight=FontWeight.Bold)
+            Text("자막 검색에서 일본어/영문 제목을 한국어 제목으로 보정할 때 사용합니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+            OutlinedTextField(value=tmdbKeyText,onValueChange={tmdbKeyText=it;tmdbMessage=null},modifier=Modifier.fillMaxWidth(),singleLine=true,visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password),label={Text("TMDB API Key")})
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick={TmdbTitleResolver.setApiKey(context,tmdbKeyText);tmdbMessage="저장됨"},modifier=Modifier.weight(1f)){Text("TMDB 키 저장")}
+                OutlinedButton(onClick={scope.launch{tmdbMessage="테스트 중...";tmdbMessage=TmdbTitleResolver.test(context).fold({it},{"테스트 실패: ${it.message.orEmpty()}"})}},modifier=Modifier.weight(1f)){Text("연결 테스트")}
+            }
+            tmdbMessage?.let{Text(it,fontSize=11.sp)}
             Text("API 모델 이름", fontSize=14.sp, fontWeight=FontWeight.SemiBold)
             OutlinedTextField(value=geminiModel,onValueChange={geminiModel=it;aiPrefs.edit().putString("pref_gemini_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("Gemini 모델")},supportingText={Text("기본값: gemini-3.5-flash-lite")})
             OutlinedTextField(value=openAiModel,onValueChange={openAiModel=it;aiPrefs.edit().putString("pref_openai_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("OpenAI 모델")},supportingText={Text("기본값: gpt-4.1-mini")})

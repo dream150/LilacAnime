@@ -88,6 +88,14 @@ class MpvHlsDownloader(
         val audioUrl: String?
     )
 
+    private data class AudioRendition(
+        val url: String,
+        val language: String?,
+        val name: String?,
+        val isDefault: Boolean,
+        val isAutoSelect: Boolean
+    )
+
     private data class LocalPlaylist(
         val file: File,
         val segmentCount: Int,
@@ -285,7 +293,7 @@ class MpvHlsDownloader(
         )
 
         val lines = master.lines().map { it.trim() }
-        val audioRenditions = mutableMapOf<String, String>()
+        val audioRenditions = mutableMapOf<String, MutableList<AudioRendition>>()
 
         for (line in lines) {
             if (!line.startsWith("#EXT-X-MEDIA:")) continue
@@ -294,7 +302,15 @@ class MpvHlsDownloader(
 
             val group = attrs["GROUP-ID"] ?: continue
             val uri = attrs["URI"] ?: continue
-            audioRenditions[group] = resolveUrl(url, uri)
+            audioRenditions.getOrPut(group) { mutableListOf() }.add(
+                AudioRendition(
+                    url = resolveUrl(url, uri),
+                    language = attrs["LANGUAGE"]?.trim('"', ' '),
+                    name = attrs["NAME"]?.trim('"', ' '),
+                    isDefault = attrs["DEFAULT"]?.equals("YES", true) == true,
+                    isAutoSelect = attrs["AUTOSELECT"]?.equals("YES", true) == true
+                )
+            )
         }
 
         val variants = mutableListOf<Variant>()
@@ -323,15 +339,38 @@ class MpvHlsDownloader(
         val selected = variants.maxByOrNull { it.bandwidth }
             ?: return PlaylistInfo(url, null)
 
+        val selectedAudio = selected.audioGroup?.let { group ->
+            audioRenditions[group].orEmpty().let { renditions ->
+                // Match libmpv's intended Japanese/original preference rather than
+                // blindly taking the first rendition. Re:ANIME/FlixCloud masters
+                // can expose Japanese + English dub in the same audio group.
+                renditions.maxWithOrNull(compareBy<AudioRendition> {
+                    val lang = it.language.orEmpty().lowercase(Locale.ROOT)
+                    when {
+                        lang == "ja" || lang == "jpn" || lang.startsWith("ja-") -> 100
+                        it.name.orEmpty().lowercase(Locale.ROOT).contains("japanese") ||
+                            it.name.orEmpty().lowercase(Locale.ROOT).contains("original") ||
+                            it.name.orEmpty().lowercase(Locale.ROOT).contains("日本語") -> 90
+                        it.isDefault -> 70
+                        it.isAutoSelect -> 20
+                        lang == "en" || lang == "eng" || lang.startsWith("en-") -> -100
+                        else -> 0
+                    }
+                })
+            }
+        }
+
         Log.i(
             TAG,
             "MASTER_VARIANTS count=${variants.size} selectedBandwidth=${selected.bandwidth} " +
-                "selected=${selected.url} audioGroup=${selected.audioGroup ?: "<none>"} audioRenditions=${audioRenditions.size}"
+                "selected=${selected.url} audioGroup=${selected.audioGroup ?: "<none>"} " +
+                "audioRenditions=${audioRenditions.values.sumOf { it.size }} " +
+                "selectedAudioLang=${selectedAudio?.language ?: "<embedded/none>"} selectedAudioName=${selectedAudio?.name ?: "<none>"}"
         )
 
         return PlaylistInfo(
             mediaUrl = selected.url,
-            audioUrl = selected.audioGroup?.let { audioRenditions[it] }
+            audioUrl = selectedAudio?.url
         )
     }
 

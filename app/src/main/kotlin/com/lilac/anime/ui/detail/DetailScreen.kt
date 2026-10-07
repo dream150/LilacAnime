@@ -662,8 +662,14 @@ fun DetailScreen(
                 try {
                     val resolved = ReAnimePlayerResolver.resolve(context, ep, currentAnime.anilistId)
                     val streamUrl = resolved.m3u8Url
-                    if (streamUrl.isNullOrBlank()) {
-                        Toast.makeText(context, "Re:ANIME 스트리밍 주소를 찾지 못했습니다.", Toast.LENGTH_SHORT).show()
+                    val flixCloudPk = resolved.flixCloudPk
+                    if (streamUrl.isNullOrBlank() || flixCloudPk.isNullOrBlank()) {
+                        Log.w(
+                            "OfflineDownload",
+                            "REANIME_RESOLVE_INCOMPLETE episode=${ep.displayNumber} " +
+                                "m3u8=${!streamUrl.isNullOrBlank()} pkChars=${flixCloudPk?.length ?: 0}"
+                        )
+                        Toast.makeText(context, "Re:ANIME 보안 스트림 정보를 가져오지 못했습니다.", Toast.LENGTH_SHORT).show()
                         return@launch
                     }
                     withContext(Dispatchers.IO) {
@@ -734,7 +740,7 @@ fun DetailScreen(
                         referer = resolved.referer,
                         subtitleUrl = resolved.subtitleUrl,
                         subtitleReferer = resolved.subtitleReferer ?: resolved.referer,
-                        flixCloudPk = resolved.flixCloudPk,
+                        flixCloudPk = flixCloudPk,
                         streamHeaders = offlineStreamHeaders
                     )
                     Toast.makeText(context, "${ep.displayNumber}화 다운로드를 시작합니다.", Toast.LENGTH_SHORT).show()
@@ -876,6 +882,65 @@ fun DetailScreen(
         isBatchDownloading = true
         batchTotalCount = targetEpisodes.size
         batchCurrentIndex = 0
+
+        if (isReAnime) {
+            scope.launch(Dispatchers.Main) {
+                for ((index, ep) in targetEpisodes.withIndex()) {
+                    if (!isBatchDownloading) break
+                    batchCurrentIndex = index + 1
+                    try {
+                        val resolved = ReAnimePlayerResolver.resolve(context, ep, currentAnime.anilistId)
+                        val streamUrl = resolved.m3u8Url
+                        val pk = resolved.flixCloudPk
+                        if (streamUrl.isNullOrBlank() || pk.isNullOrBlank()) {
+                            Log.w("OfflineDownload", "REANIME_BATCH_RESOLVE_FAILED episode=${ep.displayNumber} m3u8=${!streamUrl.isNullOrBlank()} pkChars=${pk?.length ?: 0}")
+                            continue
+                        }
+
+                        val headers = buildString {
+                            append(resolved.headers.orEmpty())
+                            fun addHeader(name: String, value: String?) {
+                                if (value.isNullOrBlank()) return
+                                val exists = lineSequence().any { it.substringBefore(':').trim().equals(name, true) }
+                                if (!exists) {
+                                    if (isNotEmpty()) append('\n')
+                                    append(name).append(": ").append(value.trim())
+                                }
+                            }
+                            addHeader("Referer", resolved.referer ?: "https://reanime.to/")
+                            addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
+                            addHeader("Origin", "https://flixcloud.cc")
+                        }.takeIf { it.isNotBlank() }
+
+                        withContext(Dispatchers.IO) {
+                            OfflineStore.saveAnime(context, currentAnime)
+                            OfflineStore.saveEpisode(
+                                context = context,
+                                animeId = currentAnime.id,
+                                episode = ep.copy(videoUrl = streamUrl, vttUrl = resolved.subtitleUrl.orEmpty())
+                            )
+                        }
+                        startEpisodeDownload(
+                            context = context,
+                            animeId = currentAnime.id,
+                            animeTitle = currentAnime.title,
+                            episode = ep.copy(videoUrl = streamUrl, vttUrl = resolved.subtitleUrl.orEmpty()),
+                            streamUrl = streamUrl,
+                            referer = resolved.referer ?: "https://reanime.to/",
+                            subtitleUrl = resolved.subtitleUrl,
+                            subtitleReferer = resolved.subtitleReferer ?: resolved.referer,
+                            flixCloudPk = pk,
+                            streamHeaders = headers
+                        )
+                        Log.i("OfflineDownload", "REANIME_BATCH_ENQUEUED episode=${ep.displayNumber} pkChars=${pk.length}")
+                    } catch (t: Throwable) {
+                        Log.e("OfflineDownload", "REANIME_BATCH_FAILED episode=${ep.displayNumber}", t)
+                    }
+                }
+                isBatchDownloading = false
+            }
+            return
+        }
 
         scope.launch(Dispatchers.Main) {
             for ((index, ep) in targetEpisodes.withIndex()) {

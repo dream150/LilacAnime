@@ -73,7 +73,7 @@ data class PlayerSettings(
     val assEffectsEnabled: Boolean = true,
     // 자막 자동 번역
     val translationAutoEnabled: Boolean = false,
-    // local = 설치된 GGUF + runtime, openai/deepl/qwen = 사용자 API Key
+    // local = 설치된 GGUF + runtime, gemini/openai/deepl/qwen = 사용자 API Key
     val translationProvider: String = "local",
     val translationModelId: String? = null,
     val translationPrompt: String = com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime.DEFAULT_PROMPT,

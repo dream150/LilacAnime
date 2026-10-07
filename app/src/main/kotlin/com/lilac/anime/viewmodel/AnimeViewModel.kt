@@ -74,6 +74,14 @@ class AnimeViewModel : ViewModel() {
         private set
     var reAnimeSearchLoading by mutableStateOf(false)
         private set
+    var reAnimeTop by mutableStateOf<List<Anime>>(emptyList())
+        private set
+    var reAnimeSchedule by mutableStateOf<List<Anime>>(emptyList())
+        private set
+    var reAnimeFacets by mutableStateOf(ReAnimeHarParser.Facets())
+        private set
+    var reAnimeHomeLoading by mutableStateOf(false)
+        private set
     var linkkfSchedule by mutableStateOf<Map<Int, List<Anime>>>(emptyMap())
         private set
     var linkkfScheduleLoading by mutableStateOf(false)
@@ -349,15 +357,28 @@ class AnimeViewModel : ViewModel() {
     }
 
     fun isEpisodeDownloaded(animeId: String, episode: Episode): Boolean {
-        val local = MpvOfflineStore.isCompleted(appContext, animeId, episode.id)
-        return local ||
+        // Re:Anime can regenerate Episode.id when its catalog/detail payload is refreshed.
+        // Offline files are also indexed by episode number, so the UI must not depend on
+        // the current online Episode.id matching the id used when the download was saved.
+        val local = MpvOfflineStore.completedPathForEpisode(
+            appContext, animeId, episode.id, episode.number
+        ) != null
+        val statusMatch = MpvOfflineStore.listStatuses(appContext).any { status ->
+            status.state == "completed" &&
+                status.animeId == animeId &&
+                status.episodeNumber == episode.number &&
+                MpvOfflineStore.completedPathForEpisode(
+                    appContext, animeId, status.episodeId, status.episodeNumber
+                ) != null
+        }
+        return local || statusMatch ||
             _downloadedIds.value.contains(offlineDownloadId(animeId, episode)) ||
             _downloadedIds.value.contains(episode.id) ||
             (episode.displayNumber == episode.number.toString() &&
                 _downloadedIds.value.contains("${animeId}_${episode.number}"))
     }
 
-    fun searchReAnime(query: String) {
+    fun searchReAnime(query: String, context: Context? = null) {
         if (playerSettings.videoSourcePreference != "reanime") return
         val q = query.trim()
         reAnimeSearchJob?.cancel()
@@ -370,8 +391,45 @@ class AnimeViewModel : ViewModel() {
             delay(250L)
             reAnimeSearchLoading = true
             try {
-                val results = withContext(Dispatchers.IO) { repository.searchAnime(q, "reanime") }
+                val sourceResults = withContext(Dispatchers.IO) { repository.searchAnime(q, "reanime") }
+                val results = if (context != null && TmdbTitleResolver.hasApiKey(context)) {
+                    withContext(Dispatchers.IO) {
+                        if (sourceResults.isNotEmpty()) {
+                            sourceResults.map { anime ->
+                                val korean = TmdbTitleResolver.resolveBest(
+                                    context,
+                                    listOf(anime.title, anime.english, anime.romaji, anime.native)
+                                )
+                                if (!korean.isNullOrBlank()) anime.copy(title = korean) else anime
+                            }
+                        } else {
+                            // TMDB is a title/search helper, not a new content provider:
+                            // use its Korean/original title variants to search Re:Anime again,
+                            // so returned cards remain real Re:Anime works and stay playable.
+                            val variants = TmdbTitleResolver.searchTitleVariants(context, q)
+                            val expanded = mutableListOf<Anime>()
+                            for (variant in variants) {
+                                val found = runCatching { repository.searchAnime(variant, "reanime") }.getOrNull().orEmpty()
+                                expanded.addAll(found)
+                            }
+                            val unique = expanded.distinctBy { it.id }
+                            val renamed = mutableListOf<Anime>()
+                            for (anime in unique) {
+                                val korean = TmdbTitleResolver.resolveBest(
+                                    context,
+                                    listOf(anime.title, anime.english, anime.romaji, anime.native)
+                                )
+                                renamed.add(if (!korean.isNullOrBlank()) anime.copy(title = korean) else anime)
+                            }
+                            renamed
+                        }
+                    }
+                } else sourceResults
                 reAnimeSearchResults = results
+                results.forEach { anime ->
+                    animeCache[anime.id] = anime
+                    detailCache.putIfAbsent(anime.id, anime)
+                }
             } catch (e: Exception) {
                 Log.e("ReAnimeSearch", "SEARCH_FAILED query=$q", e)
                 reAnimeSearchResults = emptyList()
@@ -657,6 +715,123 @@ class AnimeViewModel : ViewModel() {
                 Log.w("LinkkfDetail", "DETAIL_EXTRAS_FAILED id=${anime.id}", e)
             } finally {
                 linkkfDetailExtrasLoading = false
+            }
+        }
+    }
+
+    suspend fun searchReAnimeWithFilters(genre: String, year: Int?, status: String, format: String): List<Anime> =
+        withContext(Dispatchers.IO) { repository.searchReAnime(genre = listOf(genre).filter { it.isNotBlank() }, year = year, status = status.ifBlank { null }, format = format.ifBlank { null }) }
+
+    fun searchReAnimeFiltered(
+        query: String,
+        genre: String,
+        year: Int?,
+        season: String,
+        status: String,
+        format: String,
+        context: Context? = null
+    ) {
+        if (playerSettings.videoSourcePreference != "reanime") return
+        reAnimeSearchJob?.cancel()
+        reAnimeSearchJob = viewModelScope.launch {
+            reAnimeSearchLoading = true
+            try {
+                val sourceResults = withContext(Dispatchers.IO) {
+                    repository.searchReAnime(
+                        query = query.trim(),
+                        genre = listOf(genre).filter { it.isNotBlank() },
+                        year = year,
+                        season = season.ifBlank { null },
+                        status = status.ifBlank { null },
+                        format = format.ifBlank { null }
+                    )
+                }
+                reAnimeSearchResults = if (context != null && TmdbTitleResolver.hasApiKey(context)) {
+                    withContext(Dispatchers.IO) {
+                        sourceResults.map { anime ->
+                            val korean = TmdbTitleResolver.resolveBest(
+                                context,
+                                listOf(anime.title, anime.english, anime.romaji, anime.native)
+                            )
+                            if (!korean.isNullOrBlank()) anime.copy(title = korean) else anime
+                        }
+                    }
+                } else sourceResults
+                reAnimeSearchResults.forEach { anime ->
+                    animeCache[anime.id] = anime
+                    detailCache.putIfAbsent(anime.id, anime)
+                }
+            } catch (e: Exception) {
+                Log.e("ReAnimeSearch", "FILTER_SEARCH_FAILED query=$query", e)
+                reAnimeSearchResults = emptyList()
+            } finally {
+                reAnimeSearchLoading = false
+            }
+        }
+    }
+
+    fun loadReAnimeHome(force: Boolean = false) {
+        if (reAnimeHomeLoading) return
+        reAnimeHomeLoading = true
+        viewModelScope.launch {
+            try {
+                val data = withContext(Dispatchers.IO) { repository.getReAnimeHomeData() }
+                reAnimeTop = data.first
+                reAnimeSchedule = data.second
+                reAnimeFacets = data.third
+                (data.first + data.second).distinctBy { it.id }.forEach { animeCache[it.id] = it }
+                homeAnime = data.first
+            } catch (e: Exception) {
+                Log.w("ReAnimeHome", "HOME_LOAD_FAILED", e)
+            } finally {
+                reAnimeHomeLoading = false
+            }
+        }
+    }
+
+    fun enqueueReAnimeDownload(context: Context, anime: Anime, episode: Episode) {
+        viewModelScope.launch {
+            try {
+                val aid = anime.anilistId ?: throw IllegalStateException("Re:Anime AniList ID가 없습니다.")
+                val resolved = withContext(Dispatchers.IO) {
+                    ReAnimePlayerResolver.resolve(context, episode, aid)
+                }
+                val stream = resolved.m3u8Url ?: throw IllegalStateException("영상 스트림을 찾지 못했습니다.")
+                val offlineEpisode = episode.copy(videoUrl = stream, vttUrl = resolved.subtitleUrl)
+                withContext(Dispatchers.IO) {
+                    OfflineStore.saveAnime(context, anime)
+                    OfflineStore.saveEpisode(context, anime.id, offlineEpisode)
+                }
+                val headers = buildString {
+                    append(resolved.headers.orEmpty())
+                    fun add(name: String, value: String?) {
+                        if (value.isNullOrBlank()) return
+                        val exists = lineSequence().any { it.substringBefore(':').trim().equals(name, true) }
+                        if (!exists) {
+                            if (isNotEmpty()) append('\n')
+                            append(name).append(": ").append(value.trim())
+                        }
+                    }
+                    add("Referer", resolved.referer ?: "https://flixcloud.cc/")
+                    add("Origin", "https://flixcloud.cc")
+                }.takeIf { it.isNotBlank() }
+                OfflineDownloadManager.enqueue(
+                    context,
+                    OfflineDownloadManager.Request(
+                        animeId = anime.id,
+                        animeTitle = anime.title,
+                        episode = offlineEpisode,
+                        streamUrl = stream,
+                        referer = resolved.referer ?: "https://flixcloud.cc/",
+                        subtitleUrl = resolved.subtitleUrl,
+                        subtitleReferer = resolved.subtitleReferer ?: resolved.referer ?: "https://flixcloud.cc/",
+                        flixCloudPk = resolved.flixCloudPk,
+                        streamHeaders = headers
+                    )
+                )
+                refreshDownloads()
+            } catch (e: Exception) {
+                Log.e("ReAnimeDownload", "DOWNLOAD_FAILED episode=${episode.id}", e)
             }
         }
     }

@@ -132,14 +132,32 @@ object TranslationManager {
 
     suspend fun translateBatch(context: Context, providerId: String, texts: List<String>): List<String> = withContext(Dispatchers.IO) {
         if (texts.isEmpty()) return@withContext emptyList()
-        createProvider(context, providerId).translateBatch(texts)
+        val provider = createProvider(context, providerId)
+        var last: Throwable? = null
+        for (attempt in 0..3) {
+            try {
+                return@withContext provider.translateBatch(texts)
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                last = t
+                val message = t.message.orEmpty()
+                val retryable = message.contains("HTTP 429") ||
+                    Regex("HTTP 5\\d{2}").containsMatchIn(message) ||
+                    t is java.io.IOException
+                if (!retryable || attempt == 3) break
+                val delayMs = (1500L shl attempt).coerceAtMost(8000L)
+                android.util.Log.w("TranslationManager", "RETRY provider=$providerId attempt=${attempt + 1} delayMs=$delayMs message=$message")
+                kotlinx.coroutines.delay(delayMs)
+            }
+        }
+        throw last ?: IllegalStateException("${provider.displayName} 번역에 실패했습니다.")
     }
 
     suspend fun translateText(context: Context, providerId: String, text: String): String? {
         val normalized = text.trim()
         if (normalized.isBlank()) return normalized
         return runCatching {
-            createProvider(context, providerId).translateBatch(listOf(normalized)).firstOrNull()
+            translateBatch(context, providerId, listOf(normalized)).firstOrNull()
                 ?.trim()
                 ?.takeIf { it.isNotBlank() }
         }.getOrNull()
