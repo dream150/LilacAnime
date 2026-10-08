@@ -1,38 +1,19 @@
 package com.lilac.anime.data
 
-import com.lilac.anime.*
-import com.lilac.anime.cast.*
-import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.matcher.*
-import com.lilac.anime.data.offline.*
-import com.lilac.anime.data.subtitle.*
-import com.lilac.anime.network.*
-import com.lilac.anime.player.*
-import com.lilac.anime.ui.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.home.*
-import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.settings.*
-import com.lilac.anime.ui.theme.*
-import com.lilac.anime.viewmodel.*
-
-import java.io.IOException
-import java.net.SocketTimeoutException
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import java.io.IOException
+import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
 /**
- * Network client for Linkkf.
+ * HTTP client for the current Linkkf site.
  *
- * Mobile networks can temporarily fail while switching between LTE/5G cells,
- * IPv4/IPv6 routes, or when the carrier connection is first established.
- * Keep the request conservative but retry transient failures instead of
- * turning a single failed request into an empty home screen.
+ * IMPORTANT: this is intentionally independent from linkkf.app/linkkf.tv's old
+ * JSON API.  The current site captured in the supplied HAR is linkani.tv and
+ * its catalog/detail/watch data is server-rendered HTML.
  */
 class LinkkfClient {
 
@@ -46,70 +27,49 @@ class LinkkfClient {
         .callTimeout(45, TimeUnit.SECONDS)
         .build()
 
-    fun getDocument(url: String, referer: String = "https://linkkf.tv/"): Document {
-        var lastError: Exception? = null
-
-        repeat(MAX_ATTEMPTS) { attempt ->
+    fun getDocument(url: String, referer: String = LinkkfParser.BASE_URL + "/"): Document {
+        var last: Exception? = null
+        repeat(3) { attempt ->
             try {
-                return requestDocument(url, referer)
-            } catch (e: Exception) {
-                lastError = e
-                if (!isRetryable(e) || attempt == MAX_ATTEMPTS - 1) {
-                    throw e
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
+                    .header("Cache-Control", "no-cache")
+                    .header("Pragma", "no-cache")
+                    .header("Referer", referer)
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) throw LinkkfHttpException(response.code)
+                    val html = response.body?.string().orEmpty()
+                    if (html.isBlank()) throw IOException("Linkkf 빈 응답")
+                    return Jsoup.parse(html, url)
                 }
-                // Give LTE/5G routing and DNS a moment to recover before retrying.
-                Thread.sleep(RETRY_DELAYS_MS[attempt])
+            } catch (e: Exception) {
+                last = e
+                if (!retryable(e) || attempt == 2) throw e
+                Thread.sleep(longArrayOf(500L, 1200L)[attempt])
             }
         }
-
-        throw lastError ?: IOException("네트워크 요청에 실패했습니다.")
+        throw last ?: IOException("Linkkf 요청 실패")
     }
 
-    private fun requestDocument(url: String, referer: String): Document {
-        val request = Request.Builder()
-            .url(url)
-            .header(
-                "User-Agent",
-                "Mozilla/5.0 (Linux; Android 10; K) " +
-                    "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                    "Chrome/131.0.0.0 Mobile Safari/537.36"
-            )
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
-            .header("Cache-Control", "no-cache")
-            .header("Pragma", "no-cache")
-            .header("Upgrade-Insecure-Requests", "1")
-            .header("Referer", referer)
-            .build()
+    fun getHtml(url: String, referer: String = LinkkfParser.BASE_URL + "/"): String =
+        getDocument(url, referer).html()
 
-        client.newCall(request).execute().use { response ->
-            val code = response.code
-            if (!response.isSuccessful) {
-                throw LinkkfHttpException(code)
-            }
-
-            val html = response.body?.string()
-                ?: throw IOException("응답 본문이 없습니다.")
-
-            if (html.isBlank()) {
-                throw IOException("빈 응답을 받았습니다.")
-            }
-
-            return Jsoup.parse(html, url)
-        }
-    }
-
-    private fun isRetryable(error: Exception): Boolean {
-        if (error is LinkkfHttpException) {
-            return error.code == 408 || error.code == 425 || error.code == 429 || error.code in 500..599
-        }
-        return error is IOException || error is SocketTimeoutException
-    }
+    private fun retryable(e: Exception): Boolean =
+        e is IOException || e is SocketTimeoutException ||
+            (e is LinkkfHttpException && e.code in 408..599)
 
     private class LinkkfHttpException(val code: Int) : IOException("HTTP $code")
 
     companion object {
-        private const val MAX_ATTEMPTS = 3
-        private val RETRY_DELAYS_MS = longArrayOf(700L, 1600L)
+        const val BASE_URL = LinkkfParser.BASE_URL
+        const val LIST_BASE_URL = "$BASE_URL/list/2/"
+        private const val USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
     }
 }

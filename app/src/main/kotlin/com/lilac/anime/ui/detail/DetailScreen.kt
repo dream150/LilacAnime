@@ -49,13 +49,11 @@ import com.lilac.anime.data.*
 import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.downloadSubtitleFile
 import com.lilac.anime.network.LinkkfRequestContextStore
-import com.lilac.anime.network.LinkkfEpisodeM3u8Collector
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.net.URL
 import kotlinx.coroutines.CompletableDeferred
@@ -406,6 +404,28 @@ fun DetailScreen(
 
     // 비동기 URL 추출 함수
     suspend fun extractEpisodeInfo(ep: Episode): Pair<List<StreamQuality>, String?> {
+        // Current Linkkf (linkani.tv) exposes the actual HLS/VTT URLs in the
+        // server-rendered watch page. Resolve that directly; do not mount the
+        // generic WebView extractor for Linkkf.
+        if (vm.playerSettings.videoSourcePreference == "linkkf") {
+            val resolved = runCatching {
+                LinkkfPlayerResolver.resolve(context, ep)
+            }.getOrNull()
+            if (!resolved?.m3u8Url.isNullOrBlank()) {
+                resolved?.subtitleUrl?.let {
+                    LinkkfRequestContextStore.saveSubtitleUrl(context, currentAnime.id, ep.id, it)
+                }
+                return listOf(
+                    StreamQuality(
+                        "자동",
+                        resolved!!.m3u8Url,
+                        resolved.referer,
+                        resolved.headers
+                    )
+                ) to resolved.subtitleUrl
+            }
+        }
+
         // 이미 직접 재생 가능한 미디어 URL이면 WebView 추출을 거치지 않는다.
         val direct = if (vm.playerSettings.videoSourcePreference == "linkkf") {
             ep.videoUrl?.takeIf {
@@ -491,47 +511,36 @@ fun DetailScreen(
         }
 
         val pageUrl = ep.videoUrl?.takeIf { it.isNotBlank() } ?: return emptyList<StreamQuality>() to null
-        val result = withTimeoutOrNull(35_000L) {
-            LinkkfEpisodeM3u8Collector.collect(
-                context = context,
-                episodes = listOf(ep),
-                waitForSubtitle = true,
-                onSubtitleFound = { episodeId, subtitleUrl, subtitleRef ->
-                    if (episodeId == ep.id) {
-                        LinkkfRequestContextStore.saveSubtitleUrl(context, currentAnime.id, episodeId, subtitleUrl)
-                        subtitleRef?.let { LinkkfRequestContextStore.saveSubtitle(context, currentAnime.id, episodeId, it) }
-                        Log.d("OfflineDownload", "LINKKF_OFFLINE_SUBTITLE_CAPTURED episode=${ep.displayNumber} url=$subtitleUrl referer=${subtitleRef ?: "<none>"}")
-                    }
-                },
-                onStatus = { Log.d("OfflineDownload", it) }
-            )
-        } ?: return emptyList<StreamQuality>() to null
+        val resolved = runCatching {
+            LinkkfPlayerResolver.resolve(context, ep)
+        }.getOrNull() ?: run {
+            Log.e("OfflineDownload", "LINKKF_VIDEO_URL_NOT_FOUND episode=${ep.displayNumber} page=$pageUrl")
+            return emptyList<StreamQuality>() to null
+        }
 
-        val video = result.urls[ep.id]
+        val video = resolved.m3u8Url
         if (video.isNullOrBlank()) {
             Log.e("OfflineDownload", "LINKKF_VIDEO_URL_NOT_FOUND episode=${ep.displayNumber} page=$pageUrl")
             return emptyList<StreamQuality>() to null
         }
 
-        val videoReferer = result.referers[ep.id]
-        val videoHeaders = result.headers[ep.id]
-        val subtitleUrl = result.subtitleUrls[ep.id]
+        val subtitleUrl = resolved.subtitleUrl
             ?: LinkkfRequestContextStore.getSubtitleUrl(context, currentAnime.id, ep.id)
             ?: ep.vttUrl
-        val subtitleReferer = result.subtitleReferers[ep.id]
-            ?: LinkkfRequestContextStore.getSubtitle(context, currentAnime.id, ep.id)
 
-        videoReferer?.let { LinkkfRequestContextStore.save(context, currentAnime.id, ep.id, it) }
         LinkkfRequestContextStore.saveSubtitleUrl(context, currentAnime.id, ep.id, subtitleUrl)
-        subtitleReferer?.let { LinkkfRequestContextStore.saveSubtitle(context, currentAnime.id, ep.id, it) }
+        resolved.referer?.let { LinkkfRequestContextStore.save(context, currentAnime.id, ep.id, it) }
+        resolved.subtitleReferer?.let {
+            LinkkfRequestContextStore.saveSubtitle(context, currentAnime.id, ep.id, it)
+        }
 
         Log.d(
             "OfflineDownload",
-            "LINKKF_DOWNLOAD_SOURCE episode=${ep.displayNumber} video=$video videoReferer=${videoReferer ?: "<none>"} " +
-                "subtitle=$subtitleUrl subtitleReferer=${subtitleReferer ?: "<none>"}"
+            "LINKKF_DOWNLOAD_SOURCE episode=${ep.displayNumber} video=$video " +
+                "subtitle=${subtitleUrl ?: "<none>"}"
         )
 
-        return listOf(StreamQuality("자동", video, videoReferer, videoHeaders)) to subtitleUrl
+        return listOf(StreamQuality("자동", video, resolved.referer, resolved.headers)) to subtitleUrl
     }
 
     // 이미 영상이 다운로드된 에피소드에도 Linkkf VTT와 Kairan ASS를 모두 보충한다.

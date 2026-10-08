@@ -203,11 +203,40 @@ class AnimeViewModel : ViewModel() {
         linkkfFilterLoading = true
         viewModelScope.launch {
             try {
-                val result = repository.getLinkkfFilteredAnime(page, 20, formatIds, genreIds, yearIds)
-                linkkfFilterResults = result.items
-                linkkfFilterPage = result.page
-                linkkfFilterTotalPages = result.totalPages
-                linkkfFilterTotalResults = result.totalResults
+                val formatResult = if (formatIds.isNotEmpty()) {
+                    repository.getLinkkfFilteredAnime(page, 50, seasonTypeIds = formatIds)
+                } else null
+                val genreResult = if (genreIds.isNotEmpty()) {
+                    repository.getLinkkfFilteredAnime(page, 50, genreIds = genreIds)
+                } else null
+                val yearResult = if (yearIds.isNotEmpty()) {
+                    repository.getLinkkfFilteredAnime(page, 50, yearIds = yearIds)
+                } else null
+
+                val selectedSets = listOfNotNull(
+                    formatResult?.items?.associateBy { it.id },
+                    genreResult?.items?.associateBy { it.id },
+                    yearResult?.items?.associateBy { it.id }
+                )
+
+                val resultItems = if (selectedSets.isEmpty()) {
+                    repository.getLinkkfFilteredAnime(page, 50).items
+                } else {
+                    val commonIds = selectedSets
+                        .map { it.keys.toSet() }
+                        .reduce { acc, ids -> acc.intersect(ids) }
+                    val first = selectedSets.first()
+                    commonIds.mapNotNull { first[it] }
+                }
+
+                linkkfFilterResults = resultItems
+                linkkfFilterPage = page
+                linkkfFilterTotalPages = listOfNotNull(
+                    formatResult?.totalPages,
+                    genreResult?.totalPages,
+                    yearResult?.totalPages
+                ).minOrNull() ?: 1
+                linkkfFilterTotalResults = resultItems.size
             } catch (e: Exception) {
                 Log.e("LinkkfAPI", "FILTER_FAILED", e)
                 linkkfFilterResults = emptyList()

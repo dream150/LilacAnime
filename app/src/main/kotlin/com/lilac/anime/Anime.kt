@@ -32,6 +32,11 @@ data class Anime(
     // Linkkf detail metadata (single.php / singlefilter.php)
     val airedDate: String = "",
     val year: String = "",
+    /** Re:Anime/TMDB season identity. Kept separate from the display title. */
+    val season: String = "",
+    val seasonYear: Int? = null,
+    /** Franchise/TV season number when the source exposes it (e.g. Season 2). */
+    val seasonNumber: Int? = null,
     val format: String = "",
     val studios: List<String> = emptyList(),
     val source: String = "",

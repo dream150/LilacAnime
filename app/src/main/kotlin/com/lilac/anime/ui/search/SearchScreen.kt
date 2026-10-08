@@ -53,22 +53,45 @@ fun SearchScreen(
         if (isLinkkf) vm.loadLinkkfFilterTags()
     }
 
+    LaunchedEffect(isLinkkf, formatId, genreId, yearId) {
+        if (isLinkkf && (formatId != null || genreId != null || yearId != null)) {
+            vm.loadLinkkfFilteredAnime(
+                page = 1,
+                formatIds = listOfNotNull(formatId),
+                genreIds = listOfNotNull(genreId),
+                yearIds = listOfNotNull(yearId)
+            )
+        }
+    }
+
     val selectedFormat = vm.linkkfFormatTags.firstOrNull { it.id == formatId }?.name
     val selectedGenre = vm.linkkfGenreTags.firstOrNull { it.id == genreId }?.name
     val selectedYear = vm.linkkfYearTags.firstOrNull { it.id == yearId }?.name
     val q = query.trim()
 
-    val results = remember(q, vm.allAnime, formatId, genreId, yearId, selectedFormat, selectedGenre, selectedYear) {
-        vm.allAnime
+    val results = remember(
+        q, vm.allAnime, vm.linkkfFilterResults, formatId, genreId, yearId,
+        selectedFormat, selectedGenre, selectedYear
+    ) {
+        val base = if (isLinkkf && selectedFilterActive) {
+            vm.linkkfFilterResults
+        } else {
+            vm.allAnime
+        }
+        base
             .distinctBy { it.id }
             .filter { anime ->
                 val queryMatch = q.isBlank() ||
                     anime.title.contains(q, ignoreCase = true) ||
                     anime.genres.any { it.contains(q, ignoreCase = true) }
-                val formatMatch = selectedFormat == null || anime.format.equals(selectedFormat, ignoreCase = true)
-                val genreMatch = selectedGenre == null || anime.genres.any { it.equals(selectedGenre, ignoreCase = true) }
-                val yearMatch = selectedYear == null || anime.year == selectedYear
-                queryMatch && formatMatch && genreMatch && yearMatch
+                if (isLinkkf) {
+                    queryMatch
+                } else {
+                    val formatMatch = selectedFormat == null || anime.format.equals(selectedFormat, ignoreCase = true)
+                    val genreMatch = selectedGenre == null || anime.genres.any { it.equals(selectedGenre, ignoreCase = true) }
+                    val yearMatch = selectedYear == null || anime.year == selectedYear
+                    queryMatch && formatMatch && genreMatch && yearMatch
+                }
             }
     }
 

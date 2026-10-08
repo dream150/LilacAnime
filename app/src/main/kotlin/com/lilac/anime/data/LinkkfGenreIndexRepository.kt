@@ -35,7 +35,7 @@ import java.nio.charset.StandardCharsets
  * No per-anime detail page is requested here.
  */
 object LinkkfGenreIndexRepository {
-    private const val BASE = "https://linkkf.tv"
+    private const val BASE = "https://linkani.tv"
     private const val LIST_BASE = "$BASE/list/2/"
     private const val SYNC_INTERVAL_MS = 6L * 60L * 60L * 1000L
     private const val MAX_PARALLEL_GENRES = 3

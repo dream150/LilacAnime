@@ -211,7 +211,7 @@ class AnimeRepository {
 
     suspend fun getLinkkfSeasonType(tagId: Int, limit: Int = 4): List<Anime> =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
-            linkkfApi.getFilteredAnime(page = 1, limit = limit, seasonTypeIds = listOf(tagId)).items
+            linkkfApi.getSeasonType(tagId, limit)
         }
 
     suspend fun getLinkkfFilterTags(taxonomy: String): List<LinkkfApiClient.FilterTag> =

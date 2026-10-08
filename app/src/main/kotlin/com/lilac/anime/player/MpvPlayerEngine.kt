@@ -259,7 +259,7 @@ class MpvPlayerEngine(private val context: Context) {
         mpv.setOptionString("idle", "once")
         mpv.setOptionString("sub-auto", "no")
         mpv.setOptionString("sub-fonts-dir", fontsDir.absolutePath)
-        mpv.setOptionString("sub-use-margins", "yes")
+        mpv.setOptionString("sub-use-margins", "no")
         mpv.setOptionString("sub-ass-override", "no")
         // Must be set before mpv.init(): demuxer-lavf-o is consumed when
         // libavformat opens an HLS demuxer. This also makes the fix apply to
@@ -332,6 +332,7 @@ class MpvPlayerEngine(private val context: Context) {
         mpv.setOptionString("keepaspect", "yes")
         mpv.setOptionString("video-zoom", "0")
         mpv.setOptionString("panscan", "0")
+        mpv.setOptionString("sub-use-margins", "no")
         mpv.setOptionString("force-window", "yes")
     }
 
@@ -610,9 +611,9 @@ class MpvPlayerEngine(private val context: Context) {
         ass: Boolean = currentSubtitleIsAss
     ) {
         // ASS/SSA must keep the script's own Style.Fontname and FontSize.
-        // Applying mpv's generic sub-font-size/sub-bold/sub-border-size to ASS
-        // changes its visual scale and makes the same ASS look different when a
-        // custom font is selected. Generic styling is therefore VTT/SRT-only.
+        // SRT has no ASS-style font/size/color metadata, so mpv/libass uses the
+        // generic subtitle settings below for SRT. This is intentional: it makes
+        // SRT follow the player's font, size, color, bold and outline controls.
         if (ass) return
 
         setMpvColor("sub-color", textColor)
@@ -690,6 +691,9 @@ class MpvPlayerEngine(private val context: Context) {
             SubtitleAssetUtil.fontFamilyName(font)?.let { setSubtitleFontFamily(it) }
         }
 
+        // Keep subtitles inside the actual video frame. When this is enabled,
+        // mpv may place subtitle pixels into letterbox/pillarbox margins.
+        mpv.setOptionString("sub-use-margins", "no")
         mpv.setOptionString("sub-ass-override", "no")
         mpv.setPropertyDouble("sub-delay", syncOffsetMs / 1000.0)
         // ASS keeps its script-defined font family, FontSize, outline and weight.

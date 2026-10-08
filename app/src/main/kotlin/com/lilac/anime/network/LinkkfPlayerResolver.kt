@@ -1,47 +1,28 @@
 package com.lilac.anime.network
 
-import com.lilac.anime.data.LinkkfApiClient
-
-import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Bitmap
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
-import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import com.lilac.anime.Episode
-import kotlinx.coroutines.suspendCancellableCoroutine
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONObject
-import java.net.URLEncoder
-import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
+import com.lilac.anime.data.LinkkfClient
+import com.lilac.anime.data.LinkkfParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
- * Single LinkKF playback resolver.
+ * Direct Linkkf watch-page resolver.
  *
- * Contract:
- *   linkkf.app watch page -> player page -> browser's real HLS request.
+ * HAR finding:
+ *   linkani.tv/watch/... HTML
+ *       -> var player_aaaa = {...}
+ *       -> actual_url/url = aniplayer1.site/.../index.m3u8
+ *       -> subtitle_url = aniplayer1.site/.../sub.vtt
  *
- * No media host is guessed. The URL, Referer and request headers are captured
- * from the actual Chromium request. Therefore an m3u8 can live on any host,
- * and individual HLS resources may also move between hosts.
+ * There is no need to drive the site's JavaScript player inside a WebView for
+ * normal playback.  Resolving the server-rendered player_aaaa object is both
+ * faster and much less fragile.
  */
 object LinkkfPlayerResolver {
     private const val TAG = "LinkkfPlayerResolver"
-    private const val TIMEOUT_MS = 15_000L
-    private const val UA =
-        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
-
-    private val main = Handler(Looper.getMainLooper())
 
     data class Result(
         val episodeId: String,
@@ -54,273 +35,90 @@ object LinkkfPlayerResolver {
     )
 
     suspend fun resolve(context: Context, episode: Episode): Result =
-        resolvePage(context, episode.id, episode.videoUrl.orEmpty())
+        withContext(Dispatchers.IO) {
+            resolvePage(context, episode.id, episode.videoUrl.orEmpty())
+        }
 
     suspend fun resolvePage(
         context: Context,
         episodeId: String,
         watchPageUrl: String
-    ): Result {
-        if (watchPageUrl.isBlank()) {
-            return Result(episodeId, null, null, null)
-        }
+    ): Result = withContext(Dispatchers.IO) {
+        if (watchPageUrl.isBlank()) return@withContext Result(
+            episodeId, null, null, null
+        )
 
-        val directPlayer = runCatching {
-            if (Regex("""^\d+s\d+(?:[A-Za-z0-9_-]*)$""").matches(episodeId.trim())) {
-                LinkkfApiClient().getPlayerLinks(episodeId.trim())
-                    .sortedBy { if (it.server.equals("NR", true) || it.server.equals("NR-HD", true)) 0 else 1 }
-                    .firstOrNull()?.url
-            } else null
-        }.getOrNull()
+        val pageUrl = normalizeWatchUrl(watchPageUrl)
+        var lastError: Throwable? = null
 
-        return suspendCancellableCoroutine { continuation ->
-            var webView: WebView? = null
-            var done = false
-            var lastPlayerUrl: String? = directPlayer
-            var lastReferer: String? = null
-            var lastHeaders: String? = null
-            var subtitle: String? = null
-            var subtitleRef: String? = null
-            var capturedM3u8: String? = null
+        // A transient CDN/site response must not turn into a permanent player
+        // failure. The watch page is cheap to fetch and contains a freshly signed
+        // HLS URL, so retry the complete page->player_aaaa resolution instead of
+        // retrying an already-issued (possibly stale) media URL.
+        repeat(3) { attempt ->
+            try {
+                val document = LinkkfClient().getDocument(pageUrl)
+                val watch = LinkkfParser.parseWatch(document)
 
-            fun result() = Result(
-                episodeId = episodeId,
-                m3u8Url = capturedM3u8,
-                referer = lastReferer,
-                headers = lastHeaders,
-                subtitleUrl = subtitle,
-                subtitleReferer = subtitleRef,
-                playerUrl = lastPlayerUrl
-            )
+                if (watch == null) {
+                    lastError = IllegalStateException("player_aaaa not found")
+                    Log.w(TAG, "PLAYER_DATA_NOT_FOUND attempt=${attempt + 1} episode=$episodeId page=$pageUrl")
+                } else {
+                    val stream = watch.streamUrl
+                        ?.takeIf { it.contains(".m3u8", true) }
+                        ?.trim()
 
-            fun finish() {
-                if (done || capturedM3u8.isNullOrBlank()) return
-                done = true
-                val value = result()
-                main.post {
-                    runCatching { webView?.stopLoading() }
-                    runCatching { webView?.destroy() }
-                    webView = null
+                    if (!stream.isNullOrBlank()) {
+                        // These are the exact browser-context headers observed in
+                        // linkani.tv HAR for both HLS and VTT requests.
+                        val mediaHeaders = buildString {
+                            append("Origin: https://linkani.tv\n")
+                            append("Referer: https://linkani.tv/\n")
+                            append("User-Agent: ")
+                            append(MEDIA_USER_AGENT)
+                        }
+
+                        Log.d(
+                            TAG,
+                            "PLAYER_RESOLVED episode=$episodeId attempt=${attempt + 1} " +
+                                "stream=$stream subtitle=${watch.subtitleUrl ?: "<none>"} page=$pageUrl"
+                        )
+
+                        return@withContext Result(
+                            episodeId = episodeId,
+                            m3u8Url = stream,
+                            referer = "https://linkani.tv/",
+                            headers = mediaHeaders,
+                            subtitleUrl = watch.subtitleUrl,
+                            subtitleReferer = "https://linkani.tv/",
+                            playerUrl = pageUrl
+                        )
+                    }
+                    lastError = IllegalStateException("player_aaaa has no m3u8 url")
+                    Log.w(TAG, "PLAYER_M3U8_MISSING attempt=${attempt + 1} episode=$episodeId page=$pageUrl")
                 }
-                if (continuation.isActive) continuation.resume(value)
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                lastError = t
+                Log.w(TAG, "PLAYER_RESOLVE_RETRY attempt=${attempt + 1} episode=$episodeId page=$pageUrl", t)
             }
 
-            fun timeout() {
-                if (done) return
-                done = true
-                val value = result()
-                main.post {
-                    runCatching { webView?.stopLoading() }
-                    runCatching { webView?.destroy() }
-                    webView = null
-                }
-                if (continuation.isActive) continuation.resume(value)
-            }
-
-            main.post {
-                if (done) return@post
-
-                @SuppressLint("SetJavaScriptEnabled")
-                val view = WebView(context.applicationContext)
-                webView = view
-
-                fun openPlayer(url: String) {
-                    if (done || url.isBlank()) return
-                    val host = runCatching { Uri.parse(url).host?.lowercase().orEmpty() }.getOrDefault("")
-                    // Only follow player URLs generated by LinkKF. We never navigate
-                    // to an unrelated redirect discovered in an ad.
-                    if (host == "linkkf.app" || host == "www.linkkf.app" ||
-                        host == "kf.carsstore365.com" ||
-                        host.endsWith(".sub3.top") ||
-                        host.endsWith(".carsstore365.com")
-                    ) {
-                        lastPlayerUrl = url
-                        view.loadUrl(url)
-                    }
-                }
-
-                view.settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                    mediaPlaybackRequiresUserGesture = false
-                    javaScriptCanOpenWindowsAutomatically = false
-                    setSupportMultipleWindows(false)
-                    cacheMode = WebSettings.LOAD_DEFAULT
-                    userAgentString = UA
-                }
-                CookieManager.getInstance().setAcceptCookie(true)
-                CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
-
-                view.webViewClient = object : WebViewClient() {
-                    private fun inspect(
-                        url: String,
-                        requestHeaders: Map<String, String> = emptyMap()
-                    ) {
-                        if (done) return
-                        val uri = runCatching { Uri.parse(url) }.getOrNull()
-                        val path = uri?.path.orEmpty().lowercase()
-
-                        if (path.endsWith(".vtt") || path.endsWith(".srt") ||
-                            url.contains(".vtt?", true) || url.contains(".srt?", true)
-                        ) {
-                            if (subtitle == null) {
-                                subtitle = url
-                                subtitleRef = requestHeaders.entries.firstOrNull {
-                                    it.key.equals("Referer", true)
-                                }?.value?.takeIf { it.isNotBlank() } ?: lastPlayerUrl
-                            }
-                        }
-
-                        val isHls = url.contains(".m3u8", true) ||
-                            path.contains("m3u8") ||
-                            url.contains("/hls/", true)
-                        if (!isHls || capturedM3u8 != null) return
-
-                        capturedM3u8 = url
-                        lastReferer = requestHeaders.entries.firstOrNull {
-                            it.key.equals("Referer", true)
-                        }?.value?.takeIf { it.isNotBlank() }
-                        lastHeaders = requestHeaders.entries
-                            .filter { it.key.isNotBlank() && it.value.isNotBlank() }
-                            .joinToString("\n") { "${it.key}: ${it.value}" }
-
-                        Log.d(TAG, "M3U8_FOUND episode=$episodeId url=$url referer=$lastReferer")
-                        finish()
-                    }
-
-                    override fun onPageStarted(
-                        view: WebView?, url: String?, favicon: Bitmap?
-                    ) {
-                        if (!url.isNullOrBlank()) {
-                            val lower = url.lowercase()
-                            if (lower.contains("/playhd3.php") || lower.contains("/play.php")) {
-                                lastPlayerUrl = url
-                            }
-                        }
-                        super.onPageStarted(view, url, favicon)
-                    }
-
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        if (done || view == null) return
-
-                        // If the watch page did not expose the player URL directly,
-                        // resolve the stable episode token through LinkKF's API.
-                        val host = runCatching {
-                            Uri.parse(url.orEmpty()).host?.lowercase().orEmpty()
-                        }.getOrDefault("")
-                        if (host == "linkkf.app" || host == "www.linkkf.app") {
-                            val postId = Regex("""/up/([^/?#]+)/watch""")
-                                .find(url.orEmpty())?.groupValues?.getOrNull(1).orEmpty()
-                            val slug = runCatching {
-                                Uri.parse(url.orEmpty()).getQueryParameter("slug").orEmpty()
-                            }.getOrDefault("")
-                            if (postId.isNotBlank() && slug.isNotBlank()) {
-                                Thread {
-                                    runCatching {
-                                        val token = "${postId}v${slug}"
-                                        val api =
-                                            "https://emdlinkkf.5imgdarr.top/apilink2.php?data=" +
-                                                URLEncoder.encode(token, "UTF-8")
-                                        val client = OkHttpClient.Builder()
-                                            .connectTimeout(8, TimeUnit.SECONDS)
-                                            .readTimeout(12, TimeUnit.SECONDS)
-                                            .followRedirects(true)
-                                            .build()
-                                        val req = Request.Builder()
-                                            .url(api)
-                                            .header("User-Agent", UA)
-                                            .header("Accept", "application/json")
-                                            .header("Referer", "https://linkkf.app/")
-                                            .build()
-                                        client.newCall(req).execute().use { response ->
-                                            val arr = JSONObject(response.body?.string().orEmpty())
-                                                .optJSONArray("data")
-                                            var player: String? = null
-                                            if (arr != null) {
-                                                for (i in 0 until arr.length()) {
-                                                    val item = arr.optJSONObject(i) ?: continue
-                                                    val link = item.optString("link").trim()
-                                                    if (link.isBlank()) continue
-                                                    if (player == null) player = link
-                                                    if (item.optString("server").equals("NR-HD", true)) {
-                                                        player = link
-                                                        break
-                                                    }
-                                                }
-                                            }
-                                            player?.let { main.post { openPlayer(it) } }
-                                        }
-                                    }
-                                }.start()
-                            }
-                        }
-
-                        // Generic fallback: inspect actual DOM/resource URLs. We do not
-                        // require a particular player host here; only /play.php and
-                        // /playhd3.php are considered player documents.
-                        view.evaluateJavascript(
-                            """(function(){
-                                var a=[];
-                                try{a=a.concat(Array.from(document.querySelectorAll(
-                                  'iframe[src],video[src],source[src],[data-src],a[href]'
-                                )).map(function(x){
-                                  return x.src||x.href||x.getAttribute('data-src')||'';
-                                }));}catch(e){}
-                                try{a=a.concat(performance.getEntriesByType('resource').map(
-                                  function(x){return x.name||'';}
-                                ));}catch(e){}
-                                return a.filter(Boolean).join('\\n');
-                            })()"""
-                        ) { raw ->
-                            if (done) return@evaluateJavascript
-                            val decoded = raw.orEmpty()
-                                .trim('"')
-                                .replace("\\u003d", "=")
-                                .replace("\\u0026", "&")
-                                .replace("\\/", "/")
-                            decoded.split('\n')
-                                .map { it.trim() }
-                                .filter { it.isNotBlank() }
-                                .firstOrNull {
-                                    val p = runCatching { Uri.parse(it).path.orEmpty().lowercase() }
-                                        .getOrDefault("")
-                                    p.contains("/play.php") || p.contains("/playhd3.php")
-                                }
-                                ?.let { openPlayer(it) }
-                        }
-                        super.onPageFinished(view, url)
-                    }
-
-                    override fun shouldInterceptRequest(
-                        view: WebView?, request: WebResourceRequest?
-                    ): WebResourceResponse? {
-                        request?.let {
-                            inspect(it.url.toString(), it.requestHeaders)
-                        }
-                        return super.shouldInterceptRequest(view, request)
-                    }
-
-                    @Suppress("DEPRECATION")
-                    override fun shouldInterceptRequest(
-                        view: WebView?, url: String?
-                    ): WebResourceResponse? {
-                        url?.let { inspect(it) }
-                        return super.shouldInterceptRequest(view, url)
-                    }
-                }
-
-                view.loadUrl(directPlayer ?: watchPageUrl)
-            }
-
-            main.postDelayed({ timeout() }, TIMEOUT_MS)
-
-            continuation.invokeOnCancellation {
-                main.post {
-                    runCatching { webView?.stopLoading() }
-                    runCatching { webView?.destroy() }
-                    webView = null
-                }
+            if (attempt < 2) {
+                Thread.sleep(if (attempt == 0) 350L else 900L)
             }
         }
+
+        Log.e(TAG, "PLAYER_RESOLVE_FAILED episode=$episodeId page=$pageUrl", lastError)
+        Result(episodeId, null, null, null, playerUrl = pageUrl)
+    }
+
+    private const val MEDIA_USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+
+    private fun normalizeWatchUrl(value: String): String {
+        val trimmed = value.trim()
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
+        return LinkkfParser.BASE_URL + if (trimmed.startsWith("/")) trimmed else "/$trimmed"
     }
 }

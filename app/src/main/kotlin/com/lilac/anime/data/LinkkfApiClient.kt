@@ -2,143 +2,43 @@ package com.lilac.anime.data
 
 import com.lilac.anime.Anime
 import com.lilac.anime.Episode
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONArray
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 /**
- * Linkkf.app API client.
+ * Compatibility facade for the Linkkf-specific callers already present in v29.
  *
- * Home/schedule/detail/episode data is served by the 1.5imgdarr API rather
- * than by the HTML page. Keeping this separate from the old Jsoup parser
- * makes the linkkf.app migration independent from the old the previous site markup markup.
+ * The public method names are retained so the rest of the application does not
+ * need to know that Linkkf has moved from its old JSON endpoints to linkani.tv.
  */
 class LinkkfApiClient {
     companion object {
-        const val WEB_BASE = "https://linkkf.app"
-        const val API_BASE = "https://linkkf1.5imgdarr.top/api"
-        const val EPISODE_API_BASE = "https://linkkfep1.5imgdarr.top"
-
-        private const val IMAGE_PROXY = "https://rez1.ims1.top/350x/"
+        const val WEB_BASE = "https://linkani.tv"
+        const val API_BASE = WEB_BASE
+        const val EPISODE_API_BASE = WEB_BASE
     }
 
-    private val client = OkHttpClient.Builder()
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .retryOnConnectionFailure(true)
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .callTimeout(30, TimeUnit.SECONDS)
-        .build()
+    private val client = LinkkfClient()
 
-    private fun get(url: String, referer: String = "$WEB_BASE/"): String {
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", USER_AGENT)
-            .header("Accept", "application/json,text/plain,*/*")
-            .header("Referer", referer)
-            .build()
+    data class FilterTag(
+        val id: Int,
+        val name: String,
+        val slug: String = "",
+        val count: Int = 0
+    )
 
-        android.util.Log.d("LinkkfAPI", "REQUEST url=$url")
+    data class FilterResult(
+        val items: List<Anime>,
+        val page: Int,
+        val totalPages: Int,
+        val totalResults: Int
+    )
 
-        var lastCode = -1
-        var lastError: Throwable? = null
-        repeat(3) { attempt ->
-            try {
-                client.newCall(request).execute().use { response ->
-                    val body = response.body?.string().orEmpty()
-                    lastCode = response.code
-                    android.util.Log.d(
-                        "LinkkfAPI",
-                        "RESPONSE code=${response.code} length=${body.length} attempt=${attempt + 1}"
-                    )
-                    if (response.isSuccessful) return body
+    data class EpisodeServer(
+        val id: Int,
+        val name: String,
+        val episodes: List<Episode>
+    )
 
-                    // Cloudflare-style 522 is commonly transient. Retry before
-                    // surfacing the failure to the repository/UI. Other 5xx
-                    // responses also get one or two cheap retries.
-                    if (response.code !in 500..599 || attempt == 2) {
-                        throw IllegalStateException("Linkkf API HTTP ${response.code}: $url")
-                    }
-                }
-            } catch (error: java.io.IOException) {
-                lastError = error
-                if (attempt == 2) throw error
-            }
-            try {
-                Thread.sleep(350L * (attempt + 1))
-            } catch (interrupted: InterruptedException) {
-                Thread.currentThread().interrupt()
-                throw interrupted
-            }
-        }
-
-        throw IllegalStateException(
-            "Linkkf API request failed code=$lastCode: $url",
-            lastError
-        )
-    }
-
-    fun getHome(page: Int = 1, limit: Int = 12): List<Anime> {
-        val root = JSONObject(get("$API_BASE/filter.php?page=$page&limit=$limit"))
-        return parseArray(root.optJSONArray("data"))
-    }
-
-    data class FilterTag(val id: Int, val name: String, val slug: String = "", val count: Int = 0)
-
-    fun getFilterTags(taxonomy: String): List<FilterTag> {
-        val root = JSONObject(
-            get("$API_BASE/link/api.php?taxonomy=${encode(taxonomy)}&limit=200&orderby=name&order=ASC")
-        )
-        val terms = root.optJSONArray("terms") ?: return emptyList()
-        return (0 until terms.length()).mapNotNull { i ->
-            val item = terms.optJSONObject(i) ?: return@mapNotNull null
-            val id = item.optInt("tag_ID", 0)
-            if (id <= 0) return@mapNotNull null
-            FilterTag(
-                id = id,
-                name = item.optString("name").trim(),
-                slug = item.optString("slug").trim(),
-                count = item.optInt("count", 0)
-            )
-        }
-    }
-
-    fun getFilteredAnime(
-        page: Int = 1,
-        limit: Int = 20,
-        seasonTypeIds: List<Int> = emptyList(),
-        genreIds: List<Int> = emptyList(),
-        yearIds: List<Int> = emptyList()
-    ): FilterResult {
-        val params = mutableListOf("page=$page", "limit=$limit")
-        if (seasonTypeIds.isNotEmpty()) params += "postseasontypetagid=${seasonTypeIds.joinToString(",")}"
-        if (genreIds.isNotEmpty()) params += "postanigenrestagid=${genreIds.joinToString(",")}"
-        if (yearIds.isNotEmpty()) params += "postyeartagid=${yearIds.joinToString(",")}"
-        val root = JSONObject(get("$API_BASE/singlefilter.php?${params.joinToString("&")}"))
-        return FilterResult(
-            items = parseArray(root.optJSONArray("data")),
-            page = root.optJSONObject("pagination")?.optInt("current_page", page) ?: page,
-            totalPages = root.optJSONObject("pagination")?.optInt("total_pages", 1) ?: 1,
-            totalResults = root.optJSONObject("pagination")?.optInt("total_results", 0) ?: 0
-        )
-    }
-
-    data class FilterResult(val items: List<Anime>, val page: Int, val totalPages: Int, val totalResults: Int)
-
-    fun getSchedule(categoryTagId: Int, limit: Int = 50): List<Anime> {
-        val root = JSONObject(
-            get("$API_BASE/singlefilter.php?categorytagid=$categoryTagId&limit=$limit")
-        )
-        return parseArray(root.optJSONArray("data"))
-    }
-
-    fun getAnime(postId: String): Anime? {
-        val root = JSONObject(get("$API_BASE/single.php?postid=$postId"))
-        return parseItem(root.optJSONObject("data"))
-    }
+    data class PlayerLink(val server: String, val url: String)
 
     data class ViewStats(
         val day: Int = 0,
@@ -148,38 +48,6 @@ class LinkkfApiClient {
         val lastUpdated: String = ""
     )
 
-    fun getViewStats(postId: String): ViewStats? {
-        val root = JSONObject(get("$API_BASE/view.php?action=get&id=${encode(postId)}"))
-        if (root.optString("status") != "success") return null
-        val data = root.optJSONObject("data") ?: return null
-        return ViewStats(
-            day = data.optInt("day_views", 0),
-            week = data.optInt("week_views", 0),
-            month = data.optInt("month_views", 0),
-            total = data.optInt("total_views", 0),
-            lastUpdated = data.optString("last_updated", "")
-        )
-    }
-
-    fun recordView(postId: String): Boolean {
-        val body = okhttp3.MultipartBody.Builder()
-            .setType(okhttp3.MultipartBody.FORM)
-            .addFormDataPart("action", "record")
-            .addFormDataPart("id", postId)
-            .build()
-        val request = Request.Builder()
-            .url("$API_BASE/view.php")
-            .header("User-Agent", USER_AGENT)
-            .header("Referer", "$WEB_BASE/up/$postId/")
-            .post(body)
-            .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return false
-            val text = response.body?.string().orEmpty()
-            return runCatching { JSONObject(text).optString("status") == "success" }.getOrDefault(false)
-        }
-    }
-
     data class RelatedSeries(
         val id: Int,
         val name: String,
@@ -187,177 +55,185 @@ class LinkkfApiClient {
         val items: List<Anime>
     )
 
-    fun getRelatedSeries(seriesTagIds: List<Int>, currentPostId: String): List<RelatedSeries> {
-        if (seriesTagIds.isEmpty()) return emptyList()
-        return seriesTagIds.mapNotNull { tagId ->
-            try {
-                val tax = JSONObject(get("$API_BASE/link/tax.php?taxonomy=anime-aniss&tag_ID=$tagId"))
-                val term = tax.optJSONArray("terms")?.optJSONObject(0)
-                val name = term?.optString("name")?.trim().orEmpty().ifBlank { "Series $tagId" }
-                val count = term?.optInt("count", 0) ?: 0
-                val root = JSONObject(get("$API_BASE/singlefilter.php?postanisstagid=$tagId&limit=25"))
-                val items = parseArray(root.optJSONArray("data"))
-                    .filterNot { it.id == currentPostId }
-                if (items.isEmpty()) null else RelatedSeries(tagId, name, count, items)
-            } catch (_: Exception) {
-                null
-            }
-        }.sortedByDescending { it.count }
+    fun getHome(page: Int = 1, limit: Int = 12): List<Anime> =
+        loadList(listUrl(page), limit)
+
+    fun getFilteredAnime(
+        page: Int = 1,
+        limit: Int = 20,
+        seasonTypeIds: List<Int> = emptyList(),
+        genreIds: List<Int> = emptyList(),
+        yearIds: List<Int> = emptyList()
+    ): FilterResult {
+        // The new site exposes filter links rather than the old numeric API.
+        // Preserve the old integer contract by resolving IDs back to routes.
+        val route = filterRoute(seasonTypeIds, genreIds, yearIds)
+        val url = pagedRoute(route, page)
+        val items = loadList(url, limit)
+        val totalPages = detectTotalPages(url)
+        return FilterResult(items, page.coerceAtMost(totalPages), totalPages, items.size)
     }
 
-    data class EpisodeServer(val id: Int, val name: String, val episodes: List<Episode>)
+    fun getFilterTags(taxonomy: String): List<FilterTag> {
+        val document = client.getDocument("$WEB_BASE/list/2/")
+        val selector = when (taxonomy) {
+            "anime-seasontype" -> "a[href*='/list/2/lang/']"
+            "anigenres" -> "a[href*='/list/2/class/']"
+            "anime-seasonys" -> "a[href*='/list/2/year/']"
+            else -> ""
+        }
+
+        if (selector.isBlank()) return emptyList()
+
+        return document.select(selector)
+            .mapNotNull { a ->
+                val name = a.text().trim()
+                val href = a.attr("href").trim()
+                if (name.isBlank() || href.isBlank()) return@mapNotNull null
+                val weekday = name in setOf("월", "화", "수", "목", "금", "토", "일")
+                if (name.equals("Genres", true) || name.equals("Year", true) ||
+                    name.equals("Type", true) || name.equals("Anime", true) ||
+                    weekday
+                ) return@mapNotNull null
+                FilterTag(
+                    id = stableId(href),
+                    name = name,
+                    slug = href
+                )
+            }
+            .distinctBy { it.id }
+    }
+
+    fun getSchedule(categoryTagId: Int, limit: Int = 50): List<Anime> {
+        val day = when (categoryTagId) {
+            21189 -> "월"
+            21190 -> "화"
+            21191 -> "수"
+            21192 -> "목"
+            21193 -> "금"
+            21194 -> "토"
+            21195 -> "일"
+            else -> null
+        } ?: return getHome(1, limit)
+
+        val encoded = java.net.URLEncoder.encode(day, "UTF-8").replace("+", "%20")
+        return loadList("$WEB_BASE/list/2/class/$encoded/", limit)
+    }
+
+    fun getAnime(postId: String): Anime? {
+        if (postId.isBlank()) return null
+        val url = "$WEB_BASE/ani/${postId.trim('/')}/"
+        val document = client.getDocument(url)
+        val seed = Anime(
+            id = postId.trim('/'),
+            title = document.selectFirst(".detail-info-title")?.text()?.trim().orEmpty(),
+            detailUrl = url
+        )
+        return LinkkfParser.parseAnimeDetail(document, seed)
+    }
+
+    fun getEpisodes(postId: String, serverId: Int = 1): List<Episode> =
+        getAnime(postId)?.episodes.orEmpty()
 
     fun getEpisodeServers(postId: String): List<EpisodeServer> {
-        val root = JSONArray(get("$EPISODE_API_BASE/api2.php?epid=$postId"))
-        return (0 until root.length()).mapNotNull { index ->
-            val server = root.optJSONObject(index) ?: return@mapNotNull null
-            val id = server.optInt("id", -1)
-            if (id <= 0) return@mapNotNull null
-            val name = server.optString("server_name").trim().ifBlank { "Server $id" }
-            val data = server.optJSONArray("server_data") ?: return@mapNotNull null
-            val episodes = (0 until data.length()).mapNotNull { epIndex ->
-                val item = data.optJSONObject(epIndex) ?: return@mapNotNull null
-                val display = item.optString("name").trim()
-                val slug = item.optString("slug").trim()
-                val link = item.optString("link").trim()
-                val numberMatch = Regex("""^(\d+)""").find(display.ifBlank { slug })
-                val number = numberMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
-                    ?: return@mapNotNull null
-                val suffix = display.substring(numberMatch.value.length).trim().lowercase()
-                val displayNumber = if (suffix.isBlank()) number.toString() else "$number$suffix"
-                val episodeKey = link.ifBlank { "${postId}v${id}_$slug" }
-                Episode(
-                    id = episodeKey,
-                    number = number,
-                    title = "${displayNumber}화",
-                    description = displayNumber,
-                    videoUrl = "$WEB_BASE/up/$postId/watch/?server=$id&slug=${encode(slug)}",
-                    displayNumber = displayNumber
-                )
-            }.distinctBy { it.id }
-                .sortedWith(compareBy<Episode> { it.number }.thenBy { it.displayNumber })
-            EpisodeServer(id, name, episodes)
+        val episodes = getEpisodes(postId)
+        if (episodes.isEmpty()) return emptyList()
+        // The supplied HAR shows a single active "DB" source on the current site.
+        return listOf(EpisodeServer(1, "DB", episodes))
+    }
+
+    fun getScheduleForDay(day: String, limit: Int = 50): List<Anime> {
+        val normalized = day.trim()
+        if (normalized.isBlank()) return getHome(1, limit)
+        val encoded = java.net.URLEncoder.encode(normalized, "UTF-8").replace("+", "%20")
+        return loadList("$WEB_BASE/list/2/class/$encoded/", limit)
+    }
+
+    fun getSeasonType(tagId: Int, limit: Int = 20): List<Anime> {
+        val route = when (tagId) {
+            // Current site's useful source-specific home sections.
+            5086 -> "$WEB_BASE/label/topday/"
+            5061 -> "$WEB_BASE/list/2/lang/Movie/"
+            5085 -> "$WEB_BASE/list/9/"
+            else -> "$WEB_BASE/list/2/"
+        }
+        return loadList(route, limit)
+    }
+
+    fun getViewStats(postId: String): ViewStats? = null
+    fun recordView(postId: String): Boolean = false
+
+    fun getRelatedSeries(seriesTagIds: List<Int>, currentPostId: String): List<RelatedSeries> {
+        val anime = getAnime(currentPostId) ?: return emptyList()
+        // Current Linkkf pages expose "관련 애니" as ordinary HTML cards.
+        val document = client.getDocument(anime.detailUrl)
+        val items = document.select(".detail-actor-box .vod-item").mapNotNull { card ->
+            val a = card.selectFirst("h3.vod-item-title a[href]") ?: return@mapNotNull null
+            val href = a.absUrl("href")
+            val id = href.trimEnd('/').substringAfterLast('/')
+            val title = a.text().trim()
+            if (id.isBlank() || title.isBlank() || id == currentPostId) null
+            else Anime(
+                id = id,
+                title = title,
+                poster = card.selectFirst(".img-wrapper")?.attr("data-original").orEmpty().let { abs(it) },
+                detailUrl = href
+            )
+        }.distinctBy { it.id }
+
+        return if (items.isEmpty()) emptyList()
+        else listOf(RelatedSeries(1, "관련 애니", items.size, items))
+    }
+
+    fun getPlayerLinks(episodeToken: String): List<PlayerLink> = emptyList()
+
+    private fun loadList(url: String, limit: Int): List<Anime> {
+        val document = client.getDocument(url)
+        return LinkkfParser.parseAnimeList(document, limit)
+    }
+
+    private fun listUrl(page: Int): String =
+        if (page <= 1) "$WEB_BASE/list/2/"
+        else "$WEB_BASE/list/2/page/$page/"
+
+    private fun pagedRoute(route: String, page: Int): String {
+        if (page <= 1) return route
+        return if (route.endsWith("/")) "${route}page/$page/" else "$route/page/$page/"
+    }
+
+    private fun detectTotalPages(url: String): Int {
+        val document = runCatching { client.getDocument(url) }.getOrNull() ?: return 1
+        val pages = document.select("a[href]").mapNotNull { a ->
+            Regex("""/page/(\\d+)/?$""").find(a.attr("href"))?.groupValues?.getOrNull(1)?.toIntOrNull()
+        }
+        return pages.maxOrNull() ?: 1
+    }
+
+    private fun filterRoute(
+        seasonTypeIds: List<Int>,
+        genreIds: List<Int>,
+        yearIds: List<Int>
+    ): String {
+        val document = runCatching { client.getDocument("$WEB_BASE/list/2/") }.getOrNull()
+        fun findRoute(id: Int): String? {
+            if (document == null) return null
+            return document.select("a[href]").firstOrNull { stableId(it.attr("href")) == id }?.attr("href")
+        }
+        val routeId = genreIds.firstOrNull() ?: yearIds.firstOrNull() ?: seasonTypeIds.firstOrNull()
+        val route = routeId?.let(::findRoute)
+        return if (route.isNullOrBlank()) "$WEB_BASE/list/2/" else abs(route)
+    }
+
+    private fun stableId(route: String): Int =
+        route.hashCode().let { if (it == Int.MIN_VALUE) 1 else kotlin.math.abs(it) }
+
+    private fun abs(value: String): String {
+        val v = value.trim()
+        return when {
+            v.startsWith("http://") || v.startsWith("https://") -> v
+            v.startsWith("//") -> "https:$v"
+            v.startsWith("/") -> "$WEB_BASE$v"
+            else -> "$WEB_BASE/$v"
         }
     }
-
-    fun getEpisodes(postId: String, serverId: Int = 12): List<Episode> {
-        val servers = getEpisodeServers(postId)
-        return servers.firstOrNull { it.id == serverId }?.episodes
-            ?: servers.firstOrNull()?.episodes
-            ?: emptyList()
-    }
-
-    /**
-     * Resolves the provider page for an episode. api2.php gives the stable
-     * episode token; apilink2.php turns that token into playhd3.php links.
-     */
-    fun getPlayerLinks(episodeToken: String): List<PlayerLink> {
-        val root = JSONObject(
-            get("https://emdlinkkf.5imgdarr.top/apilink2.php?data=${encode(episodeToken)}")
-        )
-        val data = root.optJSONArray("data") ?: return emptyList()
-        return (0 until data.length()).mapNotNull { i ->
-            val item = data.optJSONObject(i) ?: return@mapNotNull null
-            val server = item.optString("server").trim()
-            val link = item.optString("link").trim()
-            if (link.isBlank()) null else PlayerLink(server, link)
-        }
-    }
-
-    data class PlayerLink(val server: String, val url: String)
-
-    private fun parseArray(array: JSONArray?): List<Anime> =
-        if (array == null) emptyList()
-        else (0 until array.length()).mapNotNull { parseItem(array.optJSONObject(it)) }
-            .distinctBy { it.id }
-
-    private fun parseItem(item: JSONObject?): Anime? {
-        if (item == null) return null
-        val id = item.optString("postid").trim()
-        if (id.isBlank()) return null
-
-        val title = first(item, "postname", "name")
-        val thumb = first(item, "postthum", "thumb")
-        val genres = splitTags(first(item, "postanigenres", "genres"))
-        val description = first(item, "postcontent", "description", "synopsis")
-        val seasonTypeTagIds = splitIntTags(first(item, "postseasontypetagid"))
-        val studioTagIds = splitIntTags(first(item, "studiostagid"))
-        val sourceTagIds = splitIntTags(first(item, "anisourceid", "postsourceid"))
-        val yearTagId = first(item, "postyeartagid").toIntOrNull()
-        val seriesTagIds = splitIntTags(first(item, "postanisstagid"))
-        // Linkkf.app's API may expose this as anilistid/postanilistid (and
-        // older API variants have used anilist_id/postanilist). Accept the
-        // known variants so the ID is preserved instead of forcing a title
-        // search later when AniSkip timestamps are requested.
-        val anilistId = first(
-            item,
-            "anilistid",
-            "anilist_id",
-            "postanilistid",
-            "postanilist",
-            "anilistId",
-            "anilist"
-        ).toIntOrNull()
-
-        return Anime(
-            id = id,
-            anilistId = anilistId,
-            title = title,
-            description = description,
-            airedDate = first(item, "postdate", "datepub"),
-            year = first(item, "postyear"),
-            format = first(item, "postseasontype"),
-            studios = splitTags(first(item, "poststudios")),
-            source = first(item, "anisource"),
-            romaji = first(item, "romaji"),
-            english = first(item, "english"),
-            native = first(item, "native"),
-            synonyms = first(item, "anisynonyms"),
-            note = first(item, "postnote", "postnoti"),
-            seasonTypeTagIds = seasonTypeTagIds,
-            studioTagIds = studioTagIds,
-            sourceTagIds = sourceTagIds,
-            yearTagId = yearTagId,
-            seriesTagIds = seriesTagIds,
-            poster = normalizeImage(thumb),
-            backdrop = thumb,
-            genres = genres,
-            episodes = emptyList(),
-            detailUrl = "$WEB_BASE/up/$id/"
-        )
-    }
-
-    private fun first(item: JSONObject, vararg keys: String): String =
-        keys.firstNotNullOfOrNull { key ->
-            item.optString(key).trim().takeIf { it.isNotBlank() }
-        }.orEmpty()
-
-    private fun splitTags(value: String): List<String> =
-        value.split(",", "|", "/")
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
-
-    private fun splitIntTags(value: String): List<Int> =
-        value.split(",", "|", "/")
-            .mapNotNull { it.trim().toIntOrNull() }
-            .distinct()
-
-    private fun normalizeImage(url: String): String {
-        val value = url.trim()
-        if (value.isBlank()) return ""
-        if (value.startsWith("https://rez1.ims1.top/")) return value
-        if (value.startsWith("http://") || value.startsWith("https://")) {
-            return IMAGE_PROXY + value
-        }
-        if (value.startsWith("//")) return IMAGE_PROXY + "https:$value"
-        return value
-    }
-
-    private fun encode(value: String): String =
-        java.net.URLEncoder.encode(value, "UTF-8")
-
-    private val USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 }

@@ -1,381 +1,237 @@
 package com.lilac.anime.data
 
-import com.lilac.anime.*
-import com.lilac.anime.cast.*
-import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.matcher.*
-import com.lilac.anime.data.offline.*
-import com.lilac.anime.data.subtitle.*
-import com.lilac.anime.network.*
-import com.lilac.anime.player.*
-import com.lilac.anime.ui.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.home.*
-import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.settings.*
-import com.lilac.anime.ui.theme.*
-import com.lilac.anime.viewmodel.*
-
 import com.lilac.anime.Anime
 import com.lilac.anime.Episode
 import org.jsoup.nodes.Document
-import android.annotation.SuppressLint
-import android.os.Bundle
-import android.util.Log
+import org.jsoup.nodes.Element
+import java.net.URLDecoder
 
-
+/**
+ * Parser for the current Linkkf site (linkani.tv).
+ *
+ * The current site is server-rendered HTML.  The catalog, detail page and
+ * episode/watch page all contain the information the Android app needs; there
+ * is no dependency on the old linkkf.app JSON endpoints.
+ */
 object LinkkfParser {
+    const val BASE_URL = "https://linkani.tv"
 
-    private const val BASE_URL = "https://linkkf.tv"
-
-    // =========================================================
-    // 애니 목록
-    // =========================================================
-
-    fun parseAnimeList(
-        document: Document
-    ): List<Anime> {
-
-        return document
-            .select("div.vod-item")
+    fun parseAnimeList(document: Document, limit: Int = Int.MAX_VALUE): List<Anime> =
+        document.select(".vod-list .vod-item")
             .mapNotNull { item ->
-
-                val titleLink =
-                    item.selectFirst("h3.vod-item-title a")
-                        ?: return@mapNotNull null
-
-                val title =
-                    titleLink.text().trim()
-
-                val detailUrl =
-                    titleLink.absUrl("href").trim()
-
-                if (title.isBlank() || detailUrl.isBlank()) {
-                    return@mapNotNull null
+                val link = item.selectFirst("h3.vod-item-title a[href]")
+                    ?: item.selectFirst("a.vod-item-img[href]")
+                    ?: return@mapNotNull null
+                val detailUrl = link.absUrl("href").ifBlank {
+                    absolute(link.attr("href"))
                 }
+                val title = item.selectFirst("h3.vod-item-title")?.text()?.trim().orEmpty()
+                if (detailUrl.isBlank() || title.isBlank()) return@mapNotNull null
 
-                // =================================================
-                // 이미지
-                //
-                // 실제 구조:
-                //
-                // data-original=
-                // https://rez1.imgdarr.top/370x/https://k2.1imgdarr.top/...
-                //
-                // poster   -> 리사이즈 이미지
-                // backdrop -> 원본 이미지
-                // =================================================
-
-                val imageWrapper =
-                    item.selectFirst(".img-wrapper")
-
-                val imageUrl =
-                    imageWrapper
-                        ?.attr("data-original")
-                        ?.trim()
-                        .orEmpty()
-
-                val poster =
-                    normalizeImageUrl(imageUrl)
-
-                val backdrop =
-                    extractOriginalImageUrl(imageUrl)
-
-                // 목록 카드에 함께 노출되는 장르/태그를 바로 읽는다.
-                // 상세 페이지를 작품마다 다시 요청하지 않아도 목록 단계에서
-                // genres를 채울 수 있도록 여러 Linkkf 마크업 형태를 허용한다.
-                val genres = extractListGenres(item)
-
+                val image = item.selectFirst(".img-wrapper")?.attr("data-original").orEmpty()
+                val episodeText = item.selectFirst(".vod-item-desc")?.text()?.trim().orEmpty()
+                val id = extractAnimeId(detailUrl)
                 Anime(
-                    id = extractAnimeId(detailUrl),
+                    id = id,
                     title = title,
+                    poster = absolute(image),
+                    backdrop = absolute(image),
                     description = "",
-                    poster = poster,
-                    backdrop = backdrop,
-                    genres = genres,
                     episodes = emptyList(),
-                    detailUrl = detailUrl
+                    detailUrl = detailUrl,
+                    note = episodeText
                 )
             }
             .distinctBy { it.id }
-    }
+            .take(limit)
 
-    // =========================================================
-    // 목록 카드의 장르/태그
-    // =========================================================
+    fun parseAnimeDetail(document: Document, original: Anime): Anime {
+        val title = document.selectFirst(".detail-info-title")?.text()?.trim()
+            .takeUnless { it.isNullOrBlank() } ?: original.title
 
-    private fun extractListGenres(
-        item: org.jsoup.nodes.Element
-    ): List<String> {
-        val selectors = listOf(
-            ".genres a",
-            ".genre a",
-            ".tags a",
-            ".tag a",
-            ".vod-item-genre a",
-            ".vod-item-genres a",
-            ".vod-item-tag a",
-            ".vod-item-tags a",
-            "[class*='genre'] a",
-            "[class*='tag'] a",
-            "a[href*='/genre/']"
-        )
+        val poster = document.selectFirst(".detail-img [data-original]")
+            ?.attr("data-original")
+            ?.takeIf { it.isNotBlank() }
+            ?: document.selectFirst(".detail-img img[src]")
+                ?.attr("src")
+                ?.takeIf { it.isNotBlank() }
+            ?: original.poster
 
-        return selectors
-            .asSequence()
-            .flatMap { selector -> item.select(selector).asSequence() }
-            .map { it.text().trim() }
+        val description = document.selectFirst("meta[name=description]")
+            ?.attr("content")
+            ?.trim()
+            .orEmpty()
+            .ifBlank { original.description }
+
+        val info = document.select(".detail-info-desc li")
+            .map { it.text().replace(Regex("\\s+"), " ").trim() }
+
+        fun infoValue(prefixes: List<String>): String =
+            info.firstOrNull { line ->
+                prefixes.any { line.startsWith(it, ignoreCase = true) }
+            }?.substringAfter("：", "")
+                ?.substringAfter(":", "")
+                ?.trim()
+                .orEmpty()
+
+        val genreLine = info.firstOrNull {
+            it.startsWith("장르：") || it.startsWith("장르:")
+        }.orEmpty()
+        val genres = genreLine
+            .substringAfter("：", genreLine.substringAfter(":", ""))
+            .split("/")
+            .map { it.trim() }
             .filter { it.isNotBlank() }
-            .filterNot {
-                it.equals("Watch Now", ignoreCase = true) ||
-                    it.equals("더보기", ignoreCase = true) ||
-                    it.equals("보기", ignoreCase = true)
-            }
             .distinct()
-            .toList()
-    }
 
-    // =========================================================
-    // 이미지 URL 정리
-    // =========================================================
+        val studioLine = info.firstOrNull {
+            it.startsWith("제작사：") || it.startsWith("제작사:")
+        }.orEmpty()
+        val studios = studioLine
+            .substringAfter("：", studioLine.substringAfter(":", ""))
+            .split("/")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
 
-    private fun normalizeImageUrl(
-        url: String
-    ): String {
+        val year = infoValue(listOf("년", "년도")).replace("년", "").trim()
+        val format = infoValue(listOf("분류")).trim()
+        val native = infoValue(listOf("원제")).trim()
+        val anilistId = Regex("""anilist-(\d+)""")
+            .find(absolute(poster))
+            ?.groupValues?.getOrNull(1)
+            ?.toIntOrNull()
 
-        if (url.isBlank()) {
-            return ""
-        }
-
-        return when {
-            url.startsWith("http://") ||
-            url.startsWith("https://") -> {
-                url
-            }
-
-            url.startsWith("//") -> {
-                "https:$url"
-            }
-
-            url.startsWith("/") -> {
-                "$BASE_URL$url"
-            }
-
-            else -> {
-                "$BASE_URL/$url"
-            }
-        }
-    }
-
-    // =========================================================
-    // 원본 이미지 URL 추출
-    //
-    // 예:
-    //
-    // https://rez1.imgdarr.top/370x/
-    // https://k2.1imgdarr.top/anime/196974/xxxxx.webp
-    //
-    // =>
-    //
-    // https://k2.1imgdarr.top/anime/196974/xxxxx.webp
-    // =========================================================
-
-    private fun extractOriginalImageUrl(
-        url: String
-    ): String {
-
-        if (url.isBlank()) {
-            return ""
-        }
-
-        val normalized =
-            normalizeImageUrl(url)
-
-        val resizePrefix =
-            "/370x/"
-
-        val index =
-            normalized.indexOf(resizePrefix)
-
-        if (index >= 0) {
-            val original =
-                normalized.substring(
-                    index + resizePrefix.length
-                )
-
-            if (
-                original.startsWith("http://") ||
-                original.startsWith("https://")
-            ) {
-                return original
-            }
-        }
-
-        // 이미 원본 URL인 경우
-        return normalized
-    }
-
-    // =========================================================
-    // 작품 상세
-    // =========================================================
-
-    fun parseAnimeDetail(
-        document: Document,
-        original: Anime
-    ): Anime {
-
-        val title =
-            document
-                .selectFirst(".detail-info-title")
-                ?.text()
-                ?.trim()
-                ?: original.title
-
-        val description =
-            document
-                .selectFirst(".detail-desc-content")
-                ?.text()
-                ?.trim()
-                ?: original.description
-
-        val genres = extractDetailGenres(document)
+        val episodes = parseEpisodes(document, original)
+        val related = document.select(".detail-actor-box .vod-item").mapNotNull { item ->
+            val a = item.selectFirst("h3.vod-item-title a[href]") ?: return@mapNotNull null
+            val href = a.absUrl("href").ifBlank { absolute(a.attr("href")) }
+            val rid = extractAnimeId(href)
+            val rtitle = a.text().trim()
+            if (rid.isBlank() || rtitle.isBlank()) null
+            else Triple(rid, rtitle, absolute(item.selectFirst(".img-wrapper")?.attr("data-original").orEmpty()))
+        }.distinctBy { it.first }
 
         return original.copy(
             title = title,
+            poster = absolute(poster),
+            backdrop = absolute(poster),
             description = description,
-            genres = genres
+            genres = genres,
+            airedDate = year,
+            year = year,
+            format = format,
+            studios = studios,
+            native = native,
+            anilistId = anilistId ?: original.anilistId,
+            detailUrl = original.detailUrl.ifBlank { document.location() },
+            episodes = episodes,
+            // Keep related works source-local without changing the shared model:
+            // existing Linkkf UI can continue using its separate related API state.
         )
     }
 
-    /**
-     * Linkkf 목록 카드에는 장르가 없는 경우가 많아서 상세 문서에서
-     * 장르/태그를 추출할 때도 이 함수를 공용으로 사용한다.
-     */
-    fun extractDetailGenres(document: Document): List<String> {
-        return document
-            .select(".detail-info-desc li")
-            .firstOrNull { it.text().contains("장르") }
-            ?.select("a")
-            ?.map { it.text().trim() }
-            ?.filter { it.isNotBlank() }
-            ?.distinct()
-            ?: document.select("a[href*='/genre/'], .genres a, .genre a, [class*='genre'] a")
-                .map { it.text().trim() }
-                .filter { it.isNotBlank() }
-                .distinct()
-    }
-
-    // =========================================================
-    // 회차 (자막)
-    // =========================================================
-
-    fun parseEpisodes(
-        document: Document,
-        anime: Anime
-    ): List<Episode> {
-
-        return document
-            .select(
-                ".episode-box ul#ewave-playlist-1 a.ep"
-            )
+    fun parseEpisodes(document: Document, anime: Anime): List<Episode> =
+        document.select(".episode-box a.ep[href], .episode-box a[href*='/watch/']")
             .mapNotNull { link ->
+                val href = link.absUrl("href").ifBlank { absolute(link.attr("href")) }
+                val raw = link.text().trim()
+                val match = Regex("""(\d+)([A-Za-z]+)?""").find(raw)
+                    ?: Regex("""/k(\d+)([A-Za-z]+)?/?$""").find(href)
+                    ?: return@mapNotNull null
+                val number = match.groupValues.getOrNull(1)?.toIntOrNull() ?: return@mapNotNull null
+                val suffix = match.groupValues.getOrNull(2).orEmpty().lowercase()
+                val display = "$number$suffix"
+                if (href.isBlank()) return@mapNotNull null
+                Episode(
+                    id = "${anime.id}_ep_${display.lowercase()}",
+                    number = number,
+                    title = "${display}화",
+                    description = "${anime.title} ${display}화",
+                    videoUrl = href,
+                    displayNumber = display
+                )
+            }
+            .distinctBy { it.videoUrl ?: it.id }
+            .sortedWith(compareBy<Episode> { it.number }.thenBy { it.displayNumber })
 
-                val pageUrl =
-                    link.absUrl("href").trim()
+    fun parseDubEpisodes(document: Document, anime: Anime): List<Episode> = emptyList()
 
-                val rawLabel = link.text().trim()
-                val match = Regex("""(\d+)([A-Za-z]+)?""").find(rawLabel)
-                val epNum = match?.groupValues?.getOrNull(1)?.toIntOrNull()
-                val suffix = match?.groupValues?.getOrNull(2).orEmpty().lowercase()
-                val displayNumber = if (epNum != null) epNum.toString() + suffix else ""
+    fun parseWatch(document: Document): WatchData? {
+        val script = document.select("script").firstOrNull {
+            it.data().contains("player_aaaa")
+        }?.data().orEmpty()
+        if (script.isBlank()) return null
 
-                if (
-                    pageUrl.isBlank() ||
-                    epNum == null ||
-                    displayNumber.isBlank()
-                ) {
-                    null
-                } else {
-                    Episode(
-                        id = "${anime.id}_ep_${displayNumber.lowercase()}",
-                        number = epNum,
-                        title = "${displayNumber}화",
-                        description = "${anime.title} ${displayNumber}화",
-                        videoUrl = pageUrl,
-                        displayNumber = displayNumber
-                    )
+        val start = script.indexOf("var player_aaaa")
+        if (start < 0) return null
+        val brace = script.indexOf('{', start)
+        if (brace < 0) return null
+
+        var depth = 0
+        var quoted = false
+        var escaped = false
+        var end = -1
+        for (i in brace until script.length) {
+            val c = script[i]
+            if (quoted) {
+                if (escaped) escaped = false
+                else if (c == '\\') escaped = true
+                else if (c == '"') quoted = false
+                continue
+            }
+            when (c) {
+                '"' -> quoted = true
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) {
+                        end = i + 1
+                        break
+                    }
                 }
             }
-            .distinctBy {
-                it.videoUrl ?: it.id
-            }
-            .sortedWith(
-                compareByDescending<Episode> { it.number }
-                    .thenByDescending { it.displayNumber }
-            )
+        }
+        if (end <= brace) return null
+
+        val jsonText = script.substring(brace, end)
+            .replace("\\u0026", "&")
+            .replace("\\/", "/")
+        val obj = runCatching { org.json.JSONObject(jsonText) }.getOrNull() ?: return null
+
+        return WatchData(
+            streamUrl = obj.optString("actual_url").ifBlank { obj.optString("url") }.trim().ifBlank { null },
+            nextStreamUrl = obj.optString("url_next").trim().ifBlank { null },
+            previousPage = obj.optString("link_pre").trim().ifBlank { null },
+            nextPage = obj.optString("link_next").trim().ifBlank { null },
+            subtitleUrl = obj.optString("subtitle_url").trim().ifBlank { null },
+            title = obj.optJSONObject("vod_data")?.optString("vod_name").orEmpty()
+        )
     }
 
-    // =========================================================
-    // 회차 (더빙)
-    // =========================================================
+    data class WatchData(
+        val streamUrl: String?,
+        val nextStreamUrl: String?,
+        val previousPage: String?,
+        val nextPage: String?,
+        val subtitleUrl: String?,
+        val title: String
+    )
 
-    fun parseDubEpisodes(
-        document: Document,
-        anime: Anime
-    ): List<Episode> {
-
-        return document
-            .select(
-                ".episode-box ul#ewave-playlist-2 a.ep"
-            )
-            .mapNotNull { link ->
-
-                val pageUrl =
-                    link.absUrl("href").trim()
-
-                val rawLabel = link.text().trim()
-                val match = Regex("""(\d+)([A-Za-z]+)?""").find(rawLabel)
-                val epNum = match?.groupValues?.getOrNull(1)?.toIntOrNull()
-                val suffix = match?.groupValues?.getOrNull(2).orEmpty().lowercase()
-                val displayNumber = if (epNum != null) epNum.toString() + suffix else ""
-
-                if (
-                    pageUrl.isBlank() ||
-                    epNum == null ||
-                    displayNumber.isBlank()
-                ) {
-                    null
-                } else {
-                    Episode(
-                        id = "${anime.id}_dub_ep_${displayNumber.lowercase()}",
-                        number = epNum,
-                        title = "${displayNumber}화 (더빙)",
-                        description = "${anime.title} ${displayNumber}화 (더빙)",
-                        videoUrl = pageUrl,
-                        displayNumber = displayNumber
-                    )
-                }
-            }
-            .distinctBy {
-                it.videoUrl ?: it.id
-            }
-            .sortedWith(
-                compareByDescending<Episode> { it.number }
-                    .thenByDescending { it.displayNumber }
-            )
+    private fun absolute(value: String): String {
+        val v = value.trim()
+        if (v.isBlank()) return ""
+        return when {
+            v.startsWith("http://") || v.startsWith("https://") -> v
+            v.startsWith("//") -> "https:$v"
+            v.startsWith("/") -> BASE_URL + v
+            else -> "$BASE_URL/$v"
+        }
     }
 
-    // =========================================================
-    // 유틸
-    // =========================================================
+    private fun extractAnimeId(url: String): String =
+        url.trimEnd('/').substringAfterLast('/').trim()
 
-    private fun extractAnimeId(
-        url: String
-    ): String {
-        return url
-            .trimEnd('/')
-            .substringAfterLast('/')
-    }
+    private fun Element.absOrAbsolute(attr: String): String =
+        absUrl(attr).ifBlank { absolute(attr(attr)) }
 }

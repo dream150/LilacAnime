@@ -154,13 +154,23 @@ object ReAnimeParser {
             .ifBlank { stringValue(anime.opt("synopsis")) }
         val genres = extractStringList(anime.opt("genres"))
             .ifEmpty { extractStringList(item.opt("genres")) }
+        val season = firstNonBlank(
+            stringValue(anime.opt("season")),
+            stringValue(item.opt("season"))
+        ).orEmpty()
+        val seasonYear = firstInt(
+            anime, item, "season_year", "seasonYear", "season_year_value"
+        ) ?: firstInt(anime, item, "year", "release_year", "releaseYear")
+        val seasonNumber = firstInt(
+            anime, item, "season_number", "seasonNumber", "season_num", "seasonIndex"
+        ) ?: inferSeasonNumber(title)
 
         val detailUrl = "$BASE_URL/anime/$finalSlug"
 
         android.util.Log.d(
             "ReAnime",
             "PARSED_ANIME title=$title native=$nativeTitle slug=$finalSlug detailUrl=$detailUrl " +
-                "anilistId=$anilistId malId=$malId"
+                "anilistId=$anilistId malId=$malId season=$season seasonYear=$seasonYear seasonNumber=$seasonNumber"
         )
 
         return Anime(
@@ -173,6 +183,9 @@ object ReAnimeParser {
             backdrop = poster,
             genres = genres,
             description = description,
+            season = season,
+            seasonYear = seasonYear,
+            seasonNumber = seasonNumber,
             detailUrl = detailUrl
         )
     }
@@ -406,6 +419,9 @@ object ReAnimeParser {
             synonyms = synonyms,
             format = format,
             year = year,
+            season = season,
+            seasonYear = season.toIntOrNull() ?: year.toIntOrNull(),
+            seasonNumber = regexInt(mediaHtml, "season_number:(\\d+)") ?: inferSeasonNumber(title),
             airedDate = airedDate,
             source = source,
             note = listOfNotNull(
@@ -414,6 +430,18 @@ object ReAnimeParser {
             ).joinToString(" · "),
             reAnimeRelated = related
         )
+    }
+
+    private fun inferSeasonNumber(title: String): Int? {
+        val patterns = listOf(
+            Regex("(?i)\\bseason\\s*(\\d+)\\b"),
+            Regex("(?i)\\bpart\\s*(\\d+)\\b"),
+            Regex("(?i)\\bcour\\s*(\\d+)\\b"),
+            Regex("(?i)\\bs(\\d+)\\b"),
+            Regex("(\\d+)\\s*기\\b")
+        )
+        return patterns.firstNotNullOfOrNull { it.find(title)?.groupValues?.getOrNull(1)?.toIntOrNull() }
+            ?.takeIf { it > 0 }
     }
 
     private fun regexString(text: String, pattern: String): String? =

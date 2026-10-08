@@ -4,11 +4,11 @@ import android.content.Context
 import com.lilac.anime.Episode
 
 /**
- * Compatibility facade for callers that still resolve several episodes at once.
+ * Batch compatibility facade.
  *
- * The old implementation mixed player navigation, URL guessing and WebView
- * capture in one very large object. All actual resolution now lives in
- * LinkkfPlayerResolver. This facade only adapts the result for downloads.
+ * The old collector created several WebViews only to observe a request that is
+ * now explicitly present in Linkkf's server-rendered watch HTML.  Resolve each
+ * watch page directly instead.
  */
 object LinkkfEpisodeM3u8Collector {
 
@@ -32,36 +32,35 @@ object LinkkfEpisodeM3u8Collector {
         val refs = linkedMapOf<String, String>()
         val subtitles = linkedMapOf<String, String>()
         val subtitleRefs = linkedMapOf<String, String>()
-        val headers = linkedMapOf<String, String>()
         val failed = linkedSetOf<String>()
 
-        for (episode in episodes) {
+        episodes.forEach { episode ->
             onStatus("LINKKF_RESOLVE_START episode=${episode.displayNumber}")
             val result = runCatching {
                 LinkkfPlayerResolver.resolve(context, episode)
             }.getOrNull()
 
-            if (result?.m3u8Url.isNullOrBlank()) {
+            val video = result?.m3u8Url
+            if (video.isNullOrBlank()) {
                 failed += episode.id
                 onStatus("LINKKF_RESOLVE_FAILED episode=${episode.displayNumber}")
-                continue
+                return@forEach
             }
 
-            result!!.m3u8Url!!.let { urls[episode.id] = it }
+            urls[episode.id] = video
             result.referer?.let { refs[episode.id] = it }
-            result.headers?.let { headers[episode.id] = it }
 
-            if (!result.subtitleUrl.isNullOrBlank()) {
-                subtitles[episode.id] = result.subtitleUrl
+            val subtitle = result.subtitleUrl
+            if (!subtitle.isNullOrBlank()) {
+                subtitles[episode.id] = subtitle
                 result.subtitleReferer?.let { subtitleRefs[episode.id] = it }
-                onSubtitleFound(
-                    episode.id,
-                    result.subtitleUrl,
-                    result.subtitleReferer
-                )
+                onSubtitleFound(episode.id, subtitle, result.subtitleReferer)
             }
 
-            onStatus("LINKKF_RESOLVE_OK episode=${episode.displayNumber} m3u8=${result.m3u8Url}")
+            onStatus(
+                "LINKKF_RESOLVE_OK episode=${episode.displayNumber} " +
+                    "m3u8=$video subtitle=${subtitle ?: "<none>"}"
+            )
         }
 
         return Result(
@@ -69,8 +68,7 @@ object LinkkfEpisodeM3u8Collector {
             referers = refs,
             subtitleUrls = subtitles,
             subtitleReferers = subtitleRefs,
-            failedEpisodeIds = failed,
-            headers = headers
+            failedEpisodeIds = failed
         )
     }
 }

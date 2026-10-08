@@ -249,6 +249,9 @@ object ReAnimeHarParser {
             format = table.stringRef(anime, "format") ?: fallback.format,
             source = table.stringRef(anime, "source") ?: fallback.source,
             year = table.intRef(anime, "season_year")?.toString() ?: fallback.year,
+            season = table.stringRef(anime, "season") ?: fallback.season,
+            seasonYear = table.intRef(anime, "season_year") ?: fallback.seasonYear,
+            seasonNumber = table.intRef(anime, "season_number") ?: table.intRef(anime, "seasonNumber") ?: fallback.seasonNumber,
             airedDate = aired,
             note = listOfNotNull(
                 table.stringRef(anime, "status"),
