@@ -84,13 +84,42 @@ internal object SubtitleFormatTranslator {
                     Log.d("SubtitleProfile", "CUE_DONE index=${index + 1}/${parsed.size} contextCount=${contextItems.size} futureCount=${futureLines.size} modelMs=$modelMs")
                 }
             } else {
-                parsed.chunked(10).forEachIndexed { chunkIndex, chunk ->
+                val batchSize = when (provider.id) {
+                    "gemini" -> 40
+                    "openai" -> 40
+                    "qwen" -> 40
+                    "deepl" -> 50
+                    else -> 10
+                }
+                val maxChars = when (provider.id) {
+                    "gemini" -> 14000
+                    "openai" -> 9000
+                    "qwen" -> 7000
+                    "deepl" -> 20000
+                    else -> Int.MAX_VALUE
+                }
+                val batches = mutableListOf<List<Cue>>()
+                var current = mutableListOf<Cue>()
+                var chars = 0
+                for (cue in parsed) {
+                    val len = modelText(cue.text, cue.kind).length
+                    if (current.isNotEmpty() && (current.size >= batchSize || chars + len > maxChars)) {
+                        batches += current
+                        current = mutableListOf()
+                        chars = 0
+                    }
+                    current += cue
+                    chars += len
+                }
+                if (current.isNotEmpty()) batches += current
+
+                batches.forEachIndexed { chunkIndex, chunk ->
                     val sources = chunk.map { modelText(it.text, it.kind) }
                     val modelStartedAt = System.nanoTime()
                     val results = try {
                         provider.translateBatch(sources)
                     } catch (error: CancellationException) {
-                        Log.e("SubtitleProfile", "API_BATCH_CANCELLED batch=${chunkIndex + 1} type=${error::class.java.name} message=${error.message}", error)
+                        Log.e("SubtitleProfile", "API_BATCH_CANCELLED provider=${provider.id} batch=${chunkIndex + 1} type=${error::class.java.name} message=${error.message}", error)
                         throw error
                     } catch (error: Throwable) {
                         Log.e("SubtitleProfile", "API_BATCH_FAILED provider=${provider.id} batch=${chunkIndex + 1} type=${error::class.java.name} message=${error.message}", error)
@@ -100,9 +129,9 @@ internal object SubtitleFormatTranslator {
                     val modelMs = (System.nanoTime() - modelStartedAt) / 1_000_000L
                     totalModelMs += modelMs
                     chunk.forEachIndexed { index, cue ->
-                        translated[cue.index] = results[index].takeIf { it.isNotBlank() } ?: error("${provider.displayName} ${chunkIndex * 10 + index + 1}번째 번역 결과가 비어 있습니다.")
+                        translated[cue.index] = results[index].takeIf { it.isNotBlank() } ?: error("${provider.displayName} ${cue.index + 1}번째 번역 결과가 비어 있습니다.")
                     }
-                    Log.d("SubtitleProfile", "API_BATCH_DONE provider=${provider.id} batch=${chunkIndex + 1} cues=${chunk.size} modelMs=$modelMs")
+                    Log.d("SubtitleProfile", "API_BATCH_DONE provider=${provider.id} batch=${chunkIndex + 1}/${batches.size} cues=${chunk.size} chars=${sources.sumOf { it.length }} modelMs=$modelMs")
                 }
             }
         } finally {

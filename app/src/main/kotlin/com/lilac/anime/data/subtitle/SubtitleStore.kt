@@ -166,7 +166,7 @@ object SubtitleStore {
 
     suspend fun list(context: Context, animeId: String, episodeKey: String, episodeNumber: Int): List<SavedSubtitle> = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        listOf("linkkf", "reanime", "jimaku", "kairan", "csora").flatMap { source ->
+        listOf("linkkf", "reanime", "jimaku", "anissia", "kairan", "csora").flatMap { source ->
             val primary = prefs.getString(key(animeId, episodeKey, source), null)
             val stored = prefs.getStringSet(allPathsKey(animeId, episodeKey, source), emptySet()).orEmpty()
             val paths = (stored + listOfNotNull(primary)).distinct()

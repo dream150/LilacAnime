@@ -1,461 +1,280 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:8B6FC7,50:B99BE8,100:E9DDF8&height=280&section=header&text=LilacAnime&fontSize=68&fontColor=FFFFFF&animation=fadeIn&fontAlignY=38&desc=언제%20어디서든%2C%20편하게%20즐기는%20애니메이션&descSize=20&descAlignY=62" width="100%"/>
-
-<br>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:8B6FC7,50:B99BE8,100:E9DDF8&height=220&section=header&text=LilacAnime&fontSize=64&fontColor=FFFFFF&animation=fadeIn&fontAlignY=38&desc=Android%20Anime%20Player%20%7C%20Subtitle%20Tools&descSize=16&descAlignY=62" width="100%" />
 
 # 🌸 LilacAnime
 
-### *Watch what you love, whenever you want.*
+**애니메이션 감상과 자막 관리를 한곳에서**
 
-애니메이션을 찾는 순간부터
-감상을 끝내는 순간까지.
-
-**더 편하고, 더 자연스럽게.**
-
-<br>
-
-![Android](https://img.shields.io/badge/Android-3DDC84?style=for-the-badge\&logo=android\&logoColor=white)
-![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge\&logo=kotlin\&logoColor=white)
-![Development](https://img.shields.io/badge/Development-In%20Progress-C7B1E5?style=for-the-badge)
-
-<br><br>
-
-> 🌷 **Your time. Your anime. Your way.**
+[![Android](https://img.shields.io/badge/Platform-Android-3DDC84?style=flat-square&logo=android&logoColor=white)](https://developer.android.com/)
+[![Kotlin](https://img.shields.io/badge/Language-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![Player](https://img.shields.io/badge/Player-libmpv-7E57C2?style=flat-square)](https://mpv.io/)
 
 </div>
 
 ---
 
-# 💜 About LilacAnime
+## 목차
 
-**LilacAnime**는 사용자가 **언제 어디서든 애니메이션을 편하게 감상할 수 있도록** 만들어가는 Android 애니메이션 앱입니다.
+- [LilacAnime 소개](#-lilacanime-소개)
+- [시작하기](#-시작하기)
+- [애니메이션 찾고 재생하기](#-애니메이션-찾고-재생하기)
+- [자막 선택 및 관리](#-자막-선택-및-관리)
+- [AI 자막 번역 설정](#-ai-자막-번역-설정)
+  - [번역 방식 고르기](#1-번역-방식-고르기)
+  - [로컬 AI 설정--추천](#2-로컬-ai-설정--추천)
+  - [클라우드 AI 설정](#3-클라우드-ai-설정)
+  - [프롬프트와 번역 옵션](#4-프롬프트와-번역-옵션)
+  - [자막 파일 번역 및 테스트](#5-자막-파일-번역-및-테스트)
+- [플레이어 조작](#-플레이어-조작)
+- [문제 해결](#-문제-해결)
+- [개인정보 및 콘텐츠 안내](#-개인정보-및-콘텐츠-안내)
 
-애니메이션을 찾는 과정은 간단하게.
+## 🌷 LilacAnime 소개
 
-자막은 원하는 방식으로.
+LilacAnime는 Android에서 애니메이션을 검색하고 재생하며, 자막을 선택하거나 AI로 번역할 수 있는 앱입니다. 영상 재생은 libmpv 기반이며, 로컬 자막과 온라인 자막 소스를 함께 사용할 수 있습니다.
 
-영상은 편안하게.
+### 주요 기능
 
-그리고 감상하는 동안에는 **앱이 방해하지 않도록.**
+| 기능 | 설명 |
+|---|---|
+| 애니메이션 검색 | LinkKF 및 ReAnime 콘텐츠 탐색 |
+| 영상 재생 | libmpv 플레이어, 전체 화면 감상 |
+| 자막 선택 | Jimaku 및 Anissia 검색, 지원되는 제작자별 자막 다운로드 |
+| 로컬 자막 | 기기에 있는 자막 파일 가져오기 및 사용 |
+| AI 번역 | 로컬 GGUF 모델 또는 Gemini, OpenAI, Qwen, DeepL |
+| 번역 프롬프트 | 시스템 프롬프트와 사용자 프롬프트 설정 |
+| OP/ED 스킵 | 지원되는 영상에서 오프닝·엔딩 구간 건너뛰기 |
+| 오프라인 감상 | 저장한 영상과 자막 사용(지원되는 다운로드 항목) |
 
-LilacAnime는 기능의 수보다 **사용자가 실제로 느끼는 편리함**을 중요하게 생각합니다.
+> 일부 온라인 소스와 제작자별 자막 페이지의 형식은 서로 다릅니다. 모든 작품·회차에서 동일한 결과를 보장하지는 않으며, 자막 검색 결과가 없으면 작품명·회차·제작자 페이지를 확인해 주세요.
+
+## 🚀 시작하기
+
+1. Android 기기에 LilacAnime APK를 설치합니다.
+2. 앱을 열고 홈 또는 검색 화면에서 작품을 찾습니다.
+3. 작품과 회차를 선택해 재생합니다.
+4. 필요하면 플레이어의 자막 선택 메뉴에서 온라인 자막을 검색하거나 기기의 자막 파일을 선택합니다.
+5. AI 번역을 사용하려면 먼저 **설정 → AI**에서 번역 제공자와 모델을 설정합니다.
+
+앱의 화면 구성이나 메뉴 이름은 빌드 버전에 따라 조금 다를 수 있습니다.
+
+## 🔎 애니메이션 찾고 재생하기
+
+1. 홈 화면에서 작품을 탐색하거나 검색 탭에서 제목을 입력합니다.
+2. 검색 결과에서 원하는 작품을 선택합니다.
+3. 회차 목록에서 시청할 회차를 누릅니다.
+4. 재생이 시작되면 화면을 눌러 플레이어 컨트롤을 표시합니다.
+
+LinkKF와 ReAnime는 별도의 영상 소스입니다. 한쪽에서 재생이 실패하면 다른 소스에 같은 작품이 있는지 확인해 보세요. 네트워크 상태나 원본 사이트의 변경으로 특정 영상이 재생되지 않을 수 있습니다.
+
+## 📝 자막 선택 및 관리
+
+### 온라인 자막
+
+1. 영상 재생 화면에서 자막 메뉴를 엽니다.
+2. Jimaku 또는 Anissia 등 원하는 자막 검색 소스를 선택합니다.
+3. 검색 결과에서 제작자·자막 페이지·회차 정보를 확인합니다.
+4. 제공되는 다운로드/적용 동작으로 자막을 불러옵니다.
+
+Anissia는 작품과 제작자 페이지를 찾기 위한 색인으로 사용됩니다. Anissia에 표시된 회차가 최신 회차 하나뿐이어도, 제작자 페이지에 이전 회차 자막이 있을 수 있습니다. 실제 파일의 존재 여부는 연결된 제작자 페이지와 해당 페이지의 다운로드 방식에 따라 달라집니다.
+
+### 로컬 자막
+
+1. 자막 선택 화면에서 로컬 파일 선택 기능을 엽니다.
+2. Android 파일 선택기에서 `.srt`, `.ass`, `.ssa`, `.smi` 등 보유한 자막 파일을 선택합니다(실제 지원 형식은 파일과 빌드에 따라 다를 수 있습니다).
+3. 자막이 표시되지 않으면 인코딩, 파일 손상, 회차 일치 여부를 확인합니다.
+
+### AI로 번역하기
+
+AI 제공자를 설정한 다음, 플레이어에서 자막 번역 기능을 사용합니다. ASS 자막은 원본 스타일과 효과를 유지하는 것을 목표로 처리하지만, 번역된 문장의 길이와 원본 자막의 복잡한 스타일에 따라 표시 결과가 달라질 수 있습니다.
+
+## 🤖 AI 자막 번역 설정
+
+AI 설정은 **설정 → AI**에서 관리합니다. 모델 설치, 번역 제공자 선택, 프롬프트 작성, 생성 옵션을 각각 확인하세요.
+
+### 1. 번역 방식 고르기
+
+| 방식 | 장점 | 필요한 것 |
+|---|---|---|
+| **로컬 AI** | 모델을 기기에서 실행하므로 외부 번역 API 키가 필요하지 않음 | 호환되는 GGUF 모델과 설치된 runtime, 충분한 메모리 |
+| **Gemini** | Google Gemini API를 통한 클라우드 번역 | Gemini API 키와 인터넷 연결 |
+| **OpenAI** | OpenAI API를 통한 클라우드 번역 | OpenAI API 키와 인터넷 연결 |
+| **Qwen** | DashScope 호환 API를 통한 번역 | Qwen API 키, 지역 설정 및 인터넷 연결 |
+| **DeepL** | DeepL 번역 API 사용 | DeepL API 키와 인터넷 연결 |
+
+AI 설정에서 선택한 제공자가 실제 자막 번역에 사용됩니다. 클라우드 제공자는 각 서비스의 요금제·사용량 한도·지원 모델에 영향을 받습니다.
+
+### 2. 로컬 AI 설정 — 추천
+
+#### 추천 모델: `ggml-org/gemma-4-E2B-it-GGUF`의 `Q4_0`
+
+처음 로컬 번역을 설정한다면 Gemma 4의 E2B 지시형 모델에 Q4_0 양자화를 적용한 GGUF 파일부터 시도하는 것을 권장합니다. 대형 모델보다 저장 공간과 메모리 부담이 낮은 편이라 모바일 기기에서 시험하기에 더 적합합니다. 속도와 번역 품질은 기기의 RAM, 칩셋, runtime에 따라 달라집니다.
+
+- 모델 저장소: [ggml-org/gemma-4-E2B-it-GGUF](https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF)
+- 파일 선택: 이름에 `Q4_0`이 포함된 GGUF 파일을 선택합니다.
+- 이 저장소에서 원하는 양자화 파일이 보이지 않으면 저장소의 **Files** 목록에서 파일명과 크기를 확인하세요.
+
+#### 앱에서 모델 설치하기
+
+1. **설정 → AI**를 엽니다.
+2. 로컬 AI 모델 검색란에 `ggml-org/gemma-4-E2B-it-GGUF`를 입력합니다.
+3. 저장소를 검색하고 파일 목록에서 `Q4_0` GGUF 파일을 선택합니다.
+4. 다운로드가 끝날 때까지 앱을 열어 둡니다. 파일 크기에 따라 시간이 걸릴 수 있습니다.
+5. 설치된 모델 목록에서 Gemma 4 모델을 선택해 번역 제공자로 지정합니다.
+6. 모델에 호환되는 runtime이 설치되어 있는지 확인합니다. 호환 runtime이 없다면 **Runtime 추가**로 프로젝트에서 지원하는 runtime 패키지를 설치해야 합니다.
+7. 처음에는 아래의 보수적인 설정으로 짧은 자막을 테스트합니다.
+
+| 옵션 | 시작 설정 |
+|---|---|
+| Thinking | **OFF** — 번역 외 추론 텍스트를 줄이고 응답 지연을 낮추기 위한 시작값 |
+| Context size | 2,048–4,096 tokens부터 시작 |
+| Max tokens | 512–1,024부터 시작 |
+| Temperature | 0.2–0.4 |
+| Thread 수 | 자동 |
+| 문맥 자막 수 | 2–4개 |
+
+이 값은 권장 시작점이지 모든 기기의 최적값은 아닙니다. 메모리 부족이나 앱 종료가 발생하면 context size와 max tokens를 낮추고, 속도가 너무 느리면 더 작은 모델 또는 호환되는 가속 runtime을 고려하세요. 모델이 지원하지 않는 옵션은 효과가 없을 수 있습니다.
+
+#### Runtime과 성능
+
+GGUF 모델 파일만으로는 실행이 보장되지 않습니다. 앱에 설치된 runtime이 해당 모델 아키텍처와 기기 ABI를 지원해야 합니다. 모델 목록에서 **호환 runtime 없음**이 표시되면 모델을 다시 받기 전에 runtime을 확인하세요.
+
+- **자동 선택**: 앱이 호환 runtime을 고르도록 합니다.
+- **Runtime 선택**: 설치된 호환 runtime이 여러 개일 때 원하는 항목을 선택합니다.
+- **모델 파일 추가**: 이미 기기에 있는 GGUF 파일을 가져올 때 사용합니다.
+- **모델 파일 삭제**: 앱 내부에 저장된 모델을 제거합니다. 삭제 전 해당 모델을 선택 중인지 확인하세요.
+
+모델 다운로드는 용량이 크므로 Wi-Fi와 충분한 저장 공간을 권장합니다. 최초 로딩은 이후 번역보다 오래 걸릴 수 있습니다.
+
+### 3. 클라우드 AI 설정
+
+각 제공자의 API 키를 발급받은 후 앱의 **설정 → AI → API Key** 영역에 저장합니다. 키 테스트 기능이 제공되는 경우 먼저 테스트한 뒤 번역을 실행하세요.
+
+#### Gemini
+
+1. [Google AI Studio](https://aistudio.google.com/)에서 Gemini API 키를 발급합니다.
+2. AI 설정의 Gemini API Key 항목에 키를 저장합니다.
+3. Gemini 모델 이름을 확인합니다. 기본값은 앱 빌드에 따라 다를 수 있으며, 계정에서 사용할 수 있는 모델이어야 합니다.
+4. 연결 테스트 후 짧은 자막으로 번역을 확인합니다.
+
+모델 목록 API가 성공해도 해당 키에서 번역에 사용할 수 있는 모델이 발견되지 않으면 테스트가 실패할 수 있습니다. 이 경우 Logcat의 `GeminiTranslator` 로그에서 HTTP 상태와 모델 후보를 확인하세요.
+
+#### OpenAI
+
+1. [OpenAI Platform](https://platform.openai.com/)에서 API 키를 발급합니다.
+2. OpenAI API Key에 저장하고 모델 이름을 입력합니다.
+3. 해당 API 프로젝트에 결제 수단/사용량이 설정되어 있고 모델 접근 권한이 있는지 확인합니다.
+
+ChatGPT 구독과 OpenAI API 사용량 결제는 별도일 수 있습니다. API 요금과 사용량 한도를 확인한 뒤 사용하세요.
+
+#### Qwen
+
+1. [Alibaba Cloud Model Studio / DashScope](https://www.alibabacloud.com/help/en/model-studio/)에서 API 키를 발급합니다.
+2. Qwen API Key에 저장합니다.
+3. 키가 발급된 계정과 일치하도록 API 지역을 선택합니다(International / Singapore 또는 China).
+4. 모델 이름을 확인하고 짧은 번역으로 테스트합니다.
+
+#### DeepL
+
+1. [DeepL API](https://www.deepl.com/pro-api)에서 API 키를 발급합니다.
+2. DeepL API Key에 저장합니다.
+3. 번역 테스트를 진행합니다.
+
+DeepL은 다른 대화형 모델처럼 별도의 시스템 메시지를 같은 방식으로 지원하지 않을 수 있습니다. 이 경우 시스템 프롬프트 전체가 그대로 적용된다고 가정하지 말고, 사용자 프롬프트의 번역 지침을 중심으로 설정하세요.
+
+#### API 키 보안
+
+앱은 API 키를 Android Keystore 기반 암호화 저장소에 보관하도록 구현되어 있습니다. 그래도 키를 스크린샷, 공개 이슈, 로그 또는 저장소에 올리지 마세요. 사용하지 않는 키는 제공자 콘솔에서 폐기할 수 있습니다.
+
+### 4. 프롬프트와 번역 옵션
+
+AI 설정에서 시스템 프롬프트와 사용자 프롬프트를 조정할 수 있습니다. 먼저 기본값으로 번역 품질을 확인하고, 결과에 문제가 있을 때 한 번에 한 가지 항목씩 수정하세요.
+
+#### 프롬프트 작성 예시
+
+**시스템 프롬프트 예시**
+
+```text
+너는 일본어 애니메이션 자막을 자연스러운 한국어로 번역하는 전문 번역가다.
+인물 이름과 고유명사는 문맥에 맞게 일관되게 유지한다.
+자막 번호와 입력 순서를 바꾸지 않는다.
+설명이나 번역 과정은 출력하지 말고 번역 결과만 반환한다.
+```
+
+**사용자 프롬프트 예시**
+
+```text
+아래 자막을 한국어로 번역해 줘.
+캐릭터의 말투와 관계를 유지하고, 짧고 자연스러운 대사로 다듬어 줘.
+줄 수와 항목 순서를 유지하고 자막 외의 설명은 쓰지 마.
+
+{source_text}
+```
+
+프롬프트 입력란이 지원한다면 `{source_text}`는 번역할 자막 내용으로 치환됩니다. `{context}` 및 `{future_context}`는 주변 대사의 문맥을 제공하기 위한 자리표시자입니다. 지원 여부는 제공자와 현재 앱 구현에 따라 다를 수 있습니다. 프롬프트에 자리표시자를 넣었는데 그대로 출력된다면 해당 제공자의 지원 방식과 프롬프트 구성을 확인하세요.
+
+#### 번역 옵션 설명
+
+- **Thinking Mode**: `OFF`는 번역만 출력하도록 유도하고 지연을 줄이는 데 적합합니다. `AUTO`는 모델 기본 설정을 따르며, `ON`은 지원되는 모델에서 추론을 활성화합니다.
+- **Context size**: 모델이 한 번에 참고할 수 있는 토큰 문맥의 크기입니다. 값을 키우면 긴 문맥을 다룰 수 있지만 메모리 사용량도 늘어납니다.
+- **Max tokens**: 한 번의 생성에서 허용할 최대 출력 토큰 수입니다. 너무 낮으면 긴 번역이 잘릴 수 있고, 너무 높으면 시간과 메모리를 더 사용할 수 있습니다.
+- **Temperature**: 낮을수록 출력이 안정적이고, 높을수록 표현이 다양해질 수 있습니다. 자막 번역은 낮은 값부터 시작하는 편이 좋습니다.
+- **Top P / Top K**: 다음 토큰을 고르는 범위를 조정합니다. 기본값에서 시작하고 결과가 불안정할 때만 조절하세요.
+- **Repetition penalty**: 반복 문구를 억제하는 옵션입니다. 너무 높이면 이름이나 반복 대사가 부자연스러워질 수 있습니다.
+- **문맥 자막 수**: 앞뒤 대사를 번역 문맥으로 함께 제공할 때 참고할 자막 수입니다.
+- **Prefetch**: 현재 표시될 자막보다 앞선 항목을 미리 번역해 지연을 줄이려는 기능입니다. 기기 부하가 커지면 값을 낮추세요.
+
+설정 이름이나 지원 옵션은 선택한 모델/runtime에 따라 효과가 다릅니다. 변경 후에는 짧은 구간에서 결과와 속도를 비교하세요.
+
+### 5. 자막 파일 번역 및 테스트
+
+1. AI 설정에서 번역 제공자와 모델을 선택합니다.
+2. 테스트 입력란이 있다면 짧은 일본어 대사를 넣고 번역 테스트를 실행합니다.
+3. 제공자 연결과 번역 결과를 확인합니다.
+4. 자막 파일 번역 기능을 사용할 때 원본 파일을 유지하고, 결과 파일을 별도로 저장합니다.
+5. 실제 영상에서 줄바꿈, 이름 표기, ASS 효과, 타이밍이 적절한지 확인합니다.
+
+번역이 실패하면 먼저 API 키/네트워크 또는 로컬 모델/runtime 상태를 확인한 다음, 모델 이름과 프롬프트를 확인하세요. API 키 테스트 성공은 실제 번역 요청과 모든 모델 설정이 정상이라는 보장은 아닙니다.
+
+## 🎬 플레이어 조작
+
+- 화면을 눌러 플레이어 컨트롤을 표시하거나 숨깁니다.
+- 전체 화면으로 전환해 감상할 수 있습니다.
+- 지원되는 회차에서는 OP/ED 스킵 기능을 사용할 수 있습니다.
+- 자막 메뉴에서 온라인 자막이나 로컬 자막을 선택하고, 설정한 AI 제공자로 번역을 사용할 수 있습니다.
+- 오프라인 저장 항목은 다운로드가 완료된 뒤 기기의 저장 상태를 확인하고 재생하세요.
+
+일부 컨트롤은 영상 소스 또는 플레이어 상태에 따라 표시되지 않을 수 있습니다.
+
+## 🧰 문제 해결
+
+| 문제 | 확인할 사항 |
+|---|---|
+| 작품이 검색되지 않음 | 제목을 짧게 입력하거나 다른 표기·언어로 검색해 보세요. |
+| 영상이 재생되지 않음 | 네트워크를 확인하고 다른 영상 소스 또는 회차를 시도해 보세요. 원본 사이트가 변경되었을 수 있습니다. |
+| 자막 선택창이 비어 있음 | 다른 자막 소스를 확인하고 작품 제목·회차를 확인하세요. Anissia 항목의 최신 회차 표시는 제작자 페이지에 과거 회차가 있는지와 다를 수 있습니다. |
+| 자막 파일은 선택했지만 표시되지 않음 | 파일 형식·인코딩·회차를 확인하고 다른 자막 파일로 시험하세요. |
+| 로컬 모델이 목록에 나타나지 않음 | GGUF 파일이 정상적으로 가져와졌는지 확인하고 모델 목록을 새로 고칩니다. |
+| `호환 runtime 없음` | 해당 모델 아키텍처와 기기에 맞는 runtime을 설치하세요. |
+| 로컬 번역이 느리거나 앱이 종료됨 | 더 작은 모델, 낮은 context size, 낮은 max tokens를 시도하세요. 다른 앱을 종료해 메모리를 확보하세요. |
+| 클라우드 API 테스트 실패 | 키, 계정 권한, 모델명, 지역, 네트워크 및 제공자 사용량 한도를 확인하세요. |
+| 번역 결과가 잘리거나 설명이 섞임 | Thinking OFF, 적절한 max tokens, 짧고 명확한 프롬프트부터 시험하세요. |
+
+문제를 보고할 때는 앱 버전, 선택한 소스/제공자, 재현 단계와 관련 오류 로그를 포함하되 **API 키나 개인 경로 등 비밀 정보는 반드시 제거**하세요.
+
+## 🔐 개인정보 및 콘텐츠 안내
+
+LilacAnime는 영상·자막의 출처 사이트가 제공하는 콘텐츠를 앱에서 탐색하고 재생하기 위한 클라이언트입니다. 온라인 기능은 원본 사이트의 가용성, 정책 및 응답에 영향을 받습니다.
+
+- 클라우드 AI 번역을 사용하면 자막 텍스트가 선택한 외부 제공자에게 전송됩니다. 민감한 텍스트를 보내지 말고 각 제공자의 개인정보·보존 정책을 확인하세요.
+- 로컬 AI는 모델 추론을 기기에서 수행하도록 설계되어 있지만, 모델 다운로드와 온라인 자막 검색에는 네트워크가 필요할 수 있습니다.
+- 콘텐츠 권리와 이용 조건을 준수하고, 접근 권한이 있는 영상과 자막만 사용하세요.
 
 ---
 
 <div align="center">
 
-## 🌸 Find your anime.
-
-## 🎬 Make yourself comfortable.
-
-## 💜 Just enjoy.
+**LilacAnime · Find your anime, choose your subtitles, enjoy your way.**
 
 </div>
-
----
-
-# 📱 Preview
-
-<p align="center">
-  <img src="docs/screenshots/home.png" width="205"/>
-  <img src="docs/screenshots/search.png" width="205"/>
-  <img src="docs/screenshots/player.png" width="205"/>
-  <img src="docs/screenshots/subtitle.png" width="205"/>
-</p>
-
-<p align="center">
-  <sub>Home · Search · Player · Subtitle</sub>
-</p>
-
----
-
-# ✨ What LilacAnime Offers
-
-<table>
-<tr>
-<td width="50%">
-
-### 🔎 Easy Discovery
-
-보고 싶은 애니메이션을
-쉽게 찾아볼 수 있습니다.
-
-* 애니메이션 검색
-* 전체 애니메이션 검색
-* 작품 탐색
-* 작품 선택 및 재생
-
-</td>
-
-<td width="50%">
-
-### 📝 Flexible Subtitle
-
-원하는 자막을 선택하고
-편하게 감상할 수 있습니다.
-
-* Kairan 자막
-* 사용자 자막
-* 자막 검색
-* 자막 적용
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-### 🎬 Comfortable Player
-
-영상 감상에 집중할 수 있도록
-불필요한 요소를 줄였습니다.
-
-* 영상 재생
-* 전체 화면
-* 몰입형 감상 환경
-
-</td>
-
-<td>
-
-### ⏭️ Skip the Boring Parts
-
-반복해서 보고 싶지 않은 구간은
-빠르게 건너뛸 수 있습니다.
-
-* OP 스킵
-* ED 스킵
-
-</td>
-</tr>
-</table>
-
----
-
-# 🌙 Current Features
-
-> 현재 실제로 사용할 수 있는 기능
-
-### 🔍 Anime
-
-* [x] 애니메이션 검색
-* [x] 전체 애니메이션 검색
-* [x] 검색 결과 탐색
-* [x] 작품 선택 및 영상 재생
-
-### 💜 Subtitle
-
-* [x] Kairan 자막 제공
-* [x] 사용자 자막 검색
-* [x] 사용자 자막 적용
-* [x] 영상 재생 중 자막 표시
-
-### 🎥 Player
-
-* [x] 영상 재생
-* [x] 전체 화면
-* [x] 몰입형 감상
-
-### ⏭️ OP / ED
-
-* [x] 오프닝 스킵
-* [x] 엔딩 스킵
-
-### 📱 Android
-
-* [x] 상태 표시줄 숨김
-* [x] 내비게이션 바 숨김
-
----
-
-# ⚡ Improving
-
-> 이미 존재하는 기능을 더 좋은 경험으로 만드는 과정입니다.
-
-### 🔎 Search Experience
-
-* [ ] 검색 응답성 개선
-* [ ] 검색 결과 처리 최적화
-* [ ] 불필요한 네트워크 요청 최소화
-
-### 📝 Subtitle Experience
-
-* [ ] 자막 검색 속도 개선
-* [ ] 자막 적용 안정성 개선
-* [ ] 자막 처리 최적화
-
-### 🎥 Player Experience
-
-* [ ] 플레이어 UI 개선
-* [ ] 전체 화면 전환 개선
-* [ ] 영상 재생 안정성 개선
-* [ ] 불필요한 UI 최소화
-
-### ⚙️ Performance
-
-* [ ] 미사용 코드 제거
-* [ ] 중복 로직 정리
-* [ ] 메모리 사용 최적화
-* [ ] 앱 시작 속도 개선
-* [ ] UI 처리 최적화
-
----
-
-# 🌟 Coming Soon
-
-> 아직 LilacAnime에 없는 **새로운 기능**입니다.
-
-## ❤️ My Anime
-
-좋아하는 작품을 쉽게 관리할 수 있도록.
-
-* [ ] ⭐ 즐겨찾기
-* [ ] ❤️ 관심 작품
-* [ ] 🕘 최근 본 작품
-* [ ] 📚 시청 기록
-
----
-
-## ▶️ Continue Watching
-
-보고 있던 작품을 다시 찾지 않아도
-바로 이어볼 수 있도록.
-
-* [ ] 이어보기
-* [ ] 마지막 시청 위치 저장
-* [ ] 다음 화 자동 재생
-* [ ] 이전 / 다음 화 빠른 이동
-
----
-
-## 🎛️ Personal Experience
-
-사람마다 편하게 보는 방식은 다르니까.
-
-* [ ] 재생 속도 설정
-* [ ] 화면 비율 설정
-* [ ] 더블탭 탐색
-* [ ] 자막 크기 설정
-* [ ] 자막 위치 설정
-* [ ] 자막 스타일 설정
-* [ ] 자막 싱크 조절
-
----
-
-## 🔍 Better Discovery
-
-새로운 애니메이션을 발견하는 과정도
-더 편하게 만들 예정입니다.
-
-* [ ] 검색 기록
-* [ ] 검색 필터
-* [ ] 검색 정렬
-* [ ] 작품 상세 정보 확장
-
----
-
-# 🗺️ Roadmap
-
-<div align="center">
-
-### 🌱 Foundation
-
-**Search · Subtitle · Player · OP / ED**
-
-현재 구현된 기본 감상 환경
-
-<br>
-
-↓
-
-<br>
-
-### 🌷 Experience
-
-**Performance · Stability · UX**
-
-이미 있는 기능을 더 편하게
-
-<br>
-
-↓
-
-### 💜 Personal
-
-**History · Resume · Favorites**
-
-나만의 시청 환경
-
-<br>
-
-↓
-
-### ✨ Freedom
-
-**Player · Subtitle · Personal Settings**
-
-원하는 방식으로 자유롭게 감상
-
-</div>
-
----
-
-# 📊 Development Status
-
-| Feature                 | Status |
-| ----------------------- | :----: |
-| 🔎 Anime Search         |   🟢   |
-| 💜 Kairan Subtitle      |   🟢   |
-| 📝 User Subtitle        |   🟢   |
-| 🎥 Video Player         |   🟢   |
-| ⏭️ OP / ED Skip         |   🟢   |
-| 📱 Immersive Fullscreen |   🟢   |
-| ⚡ Performance           |   🔄   |
-| 🔎 Search UX            |   🔄   |
-| 📝 Subtitle UX          |   🔄   |
-| 🎥 Player UX            |   🔄   |
-| ❤️ Watch History        |    ⚪   |
-| ▶️ Continue Watching    |    ⚪   |
-| ⭐ Favorites             |    ⚪   |
-| 🔄 Auto Next Episode    |    ⚪   |
-| 🎛️ Personal Settings   |    ⚪   |
-
-**🟢 Available · 🔄 Improving · ⚪ Planned**
-
----
-
-# 🖼️ Screenshots
-
-<div align="center">
-
-### 🏠 Home
-
-<img src="docs/screenshots/home.png" width="300"/>
-
-<br><br>
-
-### 🔎 Search
-
-<img src="docs/screenshots/search.png" width="300"/>
-
-<br><br>
-
-### 🎥 Player
-
-<img src="docs/screenshots/player.png" width="300"/>
-
-<br><br>
-
-### 📝 Subtitle
-
-<img src="docs/screenshots/subtitle.png" width="300"/>
-
-</div>
-
----
-
-# 🛠️ Built With
-
-<div align="center">
-
-![Android](https://img.shields.io/badge/Android-3DDC84?style=flat-square\&logo=android\&logoColor=white)
-![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?style=flat-square\&logo=kotlin\&logoColor=white)
-
-</div>
-
-| Category | Technology             |
-| -------- | ---------------------- |
-| Platform | Android                |
-| Language | Kotlin                 |
-| Subtitle | Kairan / User Subtitle |
-| Video    | Android Video Playback |
-
----
-
-# 📦 Latest Release
-
-## `v0.1.2`
-
-### 🌸 Added
-
-* Kairan 자막 제공
-* 사용자 자막 검색 및 적용
-* OP 스킵
-* ED 스킵
-* 몰입형 전체 화면
-
-### ✨ Improved
-
-* 자막 처리
-* 영상 재생 환경
-* Android 시스템 UI 처리
-* 코드 구조
-* 전반적인 성능
-
-### 🧹 Cleaned
-
-* 사용하지 않는 코드 제거
-* 불필요한 로직 제거
-* 중복 처리 정리
-
----
-
-# 💭 Vision
-
-<div align="center">
-
-### **애니메이션을 보는 일이**
-
-### **조금 더 편해졌으면 좋겠습니다.**
-
-</div>
-
-LilacAnime가 만들고 싶은 것은
-단순히 많은 작품을 보여주는 앱이 아닙니다.
-
-집에서 편하게 볼 때도,
-
-이동하면서 잠깐 볼 때도,
-
-시간이 날 때 좋아하는 작품을 다시 볼 때도,
-
-**보고 싶은 순간에 바로 보고
-감상하는 동안에는 불필요한 것에 신경 쓰지 않는 것.**
-
-그것이 LilacAnime가 지향하는 경험입니다.
-
-<br>
-
-<div align="center">
-
-## 🌸 Whenever.
-
-## 💜 Wherever.
-
-## 🎬 Just Watch.
-
-<br>
-
-### **LilacAnime**
-
-<br>
-
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:E9DDF8,50:B99BE8,100:8B6FC7&height=160&section=footer" width="100%"/>
-
-</div>
-
-## OP/ED 분석 진단 로그
-
-Linkkf episode-to-episode OP/ED 분석에는 단계별 상태 로그가 추가되어 있습니다.
-
-- Logcat tag: `EpisodeChapters` — 다운로드, Fingerprint 생성, 후보 비교, 매칭 점수, 최종 OP/ED 판정
-- Logcat tag: `AniChapters` — 플레이어에서 분석 시작/완료 및 스킵 구간 진입/자동 스킵
-- 재생 화면 좌측 상단에 현재 분석 단계가 표시됩니다.
-- 분석 실패 시 HTTP/디코딩/비교 단계의 실패 상태를 구분해서 확인할 수 있습니다.
-
-
-## v43.1 compile fix
-- Fixed `LilacDownloadService` startId lifetime by passing the service startId into the download worker.
-- Fixed `Episode` imports to use `com.lilac.anime.Episode`, matching the project model.
-- Media3 remains compatibility-only for legacy offline cache migration; libmpv is the playback engine and new downloads use `MpvHlsDownloader`.

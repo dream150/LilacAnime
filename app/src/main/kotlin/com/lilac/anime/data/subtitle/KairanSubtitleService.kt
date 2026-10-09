@@ -35,6 +35,42 @@ import java.util.Locale
 import java.util.zip.ZipInputStream
 
 object KairanSubtitleService {
+    /**
+     * Anissia already gives us the exact Kairan post URL. Reuse the existing
+     * Kairan Google Drive/archive pipeline instead of trying to rediscover the
+     * post from the title.
+     */
+    suspend fun findSubtitleFromAnissiaPost(
+        context: Context,
+        postUrl: String,
+        title: String,
+        episodeNumber: Int,
+        episodeKey: String = episodeNumber.toString()
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "ANISSIA_POST_DOWNLOAD url=$postUrl episode=$episodeNumber")
+            val html = getText(postUrl)
+            val links = extractGoogleDriveLinks(html)
+            Log.d(TAG, "ANISSIA_POST_DRIVE_LINK_COUNT count=${links.size}")
+            val candidates = mutableListOf<SubtitleAssetUtil.AssCandidate>()
+            links.forEachIndexed { index, link ->
+                val id = extractGoogleDriveId(link) ?: return@forEachIndexed
+                val asset = downloadGoogleDriveAsset(context, id, title, episodeNumber, episodeKey, index)
+                asset.subtitlePaths.forEach { path ->
+                    candidates += SubtitleAssetUtil.AssCandidate(path, "kairan", asset.subtitlePriority)
+                }
+            }
+            val selected = SubtitleAssetUtil.resolveAssCandidates(context, title, episodeNumber, candidates)
+            if (selected != null) {
+                SubtitleStore.save(context, normalizeTitleForFile(title), episodeKey, episodeNumber, "kairan", selected)
+                Log.d(TAG, "ANISSIA_POST_SUBTITLE_READY path=$selected")
+            }
+            selected
+        } catch (e: Exception) {
+            Log.w(TAG, "ANISSIA_POST_DOWNLOAD_FAILED url=$postUrl", e)
+            null
+        }
+    }
     private const val TAG = "Kairan"
     private const val CACHE_DIR = "kairan_subtitles"
     private const val POST_CACHE_PREFS = "kairan_post_cache"

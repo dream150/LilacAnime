@@ -81,6 +81,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -109,10 +111,8 @@ import com.lilac.anime.data.offline.MpvOfflineStore
 import com.lilac.anime.data.offline.OfflineStore
 import com.lilac.anime.data.subtitle.SubtitleStore
 import com.lilac.anime.data.subtitle.SubtitleAssetUtil
-import com.lilac.anime.data.subtitle.KairanSubtitleService
-import com.lilac.anime.data.subtitle.CsoraSubtitleService
 import com.lilac.anime.data.subtitle.JimakuSubtitleService
-import com.lilac.anime.data.subtitle.KairanSubtitleResult
+import com.lilac.anime.data.subtitle.AnissiaSubtitleService
 import com.lilac.anime.data.subtitle.NamuWikiTitleResolver
 import com.lilac.anime.data.subtitle.SubtitleTitleResolver
 import com.lilac.anime.data.subtitle.SubtitleDiscoveryService
@@ -211,7 +211,7 @@ fun PlayerScreen(
     var subtitlePosition by rememberSaveable { mutableFloatStateOf(vm.playerSettings.subtitleBottomPaddingFraction * 100f) }
     var vttBold by rememberSaveable { mutableStateOf(vm.playerSettings.vttBold) }
     var vttStyleEnabled by rememberSaveable { mutableStateOf(vm.playerSettings.vttStyleEnabled) }
-    var subtitleSource by rememberSaveable { mutableStateOf(vm.playerSettings.subtitleSourcePreference) }
+    var subtitleSource by rememberSaveable { mutableStateOf(vm.playerSettings.subtitleSourcePreference.let { if (it == "kairan" || it == "csora") "anissia" else it }) }
     val playerScope = rememberCoroutineScope()
     var showUnlockButton by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -239,6 +239,9 @@ fun PlayerScreen(
     var jimakuSubtitlePickerOpen by remember { mutableStateOf(false) }
     var jimakuSubtitleLoading by remember { mutableStateOf(false) }
     var jimakuSubtitleOptions by remember { mutableStateOf<List<JimakuSubtitleService.SubtitleOption>>(emptyList()) }
+    var anissiaSubtitlePickerOpen by remember { mutableStateOf(false) }
+    var anissiaSubtitleLoading by remember { mutableStateOf(false) }
+    var anissiaSubtitleOptions by remember { mutableStateOf<List<AnissiaSubtitleService.SubtitleOption>>(emptyList()) }
     var initialSubtitleChoices by remember(currentEpisode.id) { mutableStateOf<List<SubtitleDiscoveryService.Choice>>(emptyList()) }
     var subtitleDiscoveryLoading by remember(currentEpisode.id) { mutableStateOf(true) }
     var subtitleSelectionOpen by remember(currentEpisode.id) { mutableStateOf(true) }
@@ -395,6 +398,25 @@ fun PlayerScreen(
             } catch (e: Exception) {
                 Log.e("Subtitle", "USER_SUBTITLE_IMPORT_FAILED", e)
                 withContext(kotlinx.coroutines.Dispatchers.Main) { Toast.makeText(context, "자막 파일을 불러오지 못했습니다.", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    fun openAnissiaSubtitlePicker() {
+        anissiaSubtitlePickerOpen = true
+        anissiaSubtitleLoading = true
+        anissiaSubtitleOptions = emptyList()
+        playerScope.launch {
+            val title = SubtitleTitleResolver.resolve(context, anime)
+            val options = runCatching {
+                AnissiaSubtitleService.listEpisodeSubtitles(
+                    context, title, currentEpisode.number, currentEpisode.id, anime.seasonNumber, anime.id
+                )
+            }.onFailure { Log.w("SubtitleSelect", "ANISSIA_PICKER_SEARCH_FAILED", it) }
+                .getOrDefault(emptyList())
+            if (anissiaSubtitlePickerOpen) {
+                anissiaSubtitleOptions = options
+                anissiaSubtitleLoading = false
             }
         }
     }
@@ -580,7 +602,7 @@ fun PlayerScreen(
     }
 
     suspend fun resolveCachedSubtitle(episode: Episode, source: String): String? {
-        if (source !in setOf("linkkf", "reanime", "jimaku", "kairan", "csora", "user")) return null
+        if (source !in setOf("linkkf", "reanime", "jimaku", "anissia", "user")) return null
 
         return withContext(Dispatchers.IO) {
             val exact = if (source == "user") {
@@ -624,17 +646,15 @@ fun PlayerScreen(
 
         resolveCachedSubtitle(episode, preferred)?.let { return it }
 
-        return when (preferred) {
+        return when (preferred.lowercase(Locale.ROOT)) {
             "jimaku" -> null
-            "kairan" -> {
-                val result = runCatching { KairanSubtitleService.findSubtitle(context, subtitleSearchTitle, episode.number, episode.displayNumber) }
-                    .onFailure { Log.w("SubtitleSelect", "SEARCH_FAILED source=kairan", it) }.getOrNull()
-                (result as? KairanSubtitleResult.DirectFile)?.path?.takeIf { File(it).isFile }
-            }
-            "csora" -> {
-                val result = runCatching { CsoraSubtitleService.findSubtitle(context, subtitleSearchTitle, episode.number, episode.displayNumber) }
-                    .onFailure { Log.w("SubtitleSelect", "SEARCH_FAILED source=csora", it) }.getOrNull()
-                (result as? KairanSubtitleResult.DirectFile)?.path?.takeIf { File(it).isFile }
+            "anissia", "kairan", "csora" -> {
+                val result = runCatching {
+                    AnissiaSubtitleService.findSubtitle(
+                        context, subtitleSearchTitle, episode.number, episode.displayNumber, anime.seasonNumber, anime.id
+                    )
+                }.onFailure { Log.w("SubtitleSelect", "SEARCH_FAILED source=anissia", it) }.getOrNull()
+                result?.takeIf { File(it).isFile }
             }
             else -> null
         }
@@ -653,12 +673,16 @@ fun PlayerScreen(
     }
 
     suspend fun applyInitialSubtitles(choices: List<SubtitleDiscoveryService.Choice>): Boolean {
+        val subtitleSearchTitle = SubtitleTitleResolver.resolve(context, anime)
         val selected = choices.filter { it.key in selectedInitialSubtitleKeys }
         if (selected.isEmpty()) return false
         val paths = mutableListOf<String>()
         for (choice in selected) {
             val path = when (choice.source) {
-                SubtitleDiscoveryService.Source.KAIRAN, SubtitleDiscoveryService.Source.CSORA, SubtitleDiscoveryService.Source.CACHED -> choice.path?.takeIf { File(it).isFile }
+                SubtitleDiscoveryService.Source.ANISSIA -> choice.path?.takeIf { File(it).isFile } ?: choice.anissia?.let { option ->
+                    AnissiaSubtitleService.downloadSelectedSubtitle(context, subtitleSearchTitle, currentEpisode.number, currentEpisode.id, anime.id, option)
+                }
+                SubtitleDiscoveryService.Source.CACHED -> choice.path?.takeIf { File(it).isFile }
                 SubtitleDiscoveryService.Source.JIMAKU -> choice.path?.takeIf { File(it).isFile } ?: choice.jimaku?.let { JimakuSubtitleService.downloadSelectedSubtitle(context, anime, currentEpisode.number, currentEpisode.id, it) }
                 SubtitleDiscoveryService.Source.REANIME, SubtitleDiscoveryService.Source.LINKKF -> choice.path?.takeIf { File(it).isFile } ?: downloadSubtitleFile(
                     context = context, animeId = anime.id, episodeNumber = currentEpisode.number,
@@ -710,22 +734,21 @@ fun PlayerScreen(
                     val source = when (saved.source.lowercase(Locale.ROOT)) {
                         "jimaku" -> SubtitleDiscoveryService.Source.JIMAKU
                         "reanime" -> SubtitleDiscoveryService.Source.REANIME
-                        "kairan" -> SubtitleDiscoveryService.Source.KAIRAN
-                        "csora" -> SubtitleDiscoveryService.Source.CSORA
+                        "anissia" -> SubtitleDiscoveryService.Source.ANISSIA
+                        "kairan", "csora" -> SubtitleDiscoveryService.Source.CACHED
                         "linkkf" -> SubtitleDiscoveryService.Source.LINKKF
                         else -> SubtitleDiscoveryService.Source.CACHED
                     }
                     SubtitleDiscoveryService.Choice(
                         source = source,
                         label = when (source) {
+                            SubtitleDiscoveryService.Source.ANISSIA -> "Anissia"
                             SubtitleDiscoveryService.Source.JIMAKU -> "Jimaku"
                             SubtitleDiscoveryService.Source.REANIME -> "Re:Anime"
-                            SubtitleDiscoveryService.Source.KAIRAN -> "Kairan"
-                            SubtitleDiscoveryService.Source.CSORA -> "Csora"
                             SubtitleDiscoveryService.Source.LINKKF -> "Linkkf"
                             SubtitleDiscoveryService.Source.CACHED -> "저장됨"
                         },
-                        language = if (source == SubtitleDiscoveryService.Source.KAIRAN || source == SubtitleDiscoveryService.Source.CSORA) "한국어" else "원문",
+                        language = if (source == SubtitleDiscoveryService.Source.ANISSIA) "한국어" else "원문",
                         title = File(saved.path).name,
                         path = saved.path
                     )
@@ -1696,15 +1719,15 @@ fun PlayerScreen(
                                         engine.setAssEffectsEnabled(enabled)
                                     }
                                     5 -> {
-                                        val sources = listOf("linkkf", "reanime", "jimaku", "kairan", "csora", "user")
+                                        val sources = listOf("linkkf", "reanime", "jimaku", "anissia", "user")
                                         val idx = sources.indexOf(subtitleSource).coerceAtLeast(0)
                                         subtitleSource = sources[(idx + 1) % sources.size]
                                         vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = subtitleSource))
                                         playerScope.launch {
                                             val path = if (subtitleSource == "user") {
                                                 resolveCachedSubtitle(currentEpisode, "user")
-                                            } else if (subtitleSource == "kairan" || subtitleSource == "csora") {
-                                                resolvePreferredSubtitle(currentEpisode, subtitleSource)
+                                            } else if (subtitleSource == "anissia" || subtitleSource == "kairan" || subtitleSource == "csora") {
+                                                resolvePreferredSubtitle(currentEpisode, "anissia")
                                             } else {
                                                 withContext(Dispatchers.IO) {
                                                     SubtitleStore.get(context, anime.id, currentEpisode.id, currentEpisode.number, subtitleSource)
@@ -1988,8 +2011,7 @@ fun PlayerScreen(
                                     "linkkf" to "Linkkf",
                                     "reanime" to "Re:Anime",
                                     "jimaku" to "Jimaku",
-                                    "kairan" to "Kairan",
-                                    "csora" to "Csora",
+                                    "anissia" to "Anissia",
                                     "user" to "사용자"
                                 ).forEach { (source, label) ->
                                     Surface(
@@ -1998,12 +2020,14 @@ fun PlayerScreen(
                                             vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = source))
                                             if (source == "jimaku") {
                                                 openJimakuSubtitlePicker()
+                                            } else if (source == "anissia") {
+                                                openAnissiaSubtitlePicker()
                                             } else {
                                                 playerScope.launch {
                                                     val path = if (source == "user") {
                                                         resolveCachedSubtitle(currentEpisode, "user")
-                                                    } else if (source == "kairan" || source == "csora") {
-                                                        resolvePreferredSubtitle(currentEpisode, source)
+                                                    } else if (source == "anissia" || source == "kairan" || source == "csora") {
+                                                        resolvePreferredSubtitle(currentEpisode, "anissia")
                                                     } else {
                                                         withContext(Dispatchers.IO) {
                                                             SubtitleStore.get(context, anime.id, currentEpisode.id, currentEpisode.number, source)
@@ -2245,6 +2269,86 @@ fun PlayerScreen(
                             }
                         }
 
+                        }
+
+                        if (anissiaSubtitlePickerOpen) {
+                            AlertDialog(
+                                onDismissRequest = { if (!anissiaSubtitleLoading) anissiaSubtitlePickerOpen = false },
+                                title = { Text("Anissia 자막 선택") },
+                                text = {
+                                    Column(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                                        Text("${anime.title} · ${currentEpisode.displayNumber}화", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Spacer(Modifier.height(8.dp))
+                                        if (anissiaSubtitleLoading) {
+                                            Text("Anissia에서 자막 목록을 확인하는 중...", fontSize = 13.sp)
+                                        } else if (anissiaSubtitleOptions.isEmpty()) {
+                                            Text("이 회차의 Anissia 자막을 찾지 못했습니다.", fontSize = 13.sp)
+                                        } else {
+                                            LazyColumn(Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 300.dp)) {
+                                                items(anissiaSubtitleOptions.size) { index ->
+                                                    val option = anissiaSubtitleOptions[index]
+                                                    val cached = option.cachedPath?.let { File(it).isFile } == true
+                                                    Row(
+                                                        Modifier.fillMaxWidth()
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .clickable {
+                                                                if (anissiaSubtitleLoading) return@clickable
+                                                                anissiaSubtitleLoading = true
+                                                                playerScope.launch {
+                                                                    val title = SubtitleTitleResolver.resolve(context, anime)
+                                                                    val wasPlaying = engine.isPlaying
+                                                                    engine.pause()
+                                                                    try {
+                                                                        val downloaded = AnissiaSubtitleService.downloadSelectedSubtitle(
+                                                                            context, title, currentEpisode.number, currentEpisode.id, anime.id, option
+                                                                        )
+                                                                        if (!downloaded.isNullOrBlank() && File(downloaded).isFile) {
+                                                                            localSubtitle = downloaded
+                                                                            engine.replaceSubtitleTrack(downloaded)
+                                                                            engine.setSubtitleDelay(subtitleSyncMs)
+                                                                            setSubtitleVisibleForMode(subtitleEnabled)
+                                                                            subtitleSource = "anissia"
+                                                                            vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = "anissia"))
+                                                                            savedSubtitles = SubtitleStore.list(context, anime.id, currentEpisode.id, currentEpisode.number)
+                                                                            anissiaSubtitlePickerOpen = false
+                                                                            Toast.makeText(context, "${option.creator.ifBlank { "Anissia" }} 자막을 적용했습니다.", Toast.LENGTH_SHORT).show()
+                                                                        } else {
+                                                                            Toast.makeText(context, "선택한 Anissia 자막을 불러오지 못했습니다.", Toast.LENGTH_SHORT).show()
+                                                                        }
+                                                                    } finally {
+                                                                        anissiaSubtitleLoading = false
+                                                                        if (wasPlaying) engine.play()
+                                                                    }
+                                                                }
+                                                            }
+                                                            .padding(horizontal = 8.dp, vertical = 9.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        RadioButton(selected = cached, onClick = null)
+                                                        Column(Modifier.weight(1f)) {
+                                                            Text(option.creator.ifBlank { "Anissia 자막" }, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                                                            Text(
+                                                                buildString {
+                                                                    if (option.updateDate.isNotBlank()) append(option.updateDate)
+                                                                    if (option.website.isNotBlank()) {
+                                                                        if (isNotEmpty()) append(" · ")
+                                                                        append(option.website.substringAfter("//").substringBefore('/'))
+                                                                    }
+                                                                },
+                                                                fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2
+                                                            )
+                                                        }
+                                                        if (cached) Text("저장됨", fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                confirmButton = {
+                                    TextButton(onClick = { anissiaSubtitlePickerOpen = false }, enabled = !anissiaSubtitleLoading) { Text("닫기") }
+                                }
+                            )
                         }
 
                         if (jimakuSubtitlePickerOpen) {

@@ -17,7 +17,7 @@ import java.io.File
 object SubtitleDiscoveryService {
     private const val TAG = "SubtitleDiscovery"
 
-    enum class Source { JIMAKU, REANIME, KAIRAN, CSORA, LINKKF, CACHED }
+    enum class Source { ANISSIA, JIMAKU, REANIME, LINKKF, CACHED }
 
     data class Choice(
         val source: Source,
@@ -27,6 +27,7 @@ object SubtitleDiscoveryService {
         val path: String? = null,
         val url: String? = null,
         val jimaku: JimakuSubtitleService.SubtitleOption? = null,
+        val anissia: AnissiaSubtitleService.SubtitleOption? = null,
         val reAnime: SubtitleTrack? = null
     ) {
         val key: String
@@ -49,8 +50,8 @@ object SubtitleDiscoveryService {
                 .filter { !it.ignored && File(it.path).isFile }
                 .map { saved ->
                     val source = when (saved.source.lowercase()) {
-                        "kairan" -> Source.KAIRAN
-                        "csora" -> Source.CSORA
+                        "anissia" -> Source.ANISSIA
+                        "kairan", "csora" -> Source.CACHED
                         "jimaku" -> Source.JIMAKU
                         "reanime" -> Source.REANIME
                         "linkkf" -> Source.LINKKF
@@ -59,14 +60,13 @@ object SubtitleDiscoveryService {
                     Choice(
                         source = source,
                         label = when (source) {
+                            Source.ANISSIA -> "Anissia"
                             Source.JIMAKU -> "Jimaku"
                             Source.REANIME -> "Re:Anime"
-                            Source.KAIRAN -> "Kairan"
-                            Source.CSORA -> "Csora"
                             Source.LINKKF -> "Linkkf"
                             Source.CACHED -> "저장됨"
                         },
-                        language = if (source == Source.KAIRAN || source == Source.CSORA) "한국어" else "원문",
+                        language = if (source == Source.ANISSIA) "한국어" else "원문",
                         title = File(saved.path).name,
                         path = saved.path
                     )
@@ -79,19 +79,12 @@ object SubtitleDiscoveryService {
             return@coroutineScope cachedChoices
         }
 
-        val kairan = async(Dispatchers.IO) {
+        val anissia = async(Dispatchers.IO) {
             runCatching {
-                KairanSubtitleService.findSubtitle(
-                    context, koreanTitle, episode.number, episode.displayNumber
+                AnissiaSubtitleService.listEpisodeSubtitles(
+                    context, koreanTitle, episode.number, episode.displayNumber, anime.seasonNumber, anime.id
                 )
-            }.onFailure { Log.w(TAG, "KAIRAN_FAILED", it) }.getOrNull()
-        }
-        val csora = async(Dispatchers.IO) {
-            runCatching {
-                CsoraSubtitleService.findSubtitle(
-                    context, koreanTitle, episode.number, episode.displayNumber
-                )
-            }.onFailure { Log.w(TAG, "CSORA_FAILED", it) }.getOrNull()
+            }.onFailure { Log.w(TAG, "ANISSIA_FAILED", it) }.getOrDefault(emptyList())
         }
         val jimaku = async(Dispatchers.IO) {
             runCatching {
@@ -102,18 +95,16 @@ object SubtitleDiscoveryService {
         }
 
         val result = mutableListOf<Choice>()
-        val kairanResult = kairan.await()
-        val csoraResult = csora.await()
+        val anissiaOptions = anissia.await()
         val jimakuOptions = jimaku.await()
-        Log.d(TAG, "SOURCE_RESULTS episode=${episode.displayNumber} kairan=${kairanResult != null} csora=${csoraResult != null} jimaku=${jimakuOptions.size} reAnime=${reAnimeTracks.size} linkkf=${!linkkfSubtitleUrl.isNullOrBlank()}")
+        Log.d(TAG, "SOURCE_RESULTS episode=${episode.displayNumber} anissia=${anissiaOptions.size} jimaku=${jimakuOptions.size} reAnime=${reAnimeTracks.size} linkkf=${!linkkfSubtitleUrl.isNullOrBlank()}")
 
-        (kairanResult as? KairanSubtitleResult.DirectFile)?.path
-            ?.takeIf { File(it).isFile }
-            ?.let { result += Choice(Source.KAIRAN, "Kairan", "한국어", koreanTitle, path = it) }
-
-        (csoraResult as? KairanSubtitleResult.DirectFile)?.path
-            ?.takeIf { File(it).isFile }
-            ?.let { result += Choice(Source.CSORA, "Csora", "한국어", koreanTitle, path = it) }
+        anissiaOptions.forEach { option ->
+            result += Choice(
+                source = Source.ANISSIA, label = "Anissia", language = "한국어",
+                title = option.name, path = option.cachedPath, url = option.website, anissia = option
+            )
+        }
 
         jimakuOptions.forEach { option ->
             result += Choice(

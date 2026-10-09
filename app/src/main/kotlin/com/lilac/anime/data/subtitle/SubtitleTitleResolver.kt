@@ -14,6 +14,12 @@ object SubtitleTitleResolver {
     private const val TAG = "SubtitleTitleResolver"
 
     suspend fun resolve(context: Context, anime: Anime): String = withContext(Dispatchers.IO) {
+        // LinkKF already supplies the Korean title that Anissia should search.
+        // Do not replace it with a TMDB/NamuWiki title.
+        if (anime.source.equals("linkkf", ignoreCase = true)) {
+            return@withContext anime.title.trim()
+        }
+
         val baseCandidates = buildList {
             anime.title.trim().takeIf { it.isNotBlank() }?.let(::add)
             anime.english.trim().takeIf { it.isNotBlank() }?.let(::add)
@@ -24,6 +30,19 @@ object SubtitleTitleResolver {
         val korean = TmdbTitleResolver.resolveBest(context, baseCandidates)
             ?.trim()
             ?.takeIf { it.isNotBlank() }
+            ?: run {
+                var resolved: String? = null
+                for (candidate in baseCandidates) {
+                    val value = runCatching {
+                        NamuWikiTitleResolver.resolve(context, candidate)
+                    }.getOrNull()?.trim()
+                    if (!value.isNullOrBlank() && NamuWikiTitleResolver.isHangulTitle(value)) {
+                        resolved = value
+                        break
+                    }
+                }
+                resolved
+            }
 
         val visibleBase = korean ?: baseCandidates.firstOrNull() ?: anime.title.trim()
         val season = seasonSearchSuffix(anime)

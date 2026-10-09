@@ -120,7 +120,7 @@ object OfflineStore {
                 0.12f
             ).coerceIn(0.03f, 0.45f),
             subtitleSourcePreference = prefs.getString("pref_subtitle_source", "linkkf")
-                ?.takeIf { it in setOf("linkkf", "reanime", "jimaku", "kairan", "csora", "user") } ?: "linkkf",
+                ?.takeIf { it in setOf("linkkf", "reanime", "jimaku", "anissia", "kairan", "csora", "user") } ?: "linkkf",
             customFontPath = prefs.getString("pref_custom_font_path", null),
             subtitleFontPath = prefs.getString("pref_subtitle_font_path", null),
             subtitleFontSource = prefs.getString("pref_subtitle_font_source", null),

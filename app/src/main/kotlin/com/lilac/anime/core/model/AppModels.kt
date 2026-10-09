@@ -48,7 +48,7 @@ data class PlayerSettings(
     val syncOffsetMs: Long = 0L,
     // Media3 SubtitleView 기준: 값이 클수록 VTT/SRT 자막이 화면 위쪽으로 올라간다.
     val subtitleBottomPaddingFraction: Float = 0.12f,
-    // 자막 소스: "linkkf" = Linkkf VTT, "reanime" = Re:Anime track, "jimaku" = Jimaku Japanese ASS/SRT, "kairan" = Kairan ASS, "csora" = Csora ASS
+    // 자막 소스: "linkkf" = Linkkf VTT, "reanime" = Re:Anime track, "jimaku" = Jimaku Japanese ASS/SRT, "anissia" = AniSIA Korean subtitle, legacy "kairan"/"csora" = saved old subtitle
     val subtitleSourcePreference: String = "linkkf",
     val customFontPath: String? = null,
     // Discovered Kairan/Csora ASS font selected by the user.

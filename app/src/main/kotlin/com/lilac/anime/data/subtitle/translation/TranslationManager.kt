@@ -164,6 +164,9 @@ object TranslationManager {
     }
 
     suspend fun test(context: Context, providerId: String, text: String = "こんにちは。今日はいい天気ですね。") : Result<String> = runCatching {
+        if (providerId == "gemini") {
+            return@runCatching (createProvider(context, providerId) as GeminiTranslator).testConnection()
+        }
         val normalized = text.replace("\r\n", "\n").replace('\r', '\n')
         if (Regex("(?m)^\\s*Dialogue:").containsMatchIn(normalized)) {
             val lines = normalized.split('\n').toMutableList()

@@ -472,15 +472,15 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
 
             Spacer(Modifier.height(20.dp)); HorizontalDivider(); Spacer(Modifier.height(18.dp))
             Text("시스템 프롬프트",fontSize=16.sp,fontWeight=FontWeight.Bold)
-            Text("모델의 역할과 번역 규칙을 지정합니다. Chat template 모드에서는 system 메시지로 전달되고, completions 모드에서는 입력 프롬프트 앞에 붙습니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+            Text("로컬 AI와 클라우드 번역에서 사용할 시스템 프롬프트입니다. Gemini/OpenAI/Qwen은 가능한 경우 system/developer 지시로 전달하고, 지원하지 않는 provider는 해당 방식으로 최대한 반영합니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
             OutlinedTextField(value=systemPrompt,onValueChange={systemPrompt=it;aiPrefs.edit().putString("pref_ai_system_prompt",it).apply()},modifier=Modifier.fillMaxWidth(),minLines=4,maxLines=12,label={Text("시스템 프롬프트")})
             OutlinedButton(onClick={systemPrompt=LocalAiTranslationRuntime.DEFAULT_SYSTEM_PROMPT;aiPrefs.edit().putString("pref_ai_system_prompt",systemPrompt).apply()},modifier=Modifier.fillMaxWidth()){Text("기본 시스템 프롬프트로 복원")}
 
             Spacer(Modifier.height(12.dp))
-            Text("번역 프롬프트",fontSize=16.sp,fontWeight=FontWeight.Bold)
+            Text("사용자 프롬프트",fontSize=16.sp,fontWeight=FontWeight.Bold)
             Text("{source_text}는 실제 자막으로 치환됩니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
-            OutlinedTextField(value=settings.translationPrompt,onValueChange={vm.updatePlayerSettings(context,settings.copy(translationPrompt=it))},modifier=Modifier.fillMaxWidth(),minLines=6,maxLines=14,label={Text("번역 프롬프트")})
-            OutlinedButton(onClick={vm.updatePlayerSettings(context,settings.copy(translationPrompt=LocalAiTranslationRuntime.DEFAULT_PROMPT))},modifier=Modifier.fillMaxWidth()){Text("기본 프롬프트로 복원")}
+            OutlinedTextField(value=settings.translationPrompt,onValueChange={vm.updatePlayerSettings(context,settings.copy(translationPrompt=it))},modifier=Modifier.fillMaxWidth(),minLines=6,maxLines=14,label={Text("사용자 프롬프트")})
+            OutlinedButton(onClick={vm.updatePlayerSettings(context,settings.copy(translationPrompt=LocalAiTranslationRuntime.DEFAULT_PROMPT))},modifier=Modifier.fillMaxWidth()){Text("기본 사용자 프롬프트로 복원")}
 
             Spacer(Modifier.height(18.dp)); Text("번역 테스트",fontSize=16.sp,fontWeight=FontWeight.Bold)
             OutlinedTextField(value=testText,onValueChange={testText=it},modifier=Modifier.fillMaxWidth(),minLines=2,maxLines=4,label={Text("일본어 문장")},enabled=!testing)

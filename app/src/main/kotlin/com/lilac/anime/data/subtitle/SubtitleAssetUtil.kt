@@ -41,6 +41,7 @@ object SubtitleAssetUtil {
                 dirs += File(context.filesDir, "kairan_subtitles/fonts/${KairanSubtitleService.normalizeTitleForFile(title)}")
             }
             "csora" -> dirs += File(context.filesDir, "csora_subtitles/${KairanSubtitleService.normalizeTitleForFile(title)}/fonts")
+            "anissia" -> dirs += File(context.filesDir, "anissia_subtitles/${title.trim()}/fonts")
         }
         return dirs.flatMap { dir ->
             if (!dir.isDirectory) emptyList() else dir.walkTopDown()

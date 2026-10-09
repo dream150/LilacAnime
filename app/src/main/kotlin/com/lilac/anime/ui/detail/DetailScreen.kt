@@ -46,8 +46,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lilac.anime.ui.AnimeImage
 import com.lilac.anime.data.*
-import com.lilac.anime.data.subtitle.KairanSubtitleResult
 import com.lilac.anime.data.subtitle.downloadSubtitleFile
+import com.lilac.anime.data.subtitle.AnissiaSubtitleService
+import com.lilac.anime.data.subtitle.SubtitleTitleResolver
+import com.lilac.anime.data.subtitle.JimakuSubtitleService
 import com.lilac.anime.network.LinkkfRequestContextStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -57,40 +59,36 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
 import kotlinx.coroutines.CompletableDeferred
-/**
- * Finds an already-downloaded Kairan ASS/SSA subtitle for the requested episode.
- * Supports both the current SubtitleStore registration and the older title-based
- * Kairan cache so existing downloads survive the player/detail refactor.
- */
-private suspend fun findLocalKairanAssSubtitle(
+/** Finds an already-downloaded AniSIA subtitle for the requested episode. */
+private suspend fun findLocalAnissiaSubtitle(
     context: Context,
     title: String,
     episodeNumber: Int,
     storedPath: String?
 ): String? = withContext(Dispatchers.IO) {
-    fun isAss(path: String?): Boolean {
+    fun isSubtitle(path: String?): Boolean {
         if (path.isNullOrBlank()) return false
         val file = File(path)
-        return file.isFile && file.extension.lowercase(java.util.Locale.ROOT) in setOf("ass", "ssa")
+        return file.isFile && file.extension.lowercase(java.util.Locale.ROOT) in setOf("ass", "ssa", "srt", "vtt", "smi")
     }
 
-    if (isAss(storedPath)) return@withContext storedPath
+    if (isSubtitle(storedPath)) return@withContext storedPath
 
-    val titleKey = KairanSubtitleService.normalizeTitleForFile(title)
+    val titleKey = title.trim()
 
     SubtitleStore.get(
         context = context,
         animeId = titleKey,
         episodeKey = episodeNumber.toString(),
         episodeNumber = episodeNumber,
-        source = "kairan"
-    )?.takeIf(::isAss)?.let { return@withContext it }
+        source = "anissia"
+    )?.takeIf(::isSubtitle)?.let { return@withContext it }
 
-    val titleRoot = context.filesDir.resolve("kairan_subtitles").resolve(titleKey)
+    val titleRoot = context.filesDir.resolve("anissia_subtitles").resolve(titleKey)
     if (!titleRoot.isDirectory) return@withContext null
 
     titleRoot.walkTopDown()
-        .filter { it.isFile && it.extension.lowercase(java.util.Locale.ROOT) in setOf("ass", "ssa") }
+        .filter { it.isFile && it.extension.lowercase(java.util.Locale.ROOT) in setOf("ass", "ssa", "srt", "vtt", "smi") }
         .filter { SubtitleStore.subtitleMatchesEpisode(it.absolutePath, episodeNumber) }
         .maxByOrNull { it.lastModified() }
         ?.absolutePath
@@ -149,8 +147,7 @@ private suspend fun persistOfflineSubtitleAssets(
     episodeKey: String,
     episodeNumber: Int,
     linkkfPath: String?,
-    kairanPath: String?,
-    csoraPath: String?,
+    anissiaPath: String?,
     jimakuPaths: Collection<String> = emptyList(),
     reAnimePaths: Collection<String> = emptyList()
 ) = withContext(Dispatchers.IO) {
@@ -162,20 +159,18 @@ private suspend fun persistOfflineSubtitleAssets(
      * subtitle asset found for this episode is registered in SubtitleStore so
      * the offline player can present all available tracks.
      */
-    val titleKey = KairanSubtitleService.normalizeTitleForFile(title)
+    val titleKey = title.trim()
     fun safeEpisodeKey(value: String): String = value.lowercase(java.util.Locale.ROOT).replace(Regex("[^a-z0-9._-]"), "_")
 
     val providerRoots = mapOf(
         "linkkf" to context.filesDir.resolve("linkkf_subtitles"),
-        "kairan" to context.filesDir.resolve("kairan_subtitles").resolve(titleKey).resolve(safeEpisodeKey(episodeKey)),
-        "csora" to context.filesDir.resolve("csora_subtitles").resolve(titleKey),
+        "anissia" to context.filesDir.resolve("anissia_subtitles").resolve(titleKey).resolve(safeEpisodeKey(episodeKey)),
         "jimaku" to context.filesDir.resolve("jimaku_subtitles"),
         "reanime" to context.filesDir.resolve("reanime_subtitles")
     )
     val primaries = mapOf(
         "linkkf" to linkkfPath,
-        "kairan" to kairanPath,
-        "csora" to csoraPath
+        "anissia" to anissiaPath
     )
 
     fun isSubtitleFile(file: File): Boolean {
@@ -202,7 +197,7 @@ private suspend fun persistOfflineSubtitleAssets(
 
             // First include everything already registered in the provider's
             // own SubtitleStore key. This also preserves older installations.
-            val providerStoreKey = if (source == "linkkf") animeId else titleKey
+            val providerStoreKey = if (source == "linkkf" || source == "anissia") animeId else titleKey
             SubtitleStore.list(
                 context = context,
                 animeId = providerStoreKey,
@@ -552,19 +547,15 @@ fun DetailScreen(
         val linkkfReady = withContext(Dispatchers.IO) {
             SubtitleStore.get(context, currentAnime.id, ep.displayNumber, ep.number, "linkkf")
         } ?: legacyPath?.takeIf { File(it).isFile && (it.endsWith(".vtt", true) || it.endsWith(".srt", true)) }
-        val kairanReady = withContext(Dispatchers.IO) {
-            SubtitleStore.get(context, currentAnime.id, ep.displayNumber, ep.number, "kairan")
-        } ?: findLocalKairanAssSubtitle(context, currentAnime.title, ep.number, legacyPath)
-        val csoraReady = withContext(Dispatchers.IO) {
-            SubtitleStore.get(context, currentAnime.id, ep.displayNumber, ep.number, "csora")
-        }
-
-        if (linkkfReady != null && kairanReady != null && csoraReady != null) return
+        val anissiaReady = withContext(Dispatchers.IO) {
+            SubtitleStore.get(context, currentAnime.id, ep.displayNumber, ep.number, "anissia")
+        } ?: findLocalAnissiaSubtitle(context, currentAnime.title, ep.number, legacyPath)
+        if (linkkfReady != null && anissiaReady != null) return
 
         Log.d(
             "Subtitle",
             "REPAIR_BOTH_START anime=${currentAnime.id} episode=${ep.number} " +
-                "linkkf=${linkkfReady != null} kairan=${kairanReady != null}"
+                "linkkf=${linkkfReady != null} anissia=${anissiaReady != null}"
         )
 
         try {
@@ -585,52 +576,36 @@ fun DetailScreen(
                 }
             }
 
-            var kairanPath: String? = kairanReady
-            if (kairanPath == null) {
-                kairanPath = try {
-                    when (val result = KairanSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
-                        is KairanSubtitleResult.DirectFile -> result.path
-                        null -> null
-                    }
-                } catch (e: Exception) {
-                    Log.w("Kairan", "OFFLINE_ASS_REPAIR_FAILED episode=${ep.number}", e)
-                    null
-                }
-            }
-
-            var csoraPath = csoraReady
-            if (csoraPath == null) {
-                csoraPath = try {
-                    when (val result = CsoraSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
-                        is KairanSubtitleResult.DirectFile -> result.path
-                        null -> null
-                    }
-                } catch (e: Exception) {
-                    Log.w("Csora", "OFFLINE_ASS_REPAIR_FAILED episode=${ep.number}", e)
-                    null
-                }
+            val anissiaPath = anissiaReady ?: try {
+                AnissiaSubtitleService.findSubtitle(
+                    context, SubtitleTitleResolver.resolve(context, currentAnime),
+                    ep.number, ep.displayNumber, currentAnime.seasonNumber, currentAnime.id
+                )
+            } catch (e: Exception) {
+                Log.w("AniSIA", "OFFLINE_SUBTITLE_REPAIR_FAILED episode=${ep.number}", e)
+                null
             }
 
             persistOfflineSubtitleAssets(
                 context = context, animeId = currentAnime.id, title = currentAnime.title,
                 episodeKey = ep.displayNumber, episodeNumber = ep.number,
-                linkkfPath = linkkfPath, kairanPath = kairanPath, csoraPath = csoraPath
+                linkkfPath = linkkfPath, anissiaPath = anissiaPath
             )
 
-            if (linkkfPath != null || kairanPath != null) {
+            if (linkkfPath != null || anissiaPath != null) {
                 val currentStored = OfflineStore.getEpisode(context, currentAnime.id, ep)
                 OfflineStore.saveEpisode(
                     context,
                     currentAnime.id,
                     (currentStored ?: ep).copy(
                         videoUrl = currentStored?.videoUrl ?: ep.videoUrl,
-                        vttUrl = linkkfPath ?: kairanPath ?: csoraPath ?: currentStored?.vttUrl ?: ep.vttUrl
+                        vttUrl = linkkfPath ?: anissiaPath ?: currentStored?.vttUrl ?: ep.vttUrl
                     )
                 )
             }
             Log.d(
                 "Subtitle",
-                "REPAIR_BOTH_DONE episode=${ep.number} linkkf=${linkkfPath != null} kairan=${kairanPath != null}"
+                "REPAIR_DONE episode=${ep.number} linkkf=${linkkfPath != null} anissia=${anissiaPath != null}"
             )
         } catch (e: CancellationException) {
             // The detail screen can leave composition while subtitle repair is still
@@ -696,7 +671,7 @@ fun DetailScreen(
                         persistOfflineSubtitleAssets(
                             context = context, animeId = currentAnime.id, title = currentAnime.title,
                             episodeKey = ep.displayNumber, episodeNumber = ep.number,
-                            linkkfPath = null, kairanPath = null, csoraPath = null,
+                            linkkfPath = null, anissiaPath = null,
                             jimakuPaths = allSubtitleAssets.jimakuPaths,
                             reAnimePaths = allSubtitleAssets.reAnimePaths
                         )
@@ -835,22 +810,13 @@ fun DetailScreen(
                         Log.w("OfflineDownload", "LINKKF_SUBTITLE_FAILED episode=${ep.displayNumber}", e)
                         null
                     }
-                    val localKairanPath = try {
-                        when (val result = KairanSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
-                            is KairanSubtitleResult.DirectFile -> result.path
-                            null -> null
-                        }
+                    val localAnissiaPath = try {
+                        AnissiaSubtitleService.findSubtitle(
+                            context, SubtitleTitleResolver.resolve(context, currentAnime),
+                            ep.number, ep.displayNumber, currentAnime.seasonNumber, currentAnime.id
+                        )
                     } catch (e: Exception) {
-                        Log.w("Kairan", "OFFLINE_ASS_PRELOAD_FAILED episode=${ep.number}", e)
-                        null
-                    }
-                    val localCsoraPath = try {
-                        when (val result = CsoraSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
-                            is KairanSubtitleResult.DirectFile -> result.path
-                            null -> null
-                        }
-                    } catch (e: Exception) {
-                        Log.w("Csora", "OFFLINE_ASS_PRELOAD_FAILED episode=${ep.number}", e)
+                        Log.w("AniSIA", "OFFLINE_SUBTITLE_PRELOAD_FAILED episode=${ep.number}", e)
                         null
                     }
                     val allSubtitleAssets = downloadAllOfflineSubtitleSources(
@@ -859,7 +825,7 @@ fun DetailScreen(
                     persistOfflineSubtitleAssets(
                         context = context, animeId = currentAnime.id, title = currentAnime.title,
                         episodeKey = ep.displayNumber, episodeNumber = ep.number,
-                        linkkfPath = localLinkkfPath, kairanPath = localKairanPath, csoraPath = localCsoraPath,
+                        linkkfPath = localLinkkfPath, anissiaPath = localAnissiaPath,
                         jimakuPaths = allSubtitleAssets.jimakuPaths, reAnimePaths = allSubtitleAssets.reAnimePaths
                     )
 
@@ -1013,31 +979,22 @@ fun DetailScreen(
                                 Log.w("OfflineDownload", "LINKKF_SUBTITLE_FAILED episode=${ep.displayNumber}", e)
                                 null
                             }
-                            val localKairanPath = try {
-                                when (val result = KairanSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
-                                    is KairanSubtitleResult.DirectFile -> result.path
-                                    null -> null
-                                }
-                            } catch (e: Exception) {
-                                Log.w("Kairan", "OFFLINE_ASS_PRELOAD_FAILED episode=${ep.number}", e)
-                                null
-                            }
-                            val localCsoraPath = try {
-                                when (val result = CsoraSubtitleService.findSubtitle(context, SubtitleTitleResolver.resolve(context, currentAnime), ep.number, ep.displayNumber)) {
-                                    is KairanSubtitleResult.DirectFile -> result.path
-                                    null -> null
-                                }
-                            } catch (e: Exception) {
-                                Log.w("Csora", "OFFLINE_ASS_PRELOAD_FAILED episode=${ep.number}", e)
-                                null
-                            }
+                    val localAnissiaPath = try {
+                        AnissiaSubtitleService.findSubtitle(
+                            context, SubtitleTitleResolver.resolve(context, currentAnime),
+                            ep.number, ep.displayNumber, currentAnime.seasonNumber, currentAnime.id
+                        )
+                    } catch (e: Exception) {
+                        Log.w("AniSIA", "OFFLINE_SUBTITLE_PRELOAD_FAILED episode=${ep.number}", e)
+                        null
+                    }
                             val allSubtitleAssets = downloadAllOfflineSubtitleSources(
                                 context, currentAnime, ep, vttUrl, originalReferer
                             )
                             persistOfflineSubtitleAssets(
                                 context = context, animeId = currentAnime.id, title = currentAnime.title,
                                 episodeKey = ep.displayNumber, episodeNumber = ep.number,
-                                linkkfPath = localLinkkfPath, kairanPath = localKairanPath, csoraPath = localCsoraPath,
+                                linkkfPath = localLinkkfPath, anissiaPath = localAnissiaPath,
                                 jimakuPaths = allSubtitleAssets.jimakuPaths, reAnimePaths = allSubtitleAssets.reAnimePaths
                             )
 

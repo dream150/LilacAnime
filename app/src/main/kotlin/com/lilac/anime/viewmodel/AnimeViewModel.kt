@@ -1071,7 +1071,7 @@ class AnimeViewModel : ViewModel() {
         ep: Episode?
     ) {
         ep?.let { episode ->
-            listOf("linkkf", "jimaku", "kairan", "csora").forEach { source ->
+            listOf("linkkf", "jimaku", "anissia").forEach { source ->
                 try { SubtitleStore.delete(context, anime.id, episode.displayNumber, episode.number, source) } catch (_: Exception) { }
             }
             episode.vttUrl?.let { path -> if (path.startsWith("/")) File(path).takeIf(File::isFile)?.delete() }

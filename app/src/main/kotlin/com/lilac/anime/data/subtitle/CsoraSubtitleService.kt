@@ -39,6 +39,46 @@ import java.util.zip.ZipInputStream
  * the visible anchor label is the authoritative episode selector.
  */
 object CsoraSubtitleService {
+    /** Reuse the existing Csora Drive/archive parser when Anissia gives us the exact post URL. */
+    suspend fun findSubtitleFromAnissiaPost(
+        context: Context,
+        postUrl: String,
+        title: String,
+        episodeNumber: Int,
+        episodeKey: String = episodeNumber.toString()
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "ANISSIA_POST_DOWNLOAD url=$postUrl episode=$episodeNumber")
+            val html = getText(postUrl)
+            val allLinks = extractAllDownloadLinks(html)
+            val fontLinks = allLinks.filter { isFontLink(it.label) }
+            val links = selectEpisodeLinks(allLinks, episodeNumber)
+            Log.d(TAG, "ANISSIA_POST_EPISODE_LINKS episode=$episodeNumber count=${links.size}")
+            downloadFontLinks(context, fontLinks, title, episodeKey)
+
+            val candidates = mutableListOf<SubtitleAssetUtil.AssCandidate>()
+            for (link in links) {
+                val results = downloadAndExtract(context, link.url, title, episodeNumber, episodeKey)
+                results.forEach { path ->
+                    candidates += SubtitleAssetUtil.AssCandidate(path, "csora", 2)
+                }
+            }
+            val valid = candidates.filter { SubtitleStore.subtitleMatchesEpisode(it.path, episodeNumber) }
+            val selected = if (valid.isNotEmpty()) {
+                if (valid.all { it.path.endsWith(".ass", true) || it.path.endsWith(".ssa", true) }) {
+                    SubtitleAssetUtil.resolveAssCandidates(context, title, episodeNumber, valid)
+                } else valid.firstOrNull()?.path
+            } else null
+            if (selected != null) {
+                SubtitleStore.save(context, titleKey(title), episodeKey, episodeNumber, "csora", selected)
+                Log.d(TAG, "ANISSIA_POST_SUBTITLE_READY path=$selected")
+            }
+            selected
+        } catch (e: Exception) {
+            Log.w(TAG, "ANISSIA_POST_DOWNLOAD_FAILED url=$postUrl", e)
+            null
+        }
+    }
     private const val TAG = "Csora"
     private const val CACHE_DIR = "csora_subtitles"
     private const val PREF = "csora_post_cache"
