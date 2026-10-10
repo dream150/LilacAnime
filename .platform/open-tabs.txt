@@ -1,3 +1,5 @@
 #v2
-0
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/providers/CloudTranslationPrompt.kt	270	2	text
+2
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/providers/CloudTranslationPrompt.kt	270	0	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/AnissiaSubtitleService.kt	15533	318	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/README.md	8383	242	split

@@ -420,40 +420,13 @@ class AnimeViewModel : ViewModel() {
             delay(250L)
             reAnimeSearchLoading = true
             try {
-                val sourceResults = withContext(Dispatchers.IO) { repository.searchAnime(q, "reanime") }
-                val results = if (context != null && TmdbTitleResolver.hasApiKey(context)) {
-                    withContext(Dispatchers.IO) {
-                        if (sourceResults.isNotEmpty()) {
-                            sourceResults.map { anime ->
-                                val korean = TmdbTitleResolver.resolveBest(
-                                    context,
-                                    listOf(anime.title, anime.english, anime.romaji, anime.native)
-                                )
-                                if (!korean.isNullOrBlank()) anime.copy(title = korean) else anime
-                            }
-                        } else {
-                            // TMDB is a title/search helper, not a new content provider:
-                            // use its Korean/original title variants to search Re:Anime again,
-                            // so returned cards remain real Re:Anime works and stay playable.
-                            val variants = TmdbTitleResolver.searchTitleVariants(context, q)
-                            val expanded = mutableListOf<Anime>()
-                            for (variant in variants) {
-                                val found = runCatching { repository.searchAnime(variant, "reanime") }.getOrNull().orEmpty()
-                                expanded.addAll(found)
-                            }
-                            val unique = expanded.distinctBy { it.id }
-                            val renamed = mutableListOf<Anime>()
-                            for (anime in unique) {
-                                val korean = TmdbTitleResolver.resolveBest(
-                                    context,
-                                    listOf(anime.title, anime.english, anime.romaji, anime.native)
-                                )
-                                renamed.add(if (!korean.isNullOrBlank()) anime.copy(title = korean) else anime)
-                            }
-                            renamed
-                        }
-                    }
-                } else sourceResults
+                val searchQuery = if (context != null && TmdbTitleResolver.hasApiKey(context)) {
+                    withContext(Dispatchers.IO) { TmdbTitleResolver.resolveOriginalSearchTitle(context, q) }
+                        ?.takeIf { it.isNotBlank() } ?: q
+                } else q
+                val sourceResults = withContext(Dispatchers.IO) { repository.searchAnime(searchQuery, "reanime") }
+                // Keep Re:Anime's own titles in search results; TMDB only translates Korean input.
+                val results = sourceResults
                 reAnimeSearchResults = results
                 results.forEach { anime ->
                     animeCache[anime.id] = anime
@@ -765,9 +738,13 @@ class AnimeViewModel : ViewModel() {
         reAnimeSearchJob = viewModelScope.launch {
             reAnimeSearchLoading = true
             try {
+                val searchQuery = if (context != null && TmdbTitleResolver.hasApiKey(context)) {
+                    withContext(Dispatchers.IO) { TmdbTitleResolver.resolveOriginalSearchTitle(context, query.trim()) }
+                        ?.takeIf { it.isNotBlank() } ?: query.trim()
+                } else query.trim()
                 val sourceResults = withContext(Dispatchers.IO) {
                     repository.searchReAnime(
-                        query = query.trim(),
+                        query = searchQuery,
                         genre = listOf(genre).filter { it.isNotBlank() },
                         year = year,
                         season = season.ifBlank { null },
@@ -775,17 +752,8 @@ class AnimeViewModel : ViewModel() {
                         format = format.ifBlank { null }
                     )
                 }
-                reAnimeSearchResults = if (context != null && TmdbTitleResolver.hasApiKey(context)) {
-                    withContext(Dispatchers.IO) {
-                        sourceResults.map { anime ->
-                            val korean = TmdbTitleResolver.resolveBest(
-                                context,
-                                listOf(anime.title, anime.english, anime.romaji, anime.native)
-                            )
-                            if (!korean.isNullOrBlank()) anime.copy(title = korean) else anime
-                        }
-                    }
-                } else sourceResults
+                // Preserve Re:Anime result titles; TMDB only translates Korean query input.
+                reAnimeSearchResults = sourceResults
                 reAnimeSearchResults.forEach { anime ->
                     animeCache[anime.id] = anime
                     detailCache.putIfAbsent(anime.id, anime)

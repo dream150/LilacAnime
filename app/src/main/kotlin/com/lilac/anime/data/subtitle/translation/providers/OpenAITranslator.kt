@@ -10,11 +10,27 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class OpenAITranslator(private val context: Context) : TranslationProvider {
     override val id = "openai"
     override val displayName = "OpenAI"
     private val client = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).callTimeout(210, TimeUnit.SECONDS).build()
+
+    suspend fun testConnection(): String = withContext(Dispatchers.IO) {
+        val key = SecureApiKeyStore.get(context, id)?.trim()?.takeIf { it.isNotBlank() }
+            ?: error("OpenAI API Key가 없습니다. AI 설정에서 키를 저장하세요.")
+        val req = Request.Builder().url("https://api.openai.com/v1/models")
+            .header("Authorization", "Bearer $key").get().build()
+        client.newCall(req).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw apiError(response.code, raw)
+            val models = JSONObject(raw).optJSONArray("data") ?: JSONArray()
+            if (models.length() == 0) error("OpenAI 연결은 되었지만 이 API 키에 표시되는 모델이 없습니다.")
+            "연결 성공: OpenAI API 인증 확인 (모델 ${models.length()}개)"
+        }
+    }
 
     override suspend fun translateBatch(lines: List<String>): List<String> {
         if (lines.isEmpty()) return emptyList()

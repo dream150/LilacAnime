@@ -115,6 +115,35 @@ object TmdbTitleResolver {
         }
     }
 
+
+    /** Translate a Korean Re:Anime search query into TMDB's original/English title. */
+    suspend fun resolveOriginalSearchTitle(context: Context, title: String): String? = withContext(Dispatchers.IO) {
+        val query = normalize(title)
+        val key = apiKey(context)
+        if (query.isBlank() || key.isBlank() || !query.any { it in '\uac00'..'\ud7a3' }) return@withContext null
+        runCatching {
+            val encoded = URLEncoder.encode(query, "UTF-8")
+            val url = "https://api.themoviedb.org/3/search/multi?api_key=$key&language=ko-KR&query=$encoded&page=1&include_adult=false"
+            val request = Request.Builder().url(url).header("Accept", "application/json").build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val arr = JSONObject(response.body?.string().orEmpty()).optJSONArray("results") ?: return@use null
+                var best: String? = null
+                var bestScore = -1
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i) ?: continue
+                    if (item.optString("media_type") != "tv") continue
+                    val korean = item.optString("name").trim()
+                    val original = item.optString("original_name").trim()
+                    if (korean.isBlank() || original.isBlank()) continue
+                    val score = when { korean.equals(query, true) -> 3; korean.contains(query, true) || query.contains(korean, true) -> 2; else -> 1 }
+                    if (score > bestScore) { bestScore = score; best = original }
+                }
+                best
+            }
+        }.getOrElse { Log.w(TAG, "ORIGINAL_TITLE_FAILED query=[$query]", it); null }
+    }
+
     /**
      * TMDB fallback for the anime search screen. The source catalog remains the
      * primary result; TMDB only fills an empty result or supplies Korean display

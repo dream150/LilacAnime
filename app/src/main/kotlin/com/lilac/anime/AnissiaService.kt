@@ -35,6 +35,14 @@ data class AnissiaSubtitle(
     val creator: String
 )
 
+data class AnissiaTranslator(
+    val applyNo: Long,
+    val name: String,
+    val website: String,
+    val regTime: Long,
+    val approved: Boolean
+)
+
 data class AnissiaAnime(
     val animeNo: Long,
     val subject: String,
@@ -68,6 +76,12 @@ object AnissiaService {
 
     @Volatile
     private var catalogLoadedAt = 0L
+
+    @Volatile
+    private var cachedTranslators: List<AnissiaTranslator> = emptyList()
+    @Volatile
+    private var translatorsLoadedAt = 0L
+    private const val TRANSLATOR_TTL_MS = 6L * 60L * 60L * 1000L
 
     private suspend fun get(
         urlString: String,
@@ -263,6 +277,52 @@ object AnissiaService {
         // Keep the dedicated caption endpoint as a reliable fallback.
         val body = get("$API_BASE/anime/caption/animeNo/$animeNo")
         return parseCaptionArray(body)
+    }
+
+    /**
+     * Approved subtitle-maker directory used as a fallback when a title's
+     * registered website is stale or does not expose the requested episode.
+     * The directory is small and paginated (30 entries/page); callers should
+     * still constrain how many websites they crawl for a single episode.
+     */
+    suspend fun getRecentTranslatorWebsites(maxPages: Int = 8, forceRefresh: Boolean = false): List<AnissiaTranslator> = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && cachedTranslators.isNotEmpty() && now - translatorsLoadedAt < TRANSLATOR_TTL_MS) {
+            return@withContext cachedTranslators.take(maxPages.coerceIn(1, 8) * 30)
+        }
+        val safePages = maxPages.coerceIn(1, 8)
+        val results = mutableListOf<AnissiaTranslator>()
+        for (page in 0 until safePages) {
+            try {
+                val root = JSONObject(get("$API_BASE/translator/apply/list/$page"))
+                val data = root.optJSONObject("data") ?: continue
+                val content = data.optJSONArray("content") ?: continue
+                for (i in 0 until content.length()) {
+                    val item = content.optJSONObject(i) ?: continue
+                    val status = item.optString("status")
+                    val result = item.optString("result")
+                    val website = item.optString("website").trim()
+                    if (status != "DONE" || result != "PASS" ||
+                        website.isBlank() || website == "-" || !website.startsWith("http", true)) continue
+                    results += AnissiaTranslator(
+                        applyNo = item.optLong("applyNo"),
+                        name = item.optString("name").trim(),
+                        website = website,
+                        regTime = item.optLong("regTime"),
+                        approved = true
+                    )
+                }
+                if (data.optBoolean("last", false)) break
+            } catch (e: Exception) {
+                Log.w(TAG, "TRANSLATOR_LIST_PAGE_FAILED page=$page", e)
+                break
+            }
+        }
+        results.distinctBy { it.applyNo }.sortedByDescending { it.regTime }.also {
+            cachedTranslators = it
+            translatorsLoadedAt = System.currentTimeMillis()
+            Log.i(TAG, "TRANSLATOR_DIRECTORY_READY count=${it.size}")
+        }
     }
 
     suspend fun getEpisodeSubtitle(animeNo: Long, episode: String): AnissiaSubtitle? {

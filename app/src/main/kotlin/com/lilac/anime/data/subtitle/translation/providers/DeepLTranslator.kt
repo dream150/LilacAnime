@@ -10,11 +10,29 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class DeepLTranslator(private val context: Context) : TranslationProvider {
     override val id = "deepl"
     override val displayName = "DeepL"
     private val client = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(90, TimeUnit.SECONDS).callTimeout(110, TimeUnit.SECONDS).build()
+
+    suspend fun testConnection(): String = withContext(Dispatchers.IO) {
+        val key = SecureApiKeyStore.get(context, id)?.trim()?.takeIf { it.isNotBlank() }
+            ?: error("DeepL API Key가 없습니다. AI 설정에서 키를 저장하세요.")
+        val endpoint = if (key.endsWith(":fx", true)) "https://api-free.deepl.com/v2/usage" else "https://api.deepl.com/v2/usage"
+        val req = Request.Builder().url(endpoint).header("Authorization", "DeepL-Auth-Key $key").get().build()
+        client.newCall(req).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw apiError(response.code, raw)
+            val root = JSONObject(raw)
+            val used = root.optLong("character_count", -1L)
+            val limit = root.optLong("character_limit", -1L)
+            if (used >= 0L && limit >= 0L) "연결 성공: DeepL API 인증 확인 (사용량 $used / $limit 문자)"
+            else "연결 성공: DeepL API 인증 확인"
+        }
+    }
 
     override suspend fun translateBatch(lines: List<String>): List<String> {
         if (lines.isEmpty()) return emptyList()
@@ -38,5 +56,5 @@ class DeepLTranslator(private val context: Context) : TranslationProvider {
         }
         throw last ?: error("DeepL 번역에 실패했습니다.")
     }
-    private fun apiError(code: Int, raw: String): Throwable { val msg = runCatching { JSONObject(raw).optString("message") }.getOrNull().orEmpty(); return IllegalStateException("DeepL HTTP $code${if (msg.isNotBlank()) ": $msg" else ""}") }
+    private fun apiError(code: Int, raw: String): Throwable { val msg = runCatching { val root = JSONObject(raw); root.optString("message").ifBlank { root.optJSONObject("error")?.optString("message").orEmpty() } }.getOrNull().orEmpty(); return IllegalStateException("DeepL HTTP $code${if (msg.isNotBlank()) ": $msg" else ""}") }
 }
