@@ -53,7 +53,8 @@ object MpvOfflineStore {
         val flixCloudPk: String? = null,
         val streamHeaders: String? = null,
         val episodeNumber: Int = 0,
-        val episodeKey: String = ""
+        val episodeKey: String = "",
+        val videoSource: String = "linkkf"
     )
 
     fun root(context: Context): File = File(context.filesDir, ROOT)
@@ -147,6 +148,7 @@ object MpvOfflineStore {
             .put("title", status.title)
             .put("episodeNumber", status.episodeNumber)
             .put("episodeKey", status.episodeKey)
+            .put("videoSource", status.videoSource)
         status.videoPath?.let { obj.put("videoPath", it) }
         status.error?.let { obj.put("error", it) }
         status.sourceUrl?.let { obj.put("sourceUrl", it) }
@@ -210,7 +212,8 @@ object MpvOfflineStore {
             flixCloudPk = obj.optString("flixCloudPk").takeIf { it.isNotBlank() },
             streamHeaders = obj.optString("streamHeaders").takeIf { it.isNotBlank() },
             episodeNumber = obj.optInt("episodeNumber", 0),
-            episodeKey = obj.optString("episodeKey")
+            episodeKey = obj.optString("episodeKey"),
+            videoSource = obj.optString("videoSource", "linkkf").takeIf { it in setOf("linkkf", "animenosub", "reanime", "miruro", "ohli24") } ?: "linkkf"
         )
     }.getOrNull()
 

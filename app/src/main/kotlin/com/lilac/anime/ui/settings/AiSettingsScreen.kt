@@ -15,6 +15,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -29,6 +31,7 @@ import com.lilac.anime.data.subtitle.translation.TranslationManager
 import com.lilac.anime.data.subtitle.TmdbTitleResolver
 import com.lilac.anime.data.subtitle.translation.localai.*
 import com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime
+import com.lilac.anime.data.subtitle.translation.providers.CloudModelCatalog
 import com.lilac.anime.viewmodel.AnimeViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -45,6 +48,7 @@ private fun aiFormatBytes(bytes: Long): String = when {
 @Composable
 fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val settings = vm.playerSettings
     var models by remember { mutableStateOf<List<LocalAiModel>>(emptyList()) }
@@ -62,6 +66,8 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
     var expandedRuntime by remember { mutableStateOf<String?>(null) }
     var testText by remember { mutableStateOf("こんにちは、今日はいい天気ですね。") }
     var testResult by remember { mutableStateOf<String?>(null) }
+    var latestAiError by remember { mutableStateOf(AiRuntimeDiagnostics.latest(context)) }
+    var showAiErrorDetails by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var keyProvider by remember { mutableStateOf<String?>(null) }
     var keyText by remember { mutableStateOf("") }
@@ -74,6 +80,30 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
     var openAiModel by remember { mutableStateOf(aiPrefs.getString("pref_openai_model", "gpt-4.1-mini") ?: "gpt-4.1-mini") }
     var qwenModel by remember { mutableStateOf(aiPrefs.getString("pref_qwen_model", "qwen-plus") ?: "qwen-plus") }
     var qwenRegion by remember { mutableStateOf(aiPrefs.getString("pref_qwen_region", "international") ?: "international") }
+    var geminiModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var openAiModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var qwenModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var modelListLoading by remember { mutableStateOf<String?>(null) }
+    var modelListMessage by remember { mutableStateOf<String?>(null) }
+    var expandedCloudModel by remember { mutableStateOf<String?>(null) }
+    fun loadCloudModels(provider: String) {
+        scope.launch {
+            modelListLoading = provider
+            modelListMessage = "$provider 모델 목록 조회 중..."
+            runCatching { CloudModelCatalog.fetch(context, provider, qwenRegion) }
+                .onSuccess { fetched ->
+                    when (provider) {
+                        "gemini" -> { geminiModels = fetched; if (geminiModel !in fetched && fetched.isNotEmpty()) { geminiModel = fetched.first(); aiPrefs.edit().putString("pref_gemini_model", geminiModel).apply() } }
+                        "openai" -> { openAiModels = fetched; if (openAiModel !in fetched && fetched.isNotEmpty()) { openAiModel = fetched.first(); aiPrefs.edit().putString("pref_openai_model", openAiModel).apply() } }
+                        "qwen" -> { qwenModels = fetched; if (qwenModel !in fetched && fetched.isNotEmpty()) { qwenModel = fetched.first(); aiPrefs.edit().putString("pref_qwen_model", qwenModel).apply() } }
+                    }
+                    modelListMessage = if (fetched.isEmpty()) "${provider}에서 사용할 수 있는 모델을 찾지 못했습니다." else "$provider 사용 가능 모델 ${fetched.size}개"
+                    expandedCloudModel = provider
+                }
+                .onFailure { AiRuntimeDiagnostics.record(context, "클라우드 모델 목록 조회", it); latestAiError = AiRuntimeDiagnostics.latest(context); modelListMessage = "모델 목록 조회 실패: ${it.message.orEmpty()}" }
+            modelListLoading = null
+        }
+    }
     var expandedAdvanced by remember { mutableStateOf(false) }
     var confirmDeleteModel by remember { mutableStateOf<LocalAiModel?>(null) }
     var promptMode by remember { mutableStateOf(aiPrefs.getString("pref_ai_prompt_mode", "chat") ?: "chat") }
@@ -121,7 +151,7 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                         TranslationManager.exportTranslatedFile(context, translated, name) ?: error("번역본 파일을 저장하지 못했습니다.")
                         translationImportMessage = "번역본을 다운로드 폴더의 LilacAnime에 저장했습니다: $name"
                     } finally { temp.delete() }
-                }.onFailure { translationImportMessage = "번역 실패: ${it.message.orEmpty()}" }
+                }.onFailure { AiRuntimeDiagnostics.record(context, "자막 파일 번역", it); latestAiError = AiRuntimeDiagnostics.latest(context); translationImportMessage = "번역 실패: ${it.message.orEmpty()}" }
                 translationImportWorking = false
             }
         }
@@ -134,7 +164,7 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                     refreshInstalled()
                     message = "모델을 추가했습니다: ${it.displayName}"
                 }
-                .onFailure { message = "모델 추가 실패: ${it.message.orEmpty()}" }
+                .onFailure { AiRuntimeDiagnostics.record(context, "모델 파일 가져오기", it); latestAiError = AiRuntimeDiagnostics.latest(context); message = "모델 추가 실패: ${it.message.orEmpty()}" }
         }
     }
 
@@ -146,7 +176,7 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                 context.contentResolver.openInputStream(uri)?.use { input -> temp.outputStream().use { output -> input.copyTo(output) } } ?: error("runtime pack을 읽을 수 없습니다.")
                 try { LocalAiRuntimeManager.installZip(context, temp) } finally { temp.delete() }
             }.onSuccess { runtimes = LocalAiRuntimeManager.listInstalled(context); message = "runtime pack이 설치되었습니다: ${it.name}" }
-                .onFailure { message = "runtime pack 설치 실패: ${it.message.orEmpty()}" }
+                .onFailure { AiRuntimeDiagnostics.record(context, "Runtime pack 설치", it); latestAiError = AiRuntimeDiagnostics.latest(context); message = "runtime pack 설치 실패: ${it.message.orEmpty()}" }
         }
     }
 
@@ -242,17 +272,49 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
             Text("Hugging Face 모델 추가", fontSize=14.sp, fontWeight=FontWeight.Medium)
             OutlinedTextField(value=repoQuery,onValueChange={repoQuery=it},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("검색어 또는 repo ID")})
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick={scope.launch { searching=true; runCatching { if(repoQuery.contains("/")){selectedRepo=repoQuery.trim(); LocalAiModelManager.listRepoFiles(selectedRepo!!)} else {repos=LocalAiModelManager.searchRepos(repoQuery);emptyList()} }.onSuccess{files=it}.onFailure{message="Hugging Face 조회 실패: ${it.message.orEmpty()}"};searching=false}},enabled=!searching&&repoQuery.isNotBlank(),modifier=Modifier.weight(1f)){Text(if(searching)"조회 중..." else "검색 / 조회")}
+                OutlinedButton(onClick={scope.launch { searching=true; runCatching { if(repoQuery.contains("/")){selectedRepo=repoQuery.trim(); LocalAiModelManager.listRepoFiles(selectedRepo!!)} else {repos=LocalAiModelManager.searchRepos(repoQuery);emptyList()} }.onSuccess{files=it}.onFailure{AiRuntimeDiagnostics.record(context, "Hugging Face 모델 조회", it); latestAiError=AiRuntimeDiagnostics.latest(context); message="Hugging Face 조회 실패: ${it.message.orEmpty()}"};searching=false}},enabled=!searching&&repoQuery.isNotBlank(),modifier=Modifier.weight(1f)){Text(if(searching)"조회 중..." else "검색 / 조회")}
                 OutlinedButton(onClick={modelPicker.launch(arrayOf("application/octet-stream","application/x-gguf","*/*"))},modifier=Modifier.weight(1f)){Text("모델 파일 추가")}
                 OutlinedButton(onClick={runtimePicker.launch(arrayOf("application/zip","application/octet-stream","*/*"))},modifier=Modifier.weight(1f)){Text("Runtime 추가")}
             }
-            repos.take(10).forEach { repo -> OutlinedButton(onClick={scope.launch{selectedRepo=repo.id;runCatching{LocalAiModelManager.listRepoFiles(repo.id)}.onSuccess{files=it}.onFailure{message="파일 목록 조회 실패: ${it.message.orEmpty()}"}}},modifier=Modifier.fillMaxWidth()){Text("${repo.id} · ${repo.downloads} downloads")}}
+            repos.take(10).forEach { repo -> OutlinedButton(onClick={scope.launch{selectedRepo=repo.id;runCatching{LocalAiModelManager.listRepoFiles(repo.id)}.onSuccess{files=it}.onFailure{AiRuntimeDiagnostics.record(context, "모델 파일 목록 조회", it); latestAiError=AiRuntimeDiagnostics.latest(context); message="파일 목록 조회 실패: ${it.message.orEmpty()}"}}},modifier=Modifier.fillMaxWidth()){Text("${repo.id} · ${repo.downloads} downloads")}}
             selectedRepo?.let{Text("선택한 repo: $it",fontSize=11.sp,fontWeight=FontWeight.Medium)}
             files.forEach { file ->
-                OutlinedButton(onClick={if(!downloading)scope.launch{downloading=true;received=0;total=file.sizeBytes;runCatching{LocalAiModelManager.download(context,file){r,t->withContext(Dispatchers.Main.immediate){received=r;total=t}}}.onSuccess{refreshInstalled();message="모델이 설치되었습니다."}.onFailure{message="모델 다운로드 실패: ${it.message.orEmpty()}"};downloading=false}},enabled=!downloading,modifier=Modifier.fillMaxWidth()){Text("${file.fileName} · ${if(file.sizeBytes>0)aiFormatBytes(file.sizeBytes) else "크기 미상"}")}
+                OutlinedButton(onClick={if(!downloading)scope.launch{downloading=true;received=0;total=file.sizeBytes;runCatching{LocalAiModelManager.download(context,file){r,t->withContext(Dispatchers.Main.immediate){received=r;total=t}}}.onSuccess{refreshInstalled();message="모델이 설치되었습니다."}.onFailure{AiRuntimeDiagnostics.record(context, "모델 다운로드", it); latestAiError=AiRuntimeDiagnostics.latest(context); message="모델 다운로드 실패: ${it.message.orEmpty()}"};downloading=false}},enabled=!downloading,modifier=Modifier.fillMaxWidth()){Text("${file.fileName} · ${if(file.sizeBytes>0)aiFormatBytes(file.sizeBytes) else "크기 미상"}")}
             }
             if(downloading){LinearProgressIndicator(progress={if(total>0)(received.toFloat()/total).coerceIn(0f,1f)else 0f},modifier=Modifier.fillMaxWidth());Text("${aiFormatBytes(received)} / ${aiFormatBytes(total)}",fontSize=10.sp)}
             Text("설치된 runtime: "+runtimes.joinToString { "${it.name} ${it.version}" }.ifBlank{"없음"},fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.6f))
+            latestAiError?.let { err ->
+                Spacer(Modifier.height(12.dp))
+                Card(modifier=Modifier.fillMaxWidth(), colors=CardDefaults.cardColors(containerColor=MaterialTheme.colorScheme.errorContainer)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(7.dp)) {
+                        Text("최근 AI / Runtime 오류", fontWeight=FontWeight.Bold, color=MaterialTheme.colorScheme.onErrorContainer)
+                        Text("${err.time} · ${err.stage}", fontSize=11.sp, color=MaterialTheme.colorScheme.onErrorContainer)
+                        Text(err.summary, fontSize=13.sp, color=MaterialTheme.colorScheme.onErrorContainer)
+                        Text("해결 방법: ${err.advice}", fontSize=12.sp, color=MaterialTheme.colorScheme.onErrorContainer)
+                        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick={ clipboard.setText(AnnotatedString(err.asCopyText())) }) { Text("오류 전체 복사") }
+                            TextButton(onClick={showAiErrorDetails=true}) { Text("상세 정보") }
+                            TextButton(onClick={AiRuntimeDiagnostics.clear(context); latestAiError=null}) { Text("지우기") }
+                        }
+                    }
+                }
+            }
+            if (showAiErrorDetails) {
+                val err = latestAiError
+                if (err != null) AlertDialog(
+                    onDismissRequest={showAiErrorDetails=false},
+                    title={Text("AI / Runtime 오류 상세")},
+                    text={Column(Modifier.fillMaxWidth().heightIn(max=420.dp).verticalScroll(rememberScrollState()), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Text("${err.time} · ${err.stage}", fontSize=12.sp)
+                        Text("오류: ${err.summary}", fontWeight=FontWeight.Bold)
+                        Text("해결 방법: ${err.advice}")
+                        Text("Stack trace", fontWeight=FontWeight.Bold)
+                        Text(err.details, fontSize=11.sp)
+                    }},
+                    confirmButton={TextButton(onClick={clipboard.setText(AnnotatedString(err.asCopyText()))}){Text("전체 복사")}},
+                    dismissButton={TextButton(onClick={showAiErrorDetails=false}){Text("닫기")}}
+                )
+            }
             message?.let{Text(it,fontSize=11.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.75f))}
 
             Spacer(Modifier.height(22.dp)); HorizontalDivider(); Spacer(Modifier.height(18.dp))
@@ -484,8 +546,16 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
 
             Spacer(Modifier.height(18.dp)); Text("번역 테스트",fontSize=16.sp,fontWeight=FontWeight.Bold)
             OutlinedTextField(value=testText,onValueChange={testText=it},modifier=Modifier.fillMaxWidth(),minLines=2,maxLines=4,label={Text("일본어 문장")},enabled=!testing)
-            OutlinedButton(onClick={scope.launch{testing=true;testResult="번역 중...";val r=TranslationManager.test(context,settings.translationProvider,testText);testResult=r.fold({it},{"테스트 실패: ${it.message.orEmpty()}"});testing=false}},enabled=!testing && (settings.translationProvider != "local" || models.any{it.compatibility==Compatibility.SUPPORTED}),modifier=Modifier.fillMaxWidth()){Text(if(testing)"번역 테스트 중..." else "번역 테스트 실행")}
-            testResult?.let{Text(it,fontSize=12.sp)}
+            OutlinedButton(onClick={scope.launch{testing=true;testResult="번역 중...";val r=TranslationManager.test(context,settings.translationProvider,testText);testResult=r.fold({it},{err->AiRuntimeDiagnostics.record(context, "번역 테스트 (${settings.translationProvider})", err); latestAiError=AiRuntimeDiagnostics.latest(context); "테스트 실패: ${err.message.orEmpty()}"});testing=false}},enabled=!testing && (settings.translationProvider != "local" || models.any{it.compatibility==Compatibility.SUPPORTED}),modifier=Modifier.fillMaxWidth()){Text(if(testing)"번역 테스트 중..." else "번역 테스트 실행")}
+            testResult?.let { result ->
+                Text(result, fontSize=12.sp)
+                if (result.startsWith("테스트 실패")) {
+                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick={latestAiError?.let { clipboard.setText(AnnotatedString(it.asCopyText())) }}) { Text("오류 복사") }
+                        TextButton(onClick={showAiErrorDetails=true}) { Text("상세 / 해결 방법") }
+                    }
+                }
+            }
 
             Spacer(Modifier.height(18.dp)); Text("클라우드 번역 API",fontSize=16.sp,fontWeight=FontWeight.Bold)
             keyProviders.forEach{(id,label)->OutlinedButton(onClick={keyProvider=id;keyText=SecureApiKeyStore.get(context,id).orEmpty();keyMessage=null},modifier=Modifier.fillMaxWidth()){Text("$label API Key ${if(SecureApiKeyStore.has(context,id))"(저장됨)" else "(미설정)"}")}}
@@ -499,14 +569,34 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
                 OutlinedButton(onClick={scope.launch{tmdbMessage="테스트 중...";tmdbMessage=TmdbTitleResolver.test(context).fold({it},{"테스트 실패: ${it.message.orEmpty()}"})}},modifier=Modifier.weight(1f)){Text("연결 테스트")}
             }
             tmdbMessage?.let{Text(it,fontSize=11.sp)}
-            Text("API 모델 이름", fontSize=14.sp, fontWeight=FontWeight.SemiBold)
-            OutlinedTextField(value=geminiModel,onValueChange={geminiModel=it;aiPrefs.edit().putString("pref_gemini_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("Gemini 모델")},supportingText={Text("기본값: gemini-2.5-flash")})
-            OutlinedTextField(value=openAiModel,onValueChange={openAiModel=it;aiPrefs.edit().putString("pref_openai_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("OpenAI 모델")},supportingText={Text("기본값: gpt-4.1-mini")})
-            OutlinedTextField(value=qwenModel,onValueChange={qwenModel=it;aiPrefs.edit().putString("pref_qwen_model",it.trim()).apply()},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("Qwen 모델")},supportingText={Text("기본값: qwen-plus")})
+            Text("클라우드 AI 모델 선택", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text("모델명을 직접 입력하지 않고, 저장된 API Key로 조회한 목록에서 선택합니다.",fontSize=10.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.65f))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp), verticalAlignment=Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    OutlinedButton(onClick={if(geminiModels.isEmpty())loadCloudModels("gemini") else expandedCloudModel=if(expandedCloudModel=="gemini")null else "gemini"},modifier=Modifier.fillMaxWidth(),enabled=modelListLoading==null){Text("Gemini: $geminiModel",maxLines=2)}
+                    DropdownMenu(expanded=expandedCloudModel=="gemini",onDismissRequest={expandedCloudModel=null},modifier=Modifier.heightIn(max=360.dp)){geminiModels.forEach{item->DropdownMenuItem(text={Text(item)},onClick={geminiModel=item;aiPrefs.edit().putString("pref_gemini_model",item).apply();expandedCloudModel=null;modelListMessage="Gemini 모델 선택: $item"})}}
+                }
+                OutlinedButton(onClick={loadCloudModels("gemini")},enabled=modelListLoading==null){Text(if(modelListLoading=="gemini")"조회 중" else "목록 조회")}
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp), verticalAlignment=Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    OutlinedButton(onClick={if(openAiModels.isEmpty())loadCloudModels("openai") else expandedCloudModel=if(expandedCloudModel=="openai")null else "openai"},modifier=Modifier.fillMaxWidth(),enabled=modelListLoading==null){Text("OpenAI: $openAiModel",maxLines=2)}
+                    DropdownMenu(expanded=expandedCloudModel=="openai",onDismissRequest={expandedCloudModel=null},modifier=Modifier.heightIn(max=360.dp)){openAiModels.forEach{item->DropdownMenuItem(text={Text(item)},onClick={openAiModel=item;aiPrefs.edit().putString("pref_openai_model",item).apply();expandedCloudModel=null;modelListMessage="OpenAI 모델 선택: $item"})}}
+                }
+                OutlinedButton(onClick={loadCloudModels("openai")},enabled=modelListLoading==null){Text(if(modelListLoading=="openai")"조회 중" else "목록 조회")}
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp), verticalAlignment=Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    OutlinedButton(onClick={if(qwenModels.isEmpty())loadCloudModels("qwen") else expandedCloudModel=if(expandedCloudModel=="qwen")null else "qwen"},modifier=Modifier.fillMaxWidth(),enabled=modelListLoading==null){Text("Qwen: $qwenModel",maxLines=2)}
+                    DropdownMenu(expanded=expandedCloudModel=="qwen",onDismissRequest={expandedCloudModel=null},modifier=Modifier.heightIn(max=360.dp)){qwenModels.forEach{item->DropdownMenuItem(text={Text(item)},onClick={qwenModel=item;aiPrefs.edit().putString("pref_qwen_model",item).apply();expandedCloudModel=null;modelListMessage="Qwen 모델 선택: $item"})}}
+                }
+                OutlinedButton(onClick={loadCloudModels("qwen")},enabled=modelListLoading==null){Text(if(modelListLoading=="qwen")"조회 중" else "목록 조회")}
+            }
+            modelListMessage?.let{Text(it,fontSize=11.sp,color=MaterialTheme.colorScheme.onBackground.copy(alpha=.7f))}
             Text("Qwen API 지역", fontSize=12.sp)
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected=qwenRegion=="international",onClick={qwenRegion="international";aiPrefs.edit().putString("pref_qwen_region",qwenRegion).apply()},label={Text("International / Singapore")})
-                FilterChip(selected=qwenRegion=="china",onClick={qwenRegion="china";aiPrefs.edit().putString("pref_qwen_region",qwenRegion).apply()},label={Text("China")})
+                FilterChip(selected=qwenRegion=="international",onClick={qwenRegion="international";qwenModels=emptyList();aiPrefs.edit().putString("pref_qwen_region",qwenRegion).apply()},label={Text("International / Singapore")})
+                FilterChip(selected=qwenRegion=="china",onClick={qwenRegion="china";qwenModels=emptyList();aiPrefs.edit().putString("pref_qwen_region",qwenRegion).apply()},label={Text("China")})
             }
 
             Spacer(Modifier.height(18.dp)); Text("파일 번역",fontSize=16.sp,fontWeight=FontWeight.Bold)
@@ -521,7 +611,7 @@ fun AiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {
         Dialog(onDismissRequest={keyProvider=null},properties=DialogProperties(usePlatformDefaultWidth=false)){
             val view=LocalView.current
             DisposableEffect(Unit){val window=(view.context as? Activity)?.window;window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE);onDispose{window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)}}
-            Surface(shape=MaterialTheme.shapes.large,modifier=Modifier.fillMaxWidth().padding(24.dp)){Column(Modifier.padding(20.dp)){Text("$label API Key",fontSize=20.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));Text("키는 기기 내부 Keystore로 암호화되어 저장됩니다.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurface.copy(alpha=.65f));Spacer(Modifier.height(12.dp));OutlinedTextField(value=keyText,onValueChange={keyText=it},modifier=Modifier.fillMaxWidth(),singleLine=true,visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password),label={Text("API Key")});keyMessage?.let{Text(it,fontSize=11.sp,modifier=Modifier.padding(top=8.dp))};Spacer(Modifier.height(12.dp));Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick={SecureApiKeyStore.put(context,provider,keyText);keyMessage="저장됨"},modifier=Modifier.weight(1f)){Text("저장")};OutlinedButton(onClick={SecureApiKeyStore.put(context,provider,keyText);keyMessage="테스트 중...";scope.launch{val r=TranslationManager.testConnection(context,provider);keyMessage=r.fold({"테스트 성공: $it"},{"테스트 실패: ${it.message?:"오류"}"})}},modifier=Modifier.weight(1f)){Text("키 테스트")}};TextButton(onClick={SecureApiKeyStore.remove(context,provider);keyText="";keyMessage="삭제됨"},modifier=Modifier.fillMaxWidth()){Text("키 삭제")};TextButton(onClick={keyProvider=null},modifier=Modifier.fillMaxWidth()){Text("닫기")}}}
+            Surface(shape=MaterialTheme.shapes.large,modifier=Modifier.fillMaxWidth().padding(24.dp)){Column(Modifier.padding(20.dp)){Text("$label API Key",fontSize=20.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));Text("키는 기기 내부 Keystore로 암호화되어 저장됩니다.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurface.copy(alpha=.65f));Spacer(Modifier.height(12.dp));OutlinedTextField(value=keyText,onValueChange={keyText=it},modifier=Modifier.fillMaxWidth(),singleLine=true,visualTransformation=androidx.compose.ui.text.input.PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password),label={Text("API Key")});keyMessage?.let{Text(it,fontSize=11.sp,modifier=Modifier.padding(top=8.dp))};Spacer(Modifier.height(12.dp));Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick={SecureApiKeyStore.put(context,provider,keyText);keyMessage="저장됨"},modifier=Modifier.weight(1f)){Text("저장")};OutlinedButton(onClick={SecureApiKeyStore.put(context,provider,keyText);keyMessage="테스트 중...";scope.launch{val r=TranslationManager.testConnection(context,provider);keyMessage=r.fold({"테스트 성공: $it"},{err->AiRuntimeDiagnostics.record(context, "${provider} API 키 테스트", err); latestAiError=AiRuntimeDiagnostics.latest(context); "테스트 실패: ${err.message?:"오류"}"})}},modifier=Modifier.weight(1f)){Text("키 테스트")}};TextButton(onClick={SecureApiKeyStore.remove(context,provider);keyText="";keyMessage="삭제됨"},modifier=Modifier.fillMaxWidth()){Text("키 삭제")};TextButton(onClick={keyProvider=null},modifier=Modifier.fillMaxWidth()){Text("닫기")}}}
         }
     }
 }

@@ -399,6 +399,21 @@ fun DetailScreen(
 
     // 비동기 URL 추출 함수
     suspend fun extractEpisodeInfo(ep: Episode): Pair<List<StreamQuality>, String?> {
+        val selectedSource = vm.playerSettings.videoSourcePreference
+        if (selectedSource == "miruro" || selectedSource == "ohli24") {
+            val resolved = withContext(Dispatchers.IO) {
+                if (selectedSource == "miruro") com.lilac.anime.data.MiruroClient().resolve(ep)
+                else com.lilac.anime.data.Ohli24Client().resolve(ep)
+            }
+            val stream = resolved.m3u8Url?.takeIf { it.isNotBlank() }
+            if (stream != null) {
+                resolved.referer?.let { LinkkfRequestContextStore.save(context, currentAnime.id, ep.id, it) }
+                resolved.subtitleReferer?.let { LinkkfRequestContextStore.saveSubtitle(context, currentAnime.id, ep.id, it) }
+                resolved.subtitleUrl?.let { LinkkfRequestContextStore.saveSubtitleUrl(context, currentAnime.id, ep.id, it) }
+                return listOf(StreamQuality("자동", stream, resolved.referer, resolved.headers)) to resolved.subtitleUrl
+            }
+            return emptyList<StreamQuality>() to null
+        }
         // Current Linkkf (linkani.tv) exposes the actual HLS/VTT URLs in the
         // server-rendered watch page. Resolve that directly; do not mount the
         // generic WebView extractor for Linkkf.
@@ -475,6 +490,26 @@ fun DetailScreen(
      * subtitle Referer as one result.
      */
     suspend fun extractLinkkfDownloadInfo(ep: Episode): Pair<List<StreamQuality>, String?> {
+        val selectedSource = vm.playerSettings.videoSourcePreference
+        if (selectedSource == "miruro" || selectedSource == "ohli24") {
+            return try {
+                val resolved = withContext(Dispatchers.IO) {
+                    if (selectedSource == "miruro") com.lilac.anime.data.MiruroClient().resolve(ep)
+                    else com.lilac.anime.data.Ohli24Client().resolve(ep)
+                }
+                val stream = resolved.m3u8Url?.takeIf { it.isNotBlank() }
+                if (stream == null) return emptyList<StreamQuality>() to null
+                resolved.referer?.let { LinkkfRequestContextStore.save(context, currentAnime.id, ep.id, it) }
+                resolved.subtitleReferer?.let { LinkkfRequestContextStore.saveSubtitle(context, currentAnime.id, ep.id, it) }
+                resolved.subtitleUrl?.let { LinkkfRequestContextStore.saveSubtitleUrl(context, currentAnime.id, ep.id, it) }
+                Log.i("OfflineDownload", "${selectedSource.uppercase()}_RESOLVED episode=${ep.displayNumber} subtitle=${resolved.subtitleUrl != null}")
+                listOf(StreamQuality("자동", stream, resolved.referer, resolved.headers)) to resolved.subtitleUrl
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                Log.e("OfflineDownload", "${selectedSource.uppercase()}_RESOLVE_FAILED episode=${ep.displayNumber}", t)
+                emptyList<StreamQuality>() to null
+            }
+        }
         val direct = ep.videoUrl?.takeIf {
             (it.startsWith("http://", true) || it.startsWith("https://", true)) &&
                 (it.contains(".m3u8", true) || it.contains(".mp4", true))
@@ -725,7 +760,8 @@ fun DetailScreen(
                         subtitleUrl = resolved.subtitleUrl,
                         subtitleReferer = resolved.subtitleReferer ?: resolved.referer,
                         flixCloudPk = flixCloudPk,
-                        streamHeaders = offlineStreamHeaders
+                        streamHeaders = offlineStreamHeaders,
+                        videoSource = "reanime"
                     )
                     Toast.makeText(context, "${ep.displayNumber}화 다운로드를 시작합니다.", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
@@ -781,7 +817,9 @@ fun DetailScreen(
                     referer = originalReferer,
                     subtitleUrl = vttUrl,
                     subtitleReferer = LinkkfRequestContextStore.getSubtitle(context, currentAnime.id, ep.id)
-                        ?: originalReferer
+                        ?: originalReferer,
+                    streamHeaders = selectedQuality.headers,
+                    videoSource = vm.playerSettings.videoSourcePreference
                 )
                 Toast.makeText(context, "${ep.displayNumber}화 (${selectedQuality.label}) 다운로드를 시작합니다.", Toast.LENGTH_SHORT).show()
 
@@ -905,7 +943,8 @@ fun DetailScreen(
                             subtitleUrl = resolved.subtitleUrl,
                             subtitleReferer = resolved.subtitleReferer ?: resolved.referer,
                             flixCloudPk = pk,
-                            streamHeaders = headers
+                            streamHeaders = headers,
+                            videoSource = "reanime"
                         )
                         Log.i("OfflineDownload", "REANIME_BATCH_ENQUEUED episode=${ep.displayNumber} pkChars=${pk.length}")
                     } catch (t: Throwable) {
@@ -954,7 +993,9 @@ fun DetailScreen(
                     referer = originalReferer,
                     subtitleUrl = vttUrl,
                     subtitleReferer = LinkkfRequestContextStore.getSubtitle(context, currentAnime.id, ep.id)
-                        ?: originalReferer
+                        ?: originalReferer,
+                    streamHeaders = selectedQuality.headers,
+                    videoSource = vm.playerSettings.videoSourcePreference
                 )
 
                         withContext(Dispatchers.IO) {

@@ -33,6 +33,10 @@ import dev.jdtech.mpv.MPVLib.MpvFormat.MPV_FORMAT_DOUBLE
 import dev.jdtech.mpv.MPVLib.MpvFormat.MPV_FORMAT_FLAG
 import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlin.math.roundToInt
@@ -52,6 +56,7 @@ class MpvPlayerEngine(private val context: Context) {
         private const val TAG = "LilacMpv"
     }
     private val fontsDir = File(context.filesDir, "mpv_fonts").apply { mkdirs() }
+    private val upscalingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mpv: MPVLib = requireNotNull(MPVLib.create(context.applicationContext)) {
         "libmpv initialization failed"
     }
@@ -73,6 +78,12 @@ class MpvPlayerEngine(private val context: Context) {
         private set
     @Volatile var videoDisplayAspect: Double = 0.0
         private set
+    @Volatile private var aiUpscalingRequested: Boolean = false
+    @Volatile private var aiUpscalingBackendPreference: String = "gpu"
+    @Volatile private var aiUpscalingAnime4KMode: String = "A"
+    @Volatile private var aiUpscalingScaleMultiplier: Int = 2
+    @Volatile private var lastUpscalingProfile: String = "default"
+    @Volatile private var upscalingGeneration: Long = 0L
     @Volatile var subtitleText: String = ""
         private set
     @Volatile var playbackState: Int = STATE_IDLE
@@ -150,6 +161,7 @@ class MpvPlayerEngine(private val context: Context) {
                 "video-params/dw" -> videoDisplayWidth = value.toInt().coerceAtLeast(0)
                 "video-params/dh" -> videoDisplayHeight = value.toInt().coerceAtLeast(0)
             }
+            if (property == "video-params/w" || property == "video-params/h") applyUpscalingProfile()
             updateProperty(property)
         }
         override fun eventProperty(property: String, value: Double) {
@@ -229,7 +241,7 @@ class MpvPlayerEngine(private val context: Context) {
         mpv.setOptionString("config", "no")
         mpv.setOptionString("load-auto-profiles", "no")
         mpv.setOptionString("terminal", "no")
-        mpv.setOptionString("msg-level", "all=info")
+        mpv.setOptionString("msg-level", "all=info,vo=debug,gpu=debug")
         mpv.setOptionString("vo", "gpu")
         mpv.setOptionString("hwdec", "mediacodec")
 
@@ -281,6 +293,100 @@ class MpvPlayerEngine(private val context: Context) {
         // 자동재생 완료 신호 fallback.
         observe("eof-reached", MPV_FORMAT_FLAG)
         observe("sub-text", MPVLib.MpvFormat.MPV_FORMAT_STRING)
+    }
+
+    fun configureAiUpscaling(
+        enabled: Boolean,
+        backendPreference: String = "gpu",
+        scaleMultiplier: Int = 2,
+        anime4kMode: String = "A"
+    ) {
+        aiUpscalingRequested = enabled
+        aiUpscalingBackendPreference = backendPreference.takeIf { it in setOf("gpu", "anime4k", "animejanai") } ?: "gpu"
+        aiUpscalingScaleMultiplier = scaleMultiplier.takeIf { it in setOf(2, 3, 4) } ?: 2
+        aiUpscalingAnime4KMode = anime4kMode.takeIf { it in setOf("A", "B", "C", "A+A", "B+B", "C+A") } ?: "A"
+        upscalingGeneration++
+        lastUpscalingProfile = ""
+        applyUpscalingProfile()
+    }
+
+    private fun applyUpscalingProfile() {
+        val shouldUseAnime4K = aiUpscalingRequested && aiUpscalingBackendPreference == "anime4k"
+        val profile = if (aiUpscalingRequested) "upscale-${aiUpscalingBackendPreference}-${aiUpscalingScaleMultiplier}x-${aiUpscalingAnime4KMode}" else "default"
+        if (profile == lastUpscalingProfile) return
+        lastUpscalingProfile = profile
+        val generation = upscalingGeneration
+
+        if (shouldUseAnime4K) {
+            upscalingScope.launch {
+                try {
+                    val selectedMode = aiUpscalingAnime4KMode
+                    val shaders = com.lilac.anime.player.upscaling.Anime4KShaderManager.ensureShaders(context.applicationContext, selectedMode)
+                    if (generation != upscalingGeneration || !aiUpscalingRequested || aiUpscalingBackendPreference != "anime4k" || selectedMode != aiUpscalingAnime4KMode) {
+                        Log.i(TAG, "UPSCALING_PROFILE backend=anime4k status=SUPERSEDED generation=$generation currentGeneration=$upscalingGeneration")
+                        return@launch
+                    }
+
+                    val hwdecResult = runCatching { mpv.setPropertyString("hwdec", "mediacodec-copy") }
+                    if (hwdecResult.isFailure) {
+                        Log.e(TAG, "ANIME4K_HWDEC_CONFIG_FAILED requested=mediacodec-copy", hwdecResult.exceptionOrNull())
+                    }
+
+                    val paths = shaders.joinToString(":") { it.absolutePath }
+                    mpv.command(arrayOf("change-list", "glsl-shaders", "set", paths))
+                    runCatching { mpv.setPropertyString("scale", "ewa_lanczossharp") }
+                    runCatching { mpv.setPropertyString("cscale", "spline36") }
+                    runCatching { mpv.setPropertyString("dscale", "mitchell") }
+
+                    val configured = runCatching { mpv.getPropertyString("glsl-shaders") }.getOrNull().orEmpty()
+                    val listedCount = shaders.count { configured.contains(it.absolutePath) }
+                    val currentWidth = videoWidth
+                    val currentHeight = videoHeight
+                    val status = when {
+                        hwdecResult.isFailure -> "SHADERS_SET_HWDEC_UNCONFIRMED"
+                        listedCount == 0 -> "SHADERS_SET_LIST_UNCONFIRMED"
+                        listedCount < shaders.size -> "SHADERS_PARTIALLY_LISTED"
+                        else -> "SHADERS_CONFIGURED"
+                    }
+                    Log.i(TAG, "UPSCALING_PROFILE backend=anime4k status=$status source=${currentWidth}x${currentHeight} mode=$selectedMode files=${shaders.size} listed=$listedCount hwdecCopy=${hwdecResult.isSuccess} paths=$paths")
+                    Log.i(TAG, "ANIME4K_VERIFY mode=$selectedMode renderer=gpu shaderListReadback=${configured.isNotBlank()} listed=$listedCount expected=${shaders.size}; inspect mpv vo/gpu compile logs for runtime confirmation")
+                } catch (t: Throwable) {
+                    if (generation == upscalingGeneration) {
+                        Log.e(TAG, "UPSCALING_PROFILE backend=anime4k status=SHADER_SETUP_FAILED source=${videoWidth}x${videoHeight}", t)
+                        runCatching { mpv.command(arrayOf("change-list", "glsl-shaders", "clr", "")) }
+                        runCatching { mpv.setPropertyString("hwdec", "mediacodec") }
+                    } else {
+                        Log.i(TAG, "UPSCALING_PROFILE backend=anime4k status=STALE_SETUP_ERROR generation=$generation currentGeneration=$upscalingGeneration", t)
+                    }
+                }
+            }
+            return
+        }
+
+        runCatching { mpv.command(arrayOf("change-list", "glsl-shaders", "clr", "")) }
+        runCatching { mpv.setPropertyString("hwdec", "mediacodec") }
+
+        if (aiUpscalingRequested) {
+            val results = listOf(
+                runCatching { mpv.setPropertyString("scale", "ewa_lanczossharp") }.isSuccess,
+                runCatching { mpv.setPropertyString("cscale", "ewa_lanczossharp") }.isSuccess,
+                runCatching { mpv.setPropertyString("dscale", "mitchell") }.isSuccess,
+                runCatching { mpv.setPropertyString("scale-antiring", "0.7") }.isSuccess
+            )
+            val status = when (aiUpscalingBackendPreference) {
+                "animejanai" -> "ANDROID_RUNTIME_NOT_PORTED_GPU_FALLBACK"
+                else -> "GPU_SCALER_ACTIVE"
+            }
+            Log.i(TAG, "UPSCALING_PROFILE requested=true status=$status source=${videoWidth}x${videoHeight} backend=$aiUpscalingBackendPreference targetScale=${aiUpscalingScaleMultiplier}x optionsApplied=${results.count { it }}/4")
+        } else {
+            val results = listOf(
+                runCatching { mpv.setPropertyString("scale", "bilinear") }.isSuccess,
+                runCatching { mpv.setPropertyString("cscale", "bilinear") }.isSuccess,
+                runCatching { mpv.setPropertyString("dscale", "bilinear") }.isSuccess,
+                runCatching { mpv.setPropertyString("scale-antiring", "0") }.isSuccess
+            )
+            Log.i(TAG, "UPSCALING_PROFILE requested=false status=DISABLED source=${videoWidth}x${videoHeight} optionsApplied=${results.count { it }}/4")
+        }
     }
 
     private fun observe(name: String, format: Int) {
@@ -398,41 +504,42 @@ class MpvPlayerEngine(private val context: Context) {
     }
 
     fun configureNetworkHeaders(headers: String, referer: String? = null) {
-        // mpv expects HTTP header fields as a comma-separated list.
-        // A newline-delimited value can be ignored by the native HTTP client,
-        // which is especially visible with protected VTT files.
-        if (headers.isNotBlank()) {
-            val lines = headers
-                .lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
-                .toList()
-            val normalized = lines.joinToString(",")
-            val userAgent = lines
-                .firstOrNull { it.startsWith("User-Agent:", true) }
-                ?.substringAfter(":")
-                ?.trim()
-            // Send the captured browser UA both through the explicit mpv option and
-            // the header list. Some libmpv builds handle one path more reliably.
+        // Parse both the current newline-delimited format and older JSON header maps.
+        // libmpv's http-header-fields syntax is `Name=value,...`, not HTTP's
+        // `Name: value` wire syntax. Passing colon-delimited fields can silently
+        // drop Referer/Origin on protected HLS playlists and their segments.
+        val rawLines = if (headers.trimStart().startsWith("{")) {
             runCatching {
-                mpv.setOptionString("http-header-fields", normalized)
-            }.onFailure {
-                Log.w(TAG, "HTTP_HEADERS_OPTION_FAILED", it)
-            }
-            runCatching {
-                mpv.setOptionString("user-agent", userAgent.orEmpty())
-            }.onFailure {
-                Log.w(TAG, "HTTP_USER_AGENT_OPTION_FAILED", it)
-            }
-        } else {
-            runCatching { mpv.setOptionString("http-header-fields", "") }
-            runCatching { mpv.setOptionString("user-agent", "") }
-        }
-        runCatching {
-            mpv.setOptionString("referrer", referer.orEmpty())
-        }.onFailure {
-            Log.w(TAG, "HTTP_REFERRER_OPTION_FAILED", it)
-        }
+                val json = org.json.JSONObject(headers)
+                val keys = json.keys()
+                buildList {
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        val value = json.optString(key)
+                        if (value.isNotBlank()) add("$key: $value")
+                    }
+                }
+            }.getOrDefault(headers.lineSequence().toList())
+        } else headers.lineSequence().toList()
+        val parsed = rawLines.mapNotNull { line ->
+            val separator = line.indexOf(':')
+            if (separator <= 0) null else line.substring(0, separator).trim() to line.substring(separator + 1).trim()
+        }.filter { (name, value) -> name.isNotBlank() && value.isNotBlank() }
+        val userAgent = parsed.firstOrNull { it.first.equals("User-Agent", true) }?.second
+        val headerReferer = parsed.firstOrNull { it.first.equals("Referer", true) }?.second
+        val effectiveReferer = referer?.takeIf { it.isNotBlank() } ?: headerReferer.orEmpty()
+        // mpv has dedicated options for User-Agent and Referer. Keep them out of
+        // http-header-fields to avoid duplicate/conflicting values.
+        val normalized = parsed
+            .filterNot { (name, _) -> name.equals("User-Agent", true) || name.equals("Referer", true) }
+            .joinToString(",") { (name, value) -> "$name=$value" }
+        val fieldsSet = runCatching { mpv.setPropertyString("http-header-fields", normalized) }.isSuccess
+        if (!fieldsSet) runCatching { mpv.setOptionString("http-header-fields", normalized) }
+        val uaSet = runCatching { mpv.setPropertyString("user-agent", userAgent.orEmpty()) }.isSuccess
+        if (!uaSet) runCatching { mpv.setOptionString("user-agent", userAgent.orEmpty()) }
+        val refererSet = runCatching { mpv.setPropertyString("referrer", effectiveReferer) }.isSuccess
+        if (!refererSet) runCatching { mpv.setOptionString("referrer", effectiveReferer) }
+        Log.i(TAG, "HTTP_CONTEXT_CONFIGURED headerCount=${parsed.size} extraHeaderCount=${normalized.split(',').count { it.isNotBlank() }} userAgent=${!userAgent.isNullOrBlank()} referer=${effectiveReferer.isNotBlank()} fieldsProperty=$fieldsSet uaProperty=$uaSet refererProperty=$refererSet")
     }
 
     fun setSubtitleFontsDir(path: String) {
@@ -552,6 +659,13 @@ class MpvPlayerEngine(private val context: Context) {
             play()
         }
         return true
+    }
+
+    /** Save the currently decoded video frame without subtitle or player overlays. */
+    fun screenshotToFile(outputPath: String) {
+        require(outputPath.isNotBlank()) { "스크린샷 경로가 비어 있습니다." }
+        File(outputPath).parentFile?.mkdirs()
+        mpv.command(arrayOf("screenshot-to-file", outputPath, "video"))
     }
 
     fun pause() {

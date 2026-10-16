@@ -18,6 +18,9 @@ class GeminiTranslator(private val context: Context) : TranslationProvider {
     override val id = "gemini"
     override val displayName = "Gemini"
     private val client = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).callTimeout(210, TimeUnit.SECONDS).build()
+    @Volatile private var modelCache: List<String> = emptyList()
+    @Volatile private var modelCacheKey: String = ""
+    @Volatile private var modelCacheAt: Long = 0L
 
     /** Desktop-compatible key test: only list models; never sends a translation prompt. */
     suspend fun testConnection(): String {
@@ -92,7 +95,11 @@ class GeminiTranslator(private val context: Context) : TranslationProvider {
         throw last ?: error("Gemini 요청에 실패했습니다.")
     }
 
-    private suspend fun listModels(key: String): List<String> = withContext(Dispatchers.IO) {
+    private suspend fun listModels(key: String): List<String> {
+        val keyFingerprint = key.hashCode().toString()
+        val now = System.currentTimeMillis()
+        if (modelCache.isNotEmpty() && modelCacheKey == keyFingerprint && now - modelCacheAt < 15 * 60 * 1000L) return modelCache
+        val loaded = withContext(Dispatchers.IO) {
         val result = mutableListOf<String>(); var token = ""
         do {
             val suffix = if (token.isBlank()) "" else "&pageToken=${URLEncoder.encode(token, "UTF-8")}"
@@ -133,7 +140,14 @@ class GeminiTranslator(private val context: Context) : TranslationProvider {
                 token = root.optString("nextPageToken", "")
             }
         } while (token.isNotBlank())
-        return@withContext result.distinct().sortedWith(compareByDescending<String> { Regex("""^gemini-(\d+(?:\.\d+)?)""").find(it)?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0 }.thenBy { it.length }.thenBy { it })
+        result.distinct().sortedWith(compareByDescending<String> { Regex("""^gemini-(\d+(?:\.\d+)?)""").find(it)?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0 }.thenBy { it.length }.thenBy { it })
+        }
+        if (loaded.isNotEmpty()) {
+            modelCache = loaded
+            modelCacheKey = keyFingerprint
+            modelCacheAt = System.currentTimeMillis()
+        }
+        return loaded
     }
 
     private fun defaultModel(models: List<String>) = models.firstOrNull { it.contains("flash", true) && !it.contains("lite|preview".toRegex(RegexOption.IGNORE_CASE)) }

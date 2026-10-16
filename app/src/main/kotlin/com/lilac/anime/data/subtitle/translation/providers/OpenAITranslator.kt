@@ -17,6 +17,9 @@ class OpenAITranslator(private val context: Context) : TranslationProvider {
     override val id = "openai"
     override val displayName = "OpenAI"
     private val client = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).callTimeout(210, TimeUnit.SECONDS).build()
+    @Volatile private var modelCache: List<String> = emptyList()
+    @Volatile private var modelCacheKey: String = ""
+    @Volatile private var modelCacheAt: Long = 0L
 
     suspend fun testConnection(): String = withContext(Dispatchers.IO) {
         val key = SecureApiKeyStore.get(context, id)?.trim()?.takeIf { it.isNotBlank() }
@@ -84,7 +87,11 @@ class OpenAITranslator(private val context: Context) : TranslationProvider {
         }
     }
 
-    private fun listModels(key: String): List<String> = runCatching {
+    private fun listModels(key: String): List<String> {
+        val fingerprint = key.hashCode().toString()
+        val now = System.currentTimeMillis()
+        if (modelCache.isNotEmpty() && modelCacheKey == fingerprint && now - modelCacheAt < 15 * 60 * 1000L) return modelCache
+        val loaded = runCatching {
         val req = Request.Builder().url("https://api.openai.com/v1/models").header("Authorization", "Bearer $key").get().build()
         client.newCall(req).execute().use { response ->
             val raw = response.body?.string().orEmpty(); if (!response.isSuccessful) throw apiError(response.code, raw)
@@ -92,7 +99,14 @@ class OpenAITranslator(private val context: Context) : TranslationProvider {
             buildList { for (i in 0 until arr.length()) { val id = arr.optJSONObject(i)?.optString("id").orEmpty(); if (Regex("^(gpt-4|gpt-5|o\\d)").containsMatchIn(id) && !Regex("audio|realtime|search|transcribe|tts", RegexOption.IGNORE_CASE).containsMatchIn(id)) add(id) } }
                 .distinct().sortedWith(compareBy<String> { if (it.contains("mini", true)) 0 else if (it.contains("nano", true)) 1 else 2 }.thenBy { it.length })
         }
-    }.getOrThrow()
+        }.getOrThrow()
+        if (loaded.isNotEmpty()) {
+            modelCache = loaded
+            modelCacheKey = fingerprint
+            modelCacheAt = System.currentTimeMillis()
+        }
+        return loaded
+    }
 
     private fun apiError(code: Int, raw: String): Throwable { val msg = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }.getOrNull().orEmpty(); return IllegalStateException("OpenAI HTTP $code${if (msg.isNotBlank()) ": $msg" else ""}") }
     private fun isBadRequest(t: Throwable) = t.message?.contains("HTTP 400") == true

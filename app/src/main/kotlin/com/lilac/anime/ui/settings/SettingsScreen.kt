@@ -6,6 +6,7 @@ import com.lilac.anime.cast.*
 import com.lilac.anime.core.model.*
 import com.lilac.anime.core.update.*
 import com.lilac.anime.data.*
+import com.lilac.anime.data.DeviceSyncClient
 import com.lilac.anime.data.matcher.*
 import com.lilac.anime.data.offline.*
 import com.lilac.anime.data.subtitle.*
@@ -20,6 +21,7 @@ import com.lilac.anime.ui.theme.*
 import com.lilac.anime.viewmodel.*
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -33,6 +35,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,6 +51,78 @@ private fun formatModelBytes(bytes: Long): String {
     if (bytes < 1024L * 1024L) return "${bytes / 1024L} KB"
     if (bytes < 1024L * 1024L * 1024L) return String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
     return String.format(java.util.Locale.US, "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+}
+
+@Composable
+private fun DeviceSyncSettings(vm: AnimeViewModel) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var serverUrl by remember { mutableStateOf(DeviceSyncClient.savedServer(context)) }
+    var password by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf(if (DeviceSyncClient.isConnected(context)) "토큰이 기기에 안전하게 저장되어 있습니다." else "서버 주소와 비밀번호로 연결하세요.") }
+    var busy by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        Spacer(Modifier.height(18.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(8.dp))
+        Text("기기 동기화", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Text("내 목록과 시청 기록을 개인 LilacAnime 서버와 동기화합니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
+        OutlinedTextField(
+            value = serverUrl,
+            onValueChange = { serverUrl = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("서버 주소") },
+            placeholder = { Text("https://lilacanime-server.vercel.app") },
+            singleLine = true,
+            enabled = !busy
+        )
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("서버 비밀번호") },
+            singleLine = true,
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            enabled = !busy
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(enabled = !busy && serverUrl.isNotBlank() && password.length >= 8, onClick = {
+                busy = true
+                status = "서버 확인 및 로그인 중…"
+                val url = serverUrl
+                val secret = password
+                password = ""
+                scope.launch {
+                    try {
+                        val message = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { DeviceSyncClient.connect(context, url, secret) }
+                        status = message
+                        serverUrl = DeviceSyncClient.savedServer(context)
+                    } catch (e: Exception) { status = e.message ?: "서버 연결에 실패했습니다." }
+                    finally { busy = false }
+                }
+            }) { Text("연결") }
+            Button(enabled = !busy && DeviceSyncClient.isConnected(context), onClick = {
+                busy = true
+                status = "동기화 중…"
+                scope.launch {
+                    try {
+                        val result = DeviceSyncClient.sync(context, vm.library, vm.watchHistory)
+                        vm.applySyncedCollections(context, result.library, result.history)
+                        status = "동기화 완료 · 보냄 ${result.sent}개 · 받음 ${result.received}개 · 리비전 ${result.revision}"
+                    } catch (e: Exception) { status = e.message ?: "동기화에 실패했습니다." }
+                    finally { busy = false }
+                }
+            }) { Text("지금 동기화") }
+            OutlinedButton(enabled = !busy && DeviceSyncClient.isConnected(context), onClick = {
+                DeviceSyncClient.disconnect(context)
+                status = "연결 해제됨. 서버 주소는 유지됩니다."
+            }) { Text("연결 해제") }
+        }
+        if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        Text(status, fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f))
+        Text("비밀번호는 저장하지 않습니다. 로그인 토큰은 Android Keystore 기반 AES-GCM으로 암호화해 저장합니다. 외부 서버는 HTTPS를 사용하세요.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
+    }
 }
 
 @Composable
@@ -71,6 +147,8 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
         ) {
             Text("설정", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+
+            DeviceSyncSettings(vm = vm)
             
             Spacer(Modifier.height(24.dp))
             Text("테마", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
@@ -90,12 +168,19 @@ fun SettingsScreen(
             Text("콘텐츠 / 영상 소스", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("linkkf" to "Linkkf", "animenosub" to "Animenosub", "reanime" to "RE:Anime").forEach { (source, label) ->
+                listOf("linkkf" to "Linkkf / 링크애니", "animenosub" to "Animenosub", "reanime" to "RE:Anime").forEach { (source, label) ->
                     FilterChip(
                         selected = settings.videoSourcePreference == source,
-                        onClick = {
-                            vm.updatePlayerSettings(context, settings.copy(videoSourcePreference = source))
-                        },
+                        onClick = { vm.updatePlayerSettings(context, settings.copy(videoSourcePreference = source)) },
+                        label = { Text(label) }
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("miruro" to "Miruro", "ohli24" to "애니24").forEach { (source, label) ->
+                    FilterChip(
+                        selected = settings.videoSourcePreference == source,
+                        onClick = { vm.updatePlayerSettings(context, settings.copy(videoSourcePreference = source)) },
                         label = { Text(label) }
                     )
                 }
@@ -105,6 +190,13 @@ fun SettingsScreen(
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
             )
+            Spacer(Modifier.height(12.dp))
+            Text("재생 문제 진단", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
+            Text("Miruro·애니24 재생 실패 시 최근 관련 로그를 파일로 추출해 공유합니다.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f))
+            Button(onClick = {
+                runCatching { DiagnosticLogExporter.share(context) }
+                    .onFailure { android.widget.Toast.makeText(context, "로그 추출 실패: ${it.message ?: it.javaClass.simpleName}", android.widget.Toast.LENGTH_LONG).show() }
+            }) { Text("진단 로그 추출 / 공유") }
 
             Spacer(Modifier.height(16.dp))
 
@@ -120,7 +212,81 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(20.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(14.dp))
+            Text("실시간 영상 업스케일링", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+            Text("Anime4K는 mpv GLSL 셰이더를 사용합니다. AnimeJaNai의 원본 실시간 엔진은 Windows 전용이므로 Android용 추론 경로가 준비되기 전까지 선택 시 기본 GPU 스케일러로 대체됩니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("업스케일링 사용", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
+                    Text("끄면 일반 재생 스케일러를 사용합니다.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
+                }
+                Switch(
+                    checked = settings.aiUpscalingEnabled,
+                    onCheckedChange = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingEnabled = it)) }
+                )
+            }
+            if (settings.aiUpscalingEnabled) {
+                Text("엔진", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("anime4k" to "Anime4K (실시간 셰이더)", "animejanai" to "AnimeJaNai (Android 포팅 대기)", "gpu" to "기본 GPU 스케일러").forEach { (value, label) ->
+                        FilterChip(
+                            selected = settings.aiUpscalingBackend == value,
+                            onClick = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingBackend = value)) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+                Text(
+                    when (settings.aiUpscalingBackend) {
+                        "anime4k" -> "최초 사용 시 공식 Anime4K 릴리스에서 GLSL 파일을 내려받아 앱 내부 저장소에 보관합니다. 셰이더 적용에는 네트워크가 필요하며, 이후에는 저장된 파일을 재사용합니다."
+                        "animejanai" -> "현재 Android에서 원본 AnimeJaNai 엔진을 실행할 수 없어 GPU 스케일러로 대체됩니다. 이 항목은 Android 포팅이 완료된 상태가 아닙니다."
+                        else -> "AI 추론 없이 mpv의 GPU 스케일러를 사용합니다."
+                    },
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f)
+                )
+                if (settings.aiUpscalingBackend == "anime4k") {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Anime4K 모드", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
+                    val modes = listOf(
+                        "A" to "A · 1080p / 복원 강함",
+                        "B" to "B · 720p / 균형",
+                        "C" to "C · 깨끗한 원본",
+                        "A+A" to "A+A · 고품질 복원",
+                        "B+B" to "B+B · 고품질 균형",
+                        "C+A" to "C+A · 노이즈 제거 + 복원"
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        modes.chunked(2).forEach { rowModes ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                rowModes.forEach { (mode, label) ->
+                                    FilterChip(
+                                        modifier = Modifier.weight(1f),
+                                        selected = settings.aiUpscalingMode == mode,
+                                        onClick = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingMode = mode)) },
+                                        label = { Text(label, maxLines = 2) }
+                                    )
+                                }
+                                if (rowModes.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                    Text(
+                        when (settings.aiUpscalingMode) {
+                            "A" -> "대부분의 1080p 애니와 흐림·압축 흔적이 있는 영상에 적합합니다."
+                            "B" -> "대부분의 720p 애니와 다운스케일된 영상에 적합합니다."
+                            "C" -> "이미 선명한 영상이나 아트워크에 적합하지만, 복원 효과는 약할 수 있습니다."
+                            "A+A" -> "A 모드를 두 단계로 적용하는 고부하 모드입니다. 과도한 링잉이나 밴딩이 생길 수 있습니다."
+                            "B+B" -> "B 모드의 복원 효과를 높이는 고부하 모드입니다."
+                            else -> "노이즈 제거 후 복원하는 고부하 모드입니다."
+                        },
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f)
+                    )
+                }
+            }
 
             Spacer(Modifier.height(16.dp))
 

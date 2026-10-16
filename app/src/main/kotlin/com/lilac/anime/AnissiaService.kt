@@ -266,17 +266,36 @@ object AnissiaService {
     suspend fun getSubtitles(animeNo: Long): List<AnissiaSubtitle> {
         require(animeNo > 0)
 
-        // /anime/animeNo/{id} is the request made by the web UI when opening
-        // an anime. Its response already contains captions. Use it first.
-        val detail = runCatching { getAnime(animeNo) }.getOrNull()
-        if (detail != null) {
-            val captions = getCaptionsFromDetail(detail, animeNo)
-            if (captions.isNotEmpty()) return captions
-        }
+        // The detail response and dedicated caption endpoint can contain different
+        // subsets. Do not return early just because the detail response has at least
+        // one caption; merge both sources so the picker can see all registered makers.
+        val detailCaptions = runCatching {
+            getAnime(animeNo)?.let { getCaptionsFromDetail(it, animeNo) }.orEmpty()
+        }.onFailure { Log.w(TAG, "DETAIL_CAPTIONS_FAILED animeNo=$animeNo", it) }
+            .getOrDefault(emptyList())
 
-        // Keep the dedicated caption endpoint as a reliable fallback.
-        val body = get("$API_BASE/anime/caption/animeNo/$animeNo")
-        return parseCaptionArray(body)
+        val endpointCaptions = runCatching {
+            parseCaptionArray(get("$API_BASE/anime/caption/animeNo/$animeNo"))
+        }.onFailure { Log.w(TAG, "CAPTION_ENDPOINT_FAILED animeNo=$animeNo", it) }
+            .getOrDefault(emptyList())
+
+        val merged = (detailCaptions + endpointCaptions)
+            .filter { it.episode.isNotBlank() && !it.website.isNullOrBlank() }
+            .distinctBy {
+                listOf(
+                    it.episode.trim(),
+                    it.creator.trim().lowercase(Locale.ROOT),
+                    it.website.orEmpty().trim().trimEnd('/').lowercase(Locale.ROOT),
+                    it.updateDate.trim()
+                ).joinToString("|")
+            }
+            .sortedWith(
+                compareBy<AnissiaSubtitle> { episodeNumber(it.episode) }
+                    .thenByDescending { it.updateDate }
+                    .thenBy { it.creator.lowercase(Locale.ROOT) }
+            )
+        Log.i(TAG, "CAPTIONS_MERGED animeNo=$animeNo detail=${detailCaptions.size} endpoint=${endpointCaptions.size} merged=${merged.size}")
+        return merged.ifEmpty { detailCaptions.ifEmpty { endpointCaptions } }
     }
 
     /**

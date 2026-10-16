@@ -38,9 +38,19 @@ class DeepLTranslator(private val context: Context) : TranslationProvider {
         if (lines.isEmpty()) return emptyList()
         val key = SecureApiKeyStore.get(context, id)?.trim()?.takeIf { it.isNotBlank() } ?: error("DeepL API Key가 없습니다.")
         val endpoint = if (key.endsWith(":fx", true)) "https://api-free.deepl.com/v2/translate" else "https://api.deepl.com/v2/translate"
+        val promptConfig = CloudTranslationPrompt.config(context)
+        // DeepL has no system/user prompt fields; its `context` is the supported way to guide
+        // ambiguity. Include both saved prompt settings, but never send placeholder tokens literally.
+        val deeplContext = listOf(
+            promptConfig.system,
+            promptConfig.userInstruction
+                .replace("{source_text}", "")
+                .replace("{context}", "")
+                .replace("{future_context}", "")
+        ).map { it.trim() }.filter { it.isNotBlank() }.joinToString("\n\n").take(5000)
         val body = JSONObject().put("text", JSONArray().apply { lines.forEach { put(it) } })
             .put("target_lang", "KO").put("preserve_formatting", true)
-            .put("context", CloudTranslationPrompt.config(context).userInstruction).toString()
+            .put("context", deeplContext).toString()
             .toRequestBody("application/json; charset=utf-8".toMediaType())
         val req = Request.Builder().url(endpoint).header("Authorization", "DeepL-Auth-Key $key").post(body).build()
         var last: Throwable? = null

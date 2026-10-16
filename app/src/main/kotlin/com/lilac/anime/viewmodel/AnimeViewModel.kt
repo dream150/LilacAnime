@@ -823,7 +823,8 @@ class AnimeViewModel : ViewModel() {
                         subtitleUrl = resolved.subtitleUrl,
                         subtitleReferer = resolved.subtitleReferer ?: resolved.referer ?: "https://flixcloud.cc/",
                         flixCloudPk = resolved.flixCloudPk,
-                        streamHeaders = headers
+                        streamHeaders = headers,
+                        videoSource = "reanime"
                     )
                 )
                 refreshDownloads()
@@ -1068,6 +1069,17 @@ class AnimeViewModel : ViewModel() {
         refreshDownloads()
         if (_isOffline.value) {
             loadOfflineEpisodes(context, anime)
+        }
+    }
+
+    /** Apply a completed device-sync merge and persist it through the normal offline store. */
+    fun applySyncedCollections(context: Context, syncedLibrary: Set<String>, syncedHistory: List<WatchProgress>) {
+        library = syncedLibrary
+        watchHistory = syncedHistory
+        watchHistoryLoaded = true
+        viewModelScope.launch(Dispatchers.IO) {
+            OfflineStore.saveLibrary(context, syncedLibrary)
+            OfflineStore.saveWatchHistory(context, syncedHistory)
         }
     }
 

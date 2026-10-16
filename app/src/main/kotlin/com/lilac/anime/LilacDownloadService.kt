@@ -101,6 +101,7 @@ class LilacDownloadService : Service() {
                     putExtra(EXTRA_REFERER, status.referer)
                     putExtra(EXTRA_FLIX_PK, status.flixCloudPk)
                     putExtra(EXTRA_STREAM_HEADERS, status.streamHeaders)
+                    putExtra(EXTRA_VIDEO_SOURCE, status.videoSource)
                     putExtra(EXTRA_EPISODE_NUMBER, status.episodeNumber)
                     putExtra(EXTRA_EPISODE_KEY, status.episodeKey)
                     action = ACTION_DOWNLOAD
@@ -128,6 +129,7 @@ class LilacDownloadService : Service() {
         val requestedSubtitleReferer = intent.getStringExtra(EXTRA_SUBTITLE_REFERER)
         val flixCloudPk = intent.getStringExtra(EXTRA_FLIX_PK)
         val streamHeaders = intent.getStringExtra(EXTRA_STREAM_HEADERS)
+        val videoSource = intent.getStringExtra(EXTRA_VIDEO_SOURCE)?.takeIf { it in setOf("linkkf", "animenosub", "reanime", "miruro", "ohli24") } ?: MpvOfflineStore.findStatus(applicationContext, "$animeId::$episodeId")?.videoSource ?: "linkkf"
         val episodeNumber = intent.getIntExtra(EXTRA_EPISODE_NUMBER, 0)
         val episodeKey = intent.getStringExtra(EXTRA_EPISODE_KEY) ?: episodeNumber.toString()
         val key = "$animeId::$episodeId"
@@ -162,6 +164,7 @@ class LilacDownloadService : Service() {
                 referer = referer ?: old?.referer,
                 flixCloudPk = flixCloudPk ?: old?.flixCloudPk,
                 streamHeaders = streamHeaders ?: old?.streamHeaders,
+                videoSource = videoSource,
                 episodeNumber = episodeNumber,
                 episodeKey = episodeKey
             )
@@ -189,7 +192,8 @@ class LilacDownloadService : Service() {
                 flixCloudPk = flixCloudPk ?: old?.flixCloudPk,
                 streamHeaders = streamHeaders ?: old?.streamHeaders,
                 episodeNumber = if (episodeNumber != 0) episodeNumber else old?.episodeNumber ?: 0,
-                episodeKey = episodeKey.ifBlank { old?.episodeKey.orEmpty() }
+                episodeKey = episodeKey.ifBlank { old?.episodeKey.orEmpty() },
+                videoSource = videoSource
             )
         )
 
@@ -207,6 +211,7 @@ class LilacDownloadService : Service() {
                         episodeKey = episodeKey,
                         flixCloudPk = flixCloudPk,
                         streamHeaders = streamHeaders,
+                        videoSource = videoSource,
                         anilistId = resolvedAnilistId,
                         malId = resolvedMalId,
                         subtitleUrl = requestedSubtitleUrl,
@@ -256,6 +261,7 @@ class LilacDownloadService : Service() {
         episodeKey: String,
         flixCloudPk: String?,
         streamHeaders: String?,
+        videoSource: String,
         anilistId: Int?,
         malId: Int?,
         subtitleUrl: String?,
@@ -273,9 +279,9 @@ class LilacDownloadService : Service() {
         // can never invalidate a successfully downloaded video.
         var localSubtitle: String? = null
         val effectiveSubtitleUrl = subtitleUrl?.takeIf { it.isNotBlank() }
-            ?: LinkkfRequestContextStore.getSubtitleUrl(applicationContext, animeId, episodeId)
+            ?: if (videoSource == "linkkf") LinkkfRequestContextStore.getSubtitleUrl(applicationContext, animeId, episodeId) else null
         val effectiveSubtitleReferer = subtitleReferer?.takeIf { it.isNotBlank() }
-            ?: LinkkfRequestContextStore.getSubtitle(applicationContext, animeId, episodeId)
+            ?: (if (videoSource == "linkkf") LinkkfRequestContextStore.getSubtitle(applicationContext, animeId, episodeId) else null)
             ?: referer
         if (!effectiveSubtitleUrl.isNullOrBlank()) {
             localSubtitle = runCatching {
@@ -288,7 +294,7 @@ class LilacDownloadService : Service() {
                     referer = effectiveSubtitleReferer
                 )
             }.getOrNull()?.also { path ->
-                SubtitleStore.save(applicationContext, animeId, episodeKey, episodeNumber, "linkkf", path)
+                SubtitleStore.save(applicationContext, animeId, episodeKey, episodeNumber, videoSource, path)
             }
         }
 
@@ -325,7 +331,8 @@ class LilacDownloadService : Service() {
             animeId = animeId,
             episodeId = episodeId,
             sourceUrl = effectiveSourceUrl,
-            referer = referer
+            referer = referer,
+            headers = streamHeaders
         ) { progress ->
             val fraction = if (progress.total > 0L) progress.downloaded.toFloat() / progress.total else 0f
             updateProgress(key, fraction, title, episodeId, sourceUrl, referer, episodeNumber, episodeKey)
@@ -342,7 +349,7 @@ class LilacDownloadService : Service() {
                     referer = effectiveSubtitleReferer
                 )
             }.getOrNull()?.also { path ->
-                SubtitleStore.save(applicationContext, animeId, episodeKey, episodeNumber, "linkkf", path)
+                SubtitleStore.save(applicationContext, animeId, episodeKey, episodeNumber, videoSource, path)
             }
         }
 
@@ -451,7 +458,8 @@ class LilacDownloadService : Service() {
             episodeNumber = episodeNumber,
             episodeKey = episodeKey,
             flixCloudPk = flixCloudPk,
-            streamHeaders = streamHeaders
+            streamHeaders = streamHeaders,
+            videoSource = videoSource
         )
     }
 
@@ -487,7 +495,8 @@ class LilacDownloadService : Service() {
                 flixCloudPk = old?.flixCloudPk,
                 streamHeaders = old?.streamHeaders,
                 episodeNumber = episodeNumber,
-                episodeKey = episodeKey
+                episodeKey = episodeKey,
+                videoSource = old?.videoSource ?: "linkkf"
             )
         )
         publishSummary()
@@ -505,7 +514,8 @@ class LilacDownloadService : Service() {
         episodeNumber: Int? = null,
         episodeKey: String? = null,
         flixCloudPk: String? = null,
-        streamHeaders: String? = null
+        streamHeaders: String? = null,
+        videoSource: String? = null
     ) {
         // Do not write a terminal/paused state after an explicit removal.
         synchronized(lock) {
@@ -527,6 +537,7 @@ class LilacDownloadService : Service() {
                     episodeKey = episodeKey ?: old?.episodeKey.orEmpty(),
                     flixCloudPk = flixCloudPk ?: old?.flixCloudPk,
                     streamHeaders = streamHeaders ?: old?.streamHeaders,
+                    videoSource = videoSource ?: old?.videoSource ?: "linkkf",
                     error = null
                 )
         )
@@ -651,6 +662,7 @@ class LilacDownloadService : Service() {
         const val EXTRA_SUBTITLE_REFERER = "subtitleReferer"
         const val EXTRA_FLIX_PK = "flixCloudPk"
         const val EXTRA_STREAM_HEADERS = "streamHeaders"
+        const val EXTRA_VIDEO_SOURCE = "videoSource"
 
         private const val CHANNEL_ID = "lilac_mpv_download"
         private const val NOTIFICATION_ID = 4101

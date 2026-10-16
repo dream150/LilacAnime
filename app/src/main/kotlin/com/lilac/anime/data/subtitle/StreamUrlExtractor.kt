@@ -227,7 +227,8 @@ fun StreamUrlExtractor(
                             android.net.Uri.parse(it).host?.lowercase()?.contains("flixcloud.cc") == true
                         }.getOrDefault(false)
                     }
-                    if (hasFlixCloud && flixCloudPk.isNullOrBlank()) return
+                    val isReAnimeTarget = targetHost == "reanime.to" || targetHost == "www.reanime.to"
+                    if (isReAnimeTarget && hasFlixCloud && flixCloudPk.isNullOrBlank()) return
 
                     val urls = detectedUrls.toList()
                     mainHandler.post {
@@ -301,7 +302,9 @@ fun StreamUrlExtractor(
 
                 fun reportM3u8(url: String) {
                     val path = runCatching { android.net.Uri.parse(url).path.orEmpty().lowercase() }.getOrDefault("")
-                    if (!path.endsWith(".m3u8")) return
+                    val isHls = path.endsWith(".m3u8") || path.endsWith("master.txt")
+                    val isMp4 = path.endsWith(".mp4")
+                    if (!isHls && !isMp4) return
 
                     val isReAnime = targetHost == "reanime.to" || targetHost == "www.reanime.to"
 
@@ -512,11 +515,11 @@ fun StreamUrlExtractor(
                         val path = runCatching { android.net.Uri.parse(url).path.orEmpty().lowercase() }.getOrDefault("")
                         val requestReferer = request?.requestHeaders?.entries?.firstOrNull { it.key.equals("Referer", true) }?.value
                         if (!requestReferer.isNullOrBlank()) lastRequestReferer = requestReferer.trim()
-                        if (path.endsWith(".m3u8")) {
+                        if (path.endsWith(".m3u8") || path.endsWith("master.txt") || path.endsWith(".mp4")) {
                             // __pk lives in the FlixCloud player window. Chromium can
                             // report the actual fetch9 m3u8 request from an iframe, so
                             // do not require the request host itself to be flixcloud.cc.
-                            if (flixCloudPk == null) {
+                            if (path.endsWith(".m3u8") && flixCloudPk == null) {
                                 mainHandler.post { view?.let { pollFlixCloudPk(it) } }
                             }
                             if (!requestReferer.isNullOrBlank()) {

@@ -62,6 +62,42 @@ import java.util.concurrent.atomic.AtomicLong
 class MpvHlsDownloader(
     private val client: OkHttpClient = defaultClient
 ) {
+    /** Browser headers captured by the source resolver; applied to playlists, keys and segments. */
+    @Volatile private var sourceHeaders: Map<String, String> = emptyMap()
+
+    private fun parseSourceHeaders(raw: String?): Map<String, String> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        val parsed = linkedMapOf<String, String>()
+        if (raw.trimStart().startsWith("{")) {
+            runCatching {
+                val json = org.json.JSONObject(raw)
+                val keys = json.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next().trim()
+                    val value = json.optString(key).trim()
+                    if (key.isNotBlank() && value.isNotBlank()) parsed[key] = value
+                }
+            }
+        } else {
+            raw.lineSequence().forEach { line ->
+                val split = line.indexOf(':')
+                if (split > 0) {
+                    val key = line.substring(0, split).trim()
+                    val value = line.substring(split + 1).trim()
+                    if (key.isNotBlank() && value.isNotBlank()) parsed[key] = value
+                }
+            }
+        }
+        return parsed.filterKeys { it.lowercase(Locale.ROOT) !in setOf("host", "content-length", "range", "connection") }
+    }
+
+    private fun applySourceHeaders(builder: Request.Builder): Request.Builder {
+        sourceHeaders.forEach { (name, value) ->
+            runCatching { builder.header(name, value) }
+        }
+        return builder
+    }
+
     data class Progress(val downloaded: Long, val total: Long)
 
     private data class ByteRange(
@@ -109,8 +145,11 @@ class MpvHlsDownloader(
         episodeId: String,
         sourceUrl: String,
         referer: String? = null,
+        headers: String? = null,
         onProgress: suspend (Progress) -> Unit
     ): File = withContext(Dispatchers.IO) {
+        sourceHeaders = parseSourceHeaders(headers)
+        Log.i(TAG, "SOURCE_HEADERS names=${sourceHeaders.keys.joinToString(",")}")
         val dir = MpvOfflineStore.episodeDir(context, animeId, episodeId).apply {
             mkdirs()
         }
@@ -139,8 +178,12 @@ class MpvHlsDownloader(
         //  playlist text itself is written to the MP4 temp file and
         // MediaExtractor fails on the first validation attempt.
         val isProxyHls = FlixCloudHlsProxy.isProxyUrl(sourceUrl)
-        val isHlsSource = sourceUrl.contains(".m3u8", ignoreCase = true) || isProxyHls
-        Log.i(TAG, "SOURCE_CLASSIFY isHls=$isHlsSource isProxyHls=$isProxyHls hasM3u8=${sourceUrl.contains(".m3u8", ignoreCase = true)}")
+        val explicitHls = sourceUrl.contains(".m3u8", ignoreCase = true) ||
+            isProxyHls || Regex("(?:^|/)master\\.txt(?:$|[?#])", RegexOption.IGNORE_CASE).containsMatchIn(sourceUrl)
+        // Some providers (notably Ohli24) expose HLS as master.txt or an extensionless
+        // endpoint. Probe a tiny byte range before treating such a URL as a direct MP4.
+        val isHlsSource = explicitHls || probeHlsPlaylist(sourceUrl, referer)
+        Log.i(TAG, "SOURCE_CLASSIFY isHls=$isHlsSource explicitHls=$explicitHls isProxyHls=$isProxyHls hasM3u8=${sourceUrl.contains(".m3u8", ignoreCase = true)}")
 
         // A direct MP4 URL is also accepted. It still goes through the same
         // final audio/video-track validation before becoming "completed".
@@ -271,6 +314,29 @@ class MpvHlsDownloader(
             Log.e(TAG, "HLS download failed; partial data preserved", t)
             throw t
         }
+    }
+
+    private fun probeHlsPlaylist(url: String, referer: String?): Boolean {
+        if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) return false
+        return runCatching {
+            val builder = Request.Builder().url(url)
+                .header("User-Agent", USER_AGENT)
+                .header("Referer", referer?.takeIf { it.isNotBlank() } ?: REFERER)
+                .header("Origin", originFor(referer))
+                .header("Range", "bytes=0-63")
+            applySourceHeaders(builder)
+            client.newCall(builder.build()).execute().use { response ->
+                val contentType = response.header("Content-Type").orEmpty().lowercase(Locale.ROOT)
+                val body = response.body
+                val prefix = if (body != null) {
+                    body.source().request(8L)
+                    body.source().buffer.clone().readUtf8(minOf(8L, body.source().buffer.size))
+                } else ""
+                contentType.contains("mpegurl") || contentType.contains("vnd.apple") ||
+                    prefix.trimStart().startsWith("#EXTM3U", ignoreCase = true)
+            }
+        }.onFailure { Log.d(TAG, "HLS_PROBE_FAILED url=${url.take(150)} reason=${it.message}") }
+            .getOrDefault(false)
     }
 
     /**
@@ -1304,6 +1370,7 @@ class MpvHlsDownloader(
             .header("User-Agent", USER_AGENT)
             .header("Referer", referer?.takeIf { it.isNotBlank() } ?: REFERER)
             .header("Origin", originFor(referer))
+            .let(::applySourceHeaders)
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("key HTTP ${response.code}: $url")
@@ -1359,6 +1426,7 @@ class MpvHlsDownloader(
             .header("User-Agent", USER_AGENT)
             .header("Referer", referer?.takeIf { it.isNotBlank() } ?: REFERER)
             .header("Origin", originFor(referer))
+        applySourceHeaders(builder)
 
         if (range != null) {
             val end = range.offset?.let { it + range.length - 1L }
@@ -1407,6 +1475,7 @@ class MpvHlsDownloader(
             .header("User-Agent", USER_AGENT)
             .header("Referer", referer?.takeIf { it.isNotBlank() } ?: REFERER)
             .header("Origin", originFor(referer))
+            .let(::applySourceHeaders)
             .build()
 
         client.newCall(request).execute().use { response ->

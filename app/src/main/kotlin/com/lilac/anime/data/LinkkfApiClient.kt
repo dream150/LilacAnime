@@ -58,6 +58,28 @@ class LinkkfApiClient {
     fun getHome(page: Int = 1, limit: Int = 12): List<Anime> =
         loadList(listUrl(page), limit)
 
+    /** Search the current server-rendered Linkani catalog. */
+    fun search(query: String, limit: Int = 60): List<Anime> {
+        val term = query.trim()
+        if (term.isBlank()) return emptyList()
+        val encoded = java.net.URLEncoder.encode(term, "UTF-8")
+        val urls = listOf("$WEB_BASE/?s=$encoded", "$WEB_BASE/search/?s=$encoded")
+        for (url in urls) {
+            val parsed = runCatching { loadList(url, limit) }.getOrDefault(emptyList())
+            if (parsed.isNotEmpty()) return parsed
+        }
+        // Some versions of the site omit a WordPress-style search page; use the
+        // current catalog cards as a bounded fallback rather than returning no results.
+        val key = normalizeSearch(term)
+        return (1..8).asSequence().flatMap { page ->
+            runCatching { getHome(page, 60).asSequence() }.getOrDefault(emptySequence())
+        }.filter { normalizeSearch(it.title + " " + it.native + " " + it.romaji + " " + it.english).contains(key) }
+            .distinctBy { it.id }.take(limit).toList()
+    }
+
+    private fun normalizeSearch(value: String): String =
+        value.lowercase(java.util.Locale.ROOT).replace(Regex("[\\s\\-_:·.,!?\"'()\\[\\]~]+"), "")
+
     fun getFilteredAnime(
         page: Int = 1,
         limit: Int = 20,

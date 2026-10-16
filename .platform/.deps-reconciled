@@ -11,11 +11,15 @@ app|androidx.compose.material:material-ripple:1.7.0|
 app|androidx.datastore:datastore-preferences:1.1.1|
 app|androidx.fragment:fragment-ktx:1.8.9|
 app|androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0|
+app|androidx.media3:media3-effect:1.8.0|
+app|androidx.media3:media3-exoplayer:1.8.0|
+app|androidx.media3:media3-ui:1.8.0|
 app|androidx.mediarouter:mediarouter:1.8.1|
 app|androidx.navigation:navigation-compose:2.9.4|
 app|androidx.work:work-runtime-ktx:2.10.2|
 app|com.google.android.gms:play-services-cast-framework:22.3.1|
 app|com.google.mlkit:translate:17.0.3|
+app|com.microsoft.onnxruntime:onnxruntime-android:1.22.0|
 app|com.squareup.okhttp3:okhttp:4.12.0|
 app|com.squareup.retrofit2:converter-gson:2.11.0|
 app|com.squareup.retrofit2:retrofit:2.11.0|

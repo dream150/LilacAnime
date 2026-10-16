@@ -92,4 +92,8 @@ implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
     implementation("com.google.android.gms:play-services-cast-framework:22.3.1")
     implementation("androidx.mediarouter:mediarouter:1.8.1")
 
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
+    implementation("androidx.media3:media3-exoplayer:1.8.0")
+    implementation("androidx.media3:media3-ui:1.8.0")
+    implementation("androidx.media3:media3-effect:1.8.0")
 }

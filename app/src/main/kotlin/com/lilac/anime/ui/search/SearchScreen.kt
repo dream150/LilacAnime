@@ -43,9 +43,13 @@ fun SearchScreen(
     var genreId by remember { mutableStateOf<Int?>(null) }
     var yearId by rememberSaveable { mutableStateOf<Int?>(null) }
     var filterDrawerOpen by rememberSaveable { mutableStateOf(false) }
+    var genericFormat by rememberSaveable { mutableStateOf("") }
+    var genericGenre by rememberSaveable { mutableStateOf("") }
+    var genericYear by rememberSaveable { mutableStateOf("") }
 
     val isLinkkf = vm.playerSettings.videoSourcePreference == "linkkf"
-    val selectedFilterActive = formatId != null || genreId != null || yearId != null
+    val selectedFilterActive = if (isLinkkf) formatId != null || genreId != null || yearId != null
+        else genericFormat.isNotBlank() || genericGenre.isNotBlank() || genericYear.isNotBlank()
 
     // Filter labels may be refreshed independently, but the anime result set itself
     // is ALWAYS the persisted/full catalog loaded by loadAllAnime().
@@ -67,11 +71,14 @@ fun SearchScreen(
     val selectedFormat = vm.linkkfFormatTags.firstOrNull { it.id == formatId }?.name
     val selectedGenre = vm.linkkfGenreTags.firstOrNull { it.id == genreId }?.name
     val selectedYear = vm.linkkfYearTags.firstOrNull { it.id == yearId }?.name
+    val availableFormats = remember(vm.allAnime) { vm.allAnime.map { it.format.trim() }.filter { it.isNotBlank() }.distinct().sorted() }
+    val availableGenres = remember(vm.allAnime) { vm.allAnime.flatMap { it.genres }.map { it.trim() }.filter { it.isNotBlank() }.distinct().sorted() }
+    val availableYears = remember(vm.allAnime) { vm.allAnime.map { it.year.trim() }.filter { it.matches(Regex("\\d{4}")) }.distinct().sortedDescending() }
     val q = query.trim()
 
     val results = remember(
-        q, vm.allAnime, vm.linkkfFilterResults, formatId, genreId, yearId,
-        selectedFormat, selectedGenre, selectedYear
+        q, isLinkkf, vm.allAnime, vm.linkkfFilterResults, formatId, genreId, yearId,
+        selectedFormat, selectedGenre, selectedYear, genericFormat, genericGenre, genericYear
     ) {
         val base = if (isLinkkf && selectedFilterActive) {
             vm.linkkfFilterResults
@@ -87,9 +94,9 @@ fun SearchScreen(
                 if (isLinkkf) {
                     queryMatch
                 } else {
-                    val formatMatch = selectedFormat == null || anime.format.equals(selectedFormat, ignoreCase = true)
-                    val genreMatch = selectedGenre == null || anime.genres.any { it.equals(selectedGenre, ignoreCase = true) }
-                    val yearMatch = selectedYear == null || anime.year == selectedYear
+                    val formatMatch = genericFormat.isBlank() || anime.format.equals(genericFormat, ignoreCase = true)
+                    val genreMatch = genericGenre.isBlank() || anime.genres.any { it.equals(genericGenre, ignoreCase = true) }
+                    val yearMatch = genericYear.isBlank() || anime.year == genericYear
                     queryMatch && formatMatch && genreMatch && yearMatch
                 }
             }
@@ -118,8 +125,7 @@ fun SearchScreen(
                 )
             }
 
-            if (isLinkkf) {
-                Row(
+            Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 2.dp),
@@ -128,7 +134,7 @@ fun SearchScreen(
                 ) {
                     if (selectedFilterActive) {
                         Text(
-                            "필터 ${listOf(formatId, genreId, yearId).count { it != null }}개",
+                            "필터 ${if (isLinkkf) listOf(formatId, genreId, yearId).count { it != null } else listOf(genericFormat, genericGenre, genericYear).count { it.isNotBlank() }}개",
                             modifier = Modifier.padding(end = 8.dp),
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.primary
@@ -140,10 +146,9 @@ fun SearchScreen(
                     ) {
                         Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("태그 필터")
+                        Text(if (isLinkkf) "태그 필터" else "상세 필터")
                     }
                 }
-            }
 
             Text(
                 "${results.size}개 작품 · 캐시된 전체 목록",
@@ -167,6 +172,24 @@ fun SearchScreen(
                     }
                 }
             }
+        }
+
+        if (!isLinkkf && filterDrawerOpen) {
+            AlertDialog(
+                onDismissRequest = { filterDrawerOpen = false },
+                title = { Text("상세 필터") },
+                text = {
+                    Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        GenericFilterSection("작품 형태", availableFormats, genericFormat) { genericFormat = if (genericFormat == it) "" else it }
+                        GenericFilterSection("장르", availableGenres, genericGenre) { genericGenre = if (genericGenre == it) "" else it }
+                        GenericFilterSection("연도", availableYears, genericYear) { genericYear = if (genericYear == it) "" else it }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { filterDrawerOpen = false }) { Text("적용") } },
+                dismissButton = {
+                    TextButton(onClick = { genericFormat = ""; genericGenre = ""; genericYear = "" }) { Text("초기화") }
+                }
+            )
         }
 
         if (isLinkkf && filterDrawerOpen) {
@@ -252,6 +275,19 @@ fun SearchScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GenericFilterSection(title: String, options: List<String>, selected: String, onSelect: (String) -> Unit) {
+    if (options.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+        Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(bottom = 4.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            rowItems(options.take(80)) { option ->
+                FilterChip(selected = selected == option, onClick = { onSelect(option) }, label = { Text(option, maxLines = 1) })
             }
         }
     }

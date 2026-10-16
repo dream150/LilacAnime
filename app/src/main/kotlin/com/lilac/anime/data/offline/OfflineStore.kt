@@ -80,6 +80,10 @@ object OfflineStore {
             putInt("pref_ai_context_cues", settings.aiContextCues)
             putBoolean("pref_ai_prefetch_enabled", settings.aiPrefetchEnabled)
             putInt("pref_ai_prefetch_ahead", settings.aiPrefetchAhead)
+            putBoolean("pref_ai_upscaling_enabled", settings.aiUpscalingEnabled)
+            putString("pref_ai_upscaling_backend", settings.aiUpscalingBackend)
+            putString("pref_ai_upscaling_mode", settings.aiUpscalingMode)
+            putInt("pref_ai_upscaling_scale", settings.aiUpscalingScale)
             apply()
         }
     }
@@ -108,7 +112,7 @@ object OfflineStore {
         PlayerSettings(
             defaultQuality = prefs.getString("pref_default_quality", "1080p") ?: "1080p",
             videoSourcePreference = prefs.getString("pref_video_source", "linkkf")
-                ?.takeIf { it in setOf("linkkf", "animenosub", "reanime") } ?: "linkkf",
+                ?.takeIf { it in setOf("linkkf", "animenosub", "reanime", "miruro", "ohli24") } ?: "linkkf",
             subtitleFont = prefs.getString("pref_subtitle_font", "기본체") ?: "기본체",
             subtitleSize = prefs.getFloat("pref_subtitle_size", 100f),
             textColor = prefs.getInt("pref_text_color", android.graphics.Color.WHITE),
@@ -172,7 +176,18 @@ object OfflineStore {
             aiRepetitionPenalty = prefs.getFloat("pref_ai_repetition_penalty", 1.05f).coerceIn(1.0f, 1.5f),
             aiContextCues = prefs.getInt("pref_ai_context_cues", 6).coerceIn(0, 10),
             aiPrefetchEnabled = prefs.getBoolean("pref_ai_prefetch_enabled", true),
-            aiPrefetchAhead = prefs.getInt("pref_ai_prefetch_ahead", 10).coerceIn(0, 40)
+            aiPrefetchAhead = prefs.getInt("pref_ai_prefetch_ahead", 10).coerceIn(0, 40),
+            aiUpscalingEnabled = prefs.getBoolean("pref_ai_upscaling_enabled", false),
+            aiUpscalingBackend = when (prefs.getString("pref_ai_upscaling_backend", "gpu")) {
+                "anime4k" -> "anime4k"
+                "animejanai" -> "animejanai"
+                "local_ai" -> "anime4k"
+                else -> "gpu"
+            },
+            aiUpscalingMode = prefs.getString("pref_ai_upscaling_mode", "A")
+                .takeIf { it in setOf("A", "B", "C", "A+A", "B+B", "C+A") } ?: "A",
+            aiUpscalingScale = prefs.getInt("pref_ai_upscaling_scale", 2)
+                .takeIf { it in setOf(2, 3, 4) } ?: 2
         )
     }
 

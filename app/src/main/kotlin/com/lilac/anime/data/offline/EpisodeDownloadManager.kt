@@ -32,7 +32,8 @@ fun startEpisodeDownload(
     subtitleUrl: String? = null,
     subtitleReferer: String? = null,
     flixCloudPk: String? = null,
-    streamHeaders: String? = null
+    streamHeaders: String? = null,
+    videoSource: String = "linkkf"
 ) {
     OfflineDownloadManager.enqueue(
         context,
@@ -45,7 +46,8 @@ fun startEpisodeDownload(
             subtitleUrl = subtitleUrl,
             subtitleReferer = subtitleReferer,
             flixCloudPk = flixCloudPk,
-            streamHeaders = streamHeaders
+            streamHeaders = streamHeaders,
+            videoSource = videoSource
         )
     )
 }

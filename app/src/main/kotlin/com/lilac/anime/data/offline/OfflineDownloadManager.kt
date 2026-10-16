@@ -35,7 +35,8 @@ object OfflineDownloadManager {
         val subtitleUrl: String? = null,
         val subtitleReferer: String? = null,
         val flixCloudPk: String? = null,
-        val streamHeaders: String? = null
+        val streamHeaders: String? = null,
+        val videoSource: String = "linkkf"
     )
 
     fun enqueue(context: Context, request: Request) {
@@ -60,6 +61,7 @@ object OfflineDownloadManager {
             request.subtitleReferer?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_SUBTITLE_REFERER, it) }
             request.flixCloudPk?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_FLIX_PK, it) }
             request.streamHeaders?.takeIf { it.isNotBlank() }?.let { putExtra(LilacDownloadService.EXTRA_STREAM_HEADERS, it) }
+            putExtra(LilacDownloadService.EXTRA_VIDEO_SOURCE, request.videoSource)
         }
         android.util.Log.i(
             "OfflineDownload",

@@ -6,15 +6,16 @@ import com.lilac.anime.AnissiaService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
+import org.json.JSONObject
 import java.io.File
 import java.net.URI
 import java.net.URL
-import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Locale
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.Charset
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Single Korean fan-subtitle resolver backed by Anissia metadata.
@@ -39,6 +40,10 @@ object AnissiaSubtitleService {
     }
     private const val TAG = "AnissiaSubtitle"
     private const val CACHE_DIR = "anissia_subtitles"
+    private data class SiteIndexCache(val savedAt: Long, val posts: Map<String, String>)
+    private val siteIndexCache = ConcurrentHashMap<String, SiteIndexCache>()
+    private const val SITE_INDEX_TTL_MS = 6 * 60 * 60 * 1000L
+    private const val MAX_SUBTITLE_DISCOVERY_PAGES = 80
     private const val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
@@ -90,10 +95,11 @@ object AnissiaSubtitleService {
         // episode; use each creator website as the entry point and search that site.
         captions
             .filter { !it.website.isNullOrBlank() }
+            .sortedByDescending { it.updateDate }
             .map { caption ->
                 val optionSource = optionSourceKey(caption.creator, caption.website.orEmpty())
                 val cached = SubtitleStore.get(context, animeId, episodeKey, episodeNumber, optionSource)
-                    ?.takeIf { File(it).isFile && File(it).length() > 0L }
+                    ?.takeIf { isUsableCachedSubtitle(it) }
                 SubtitleOption(
                     episode = caption.episode,
                     creator = caption.creator,
@@ -102,7 +108,8 @@ object AnissiaSubtitleService {
                     cachedPath = cached
                 )
             }
-            .distinctBy { "${it.creator}|${it.website}|${it.updateDate}" }
+            .distinctBy { "${it.creator.trim().lowercase(Locale.ROOT)}|${it.website.trim().trimEnd('/').lowercase(Locale.ROOT)}" }
+            .also { Log.i(TAG, "PICKER_OPTIONS animeNo=${anime.animeNo} options=${it.size} creators=${it.joinToString { option -> option.creator }.take(500)}") }
     }
 
     suspend fun downloadSelectedSubtitle(
@@ -113,7 +120,7 @@ object AnissiaSubtitleService {
         animeId: String,
         option: SubtitleOption
     ): String? = withContext(Dispatchers.IO) {
-        option.cachedPath?.takeIf { File(it).isFile }?.let { return@withContext it }
+        option.cachedPath?.takeIf { isUsableCachedSubtitle(it) }?.let { return@withContext it }
         val result = downloadFromSubtitleWebsite(
             context = context,
             websiteUrl = option.website,
@@ -143,7 +150,7 @@ object AnissiaSubtitleService {
         val resolvedAnime = resolveAnime(koreanTitle, seasonNumber)
         val title = resolvedAnime?.subject?.takeIf { it.isNotBlank() } ?: koreanTitle
         val cached = SubtitleStore.get(context, animeId, episodeKey, episodeNumber, "anissia")
-            ?.takeIf { File(it).isFile && File(it).length() > 0L }
+            ?.takeIf { isUsableCachedSubtitle(it) }
         if (cached != null) return@withContext cached
 
         // First try all maker websites associated with this anime, newest update first.
@@ -247,9 +254,10 @@ object AnissiaSubtitleService {
         episodeKey: String,
         creator: String
     ): String? {
-        val initialUrl = runCatching { URLDecoder.decode(websiteUrl.trim(), "UTF-8") }
-            .getOrDefault(websiteUrl.trim())
-        if (initialUrl.isBlank()) return null
+        // Never URL-decode an entire URL: '+' and percent-encoded query values may be
+        // meaningful signed-link data. Jsoup/URI already resolve escaped DOM links.
+        val initialUrl = websiteUrl.trim().replace("&amp;", "&")
+        if (initialUrl.isBlank() || !initialUrl.startsWith("http", true)) return null
 
         // Anissia is the metadata/index layer. For providers that already have
         // mature downloaders in LilacAnime, pass the exact post URL through those
@@ -271,25 +279,38 @@ object AnissiaSubtitleService {
         val candidates = linkedSetOf<String>()
         val fontCandidates = linkedSetOf<String>()
         pageQueue.add(initialUrl)
+        // Desktop parity: a registered Anissia URL may point to a blog home or an old post.
+        // Seed a small, episode-ranked list from each site's own index/search endpoint before
+        // crawling ordinary links. This is bounded and does not replace the normal downloader.
+        discoverSiteSpecificPages(initialUrl, title, episodeNumber).forEach { if (it != initialUrl) pageQueue.addLast(it) }
 
-        while (pageQueue.isNotEmpty() && visitedPages.size < 12) {
+        // Search more of a creator's archive. The old 12-page ceiling meant older
+        // episodes were often invisible when the registered URL pointed at a blog home.
+        // Keep a generous safety ceiling and a visited set to prevent loops.
+        while (pageQueue.isNotEmpty() && visitedPages.size < MAX_SUBTITLE_DISCOVERY_PAGES) {
             val pageUrl = pageQueue.removeFirst()
             if (!visitedPages.add(pageUrl)) continue
 
-            val html = runCatching {
-                Jsoup.connect(pageUrl)
+            val fetched = runCatching {
+                val response = Jsoup.connect(pageUrl)
                     .userAgent(USER_AGENT)
                     .referrer(initialUrl)
                     .timeout(20000)
                     .followRedirects(true)
-                    .get()
-                    .html()
+                    .execute()
+                Triple(response.body(), response.url().toString(), response.statusCode())
             }.getOrElse {
                 Log.w(TAG, "PAGE_FETCH_FAILED url=$pageUrl", it)
                 continue
             }
-
-            val document = Jsoup.parse(html, pageUrl)
+            val html = fetched.first
+            val finalPageUrl = fetched.second
+            if (fetched.third !in 200..299) {
+                Log.w(TAG, "PAGE_FETCH_HTTP_FAILED status=${fetched.third} url=$pageUrl final=$finalPageUrl")
+                continue
+            }
+            Log.i(TAG, "PAGE_FETCH_OK status=${fetched.third} original=$pageUrl final=$finalPageUrl bytes=${html.length}")
+            val document = Jsoup.parse(html, finalPageUrl)
             val sameHostPages = mutableListOf<Pair<String, String>>()
 
             document.select("a[href]").forEach { element ->
@@ -306,7 +327,8 @@ object AnissiaSubtitleService {
                     .replace("\\u0026", "&")
                     .replace("\\u003d", "=")
                     .replace("&amp;", "&")
-                val linkExt = normalizedHref.substringBefore('?').substringBefore('#').substringAfterLast('.', "").lowercase(Locale.ROOT)
+                val linkPath = runCatching { URI(normalizedHref).path.orEmpty() }.getOrDefault(normalizedHref.substringBefore('?').substringBefore('#'))
+                val linkExt = linkPath.substringAfterLast('.', "").lowercase(Locale.ROOT)
                 if (linkExt in setOf("ttf", "otf", "ttc")) fontCandidates += normalizedHref
                 else if (looksLikeSubtitleLink(normalizedHref, text, episodeNumber)) candidates += normalizedHref
 
@@ -319,7 +341,7 @@ object AnissiaSubtitleService {
 
                 val next = runCatching { URI(href) }.getOrNull()
                 if (next != null && next.host != null &&
-                    URI(pageUrl).host.equals(next.host, true) &&
+                    URI(finalPageUrl).host.equals(next.host, true) &&
                     !href.startsWith("javascript:", true) &&
                     !href.startsWith("mailto:", true)
                 ) {
@@ -365,7 +387,7 @@ object AnissiaSubtitleService {
                 .map { it.first to scorePageLink(it.first, it.second, title, episodeNumber) }
                 .filter { it.second >= 10 }
                 .sortedByDescending { it.second }
-            scoredPages.take(5).forEach { pageQueue.addLast(it.first) }
+            scoredPages.take(20).forEach { pageQueue.addLast(it.first) }
         }
 
         if (fontCandidates.isNotEmpty()) {
@@ -427,6 +449,135 @@ object AnissiaSubtitleService {
         Log.w(TAG, "NO_SUBTITLE_FILE website=$initialUrl episode=$episodeNumber pages=${visitedPages.size} candidates=${candidates.size}")
         return null
     }
+
+    private fun discoverSiteSpecificPages(initialUrl: String, title: String, episode: Int): List<String> {
+        val origin = runCatching { URI(initialUrl).let { "${it.scheme}://${it.authority}" } }.getOrNull() ?: return emptyList()
+        val host = runCatching { URI(origin).host.orEmpty().lowercase(Locale.ROOT) }.getOrDefault("")
+        val posts = linkedMapOf<String, String>()
+        fun add(url: String?, label: String?) {
+            if (url.isNullOrBlank()) return
+            val resolved = runCatching { URI(origin).resolve(url).toString() }.getOrNull() ?: return
+            val uri = runCatching { URI(resolved) }.getOrNull() ?: return
+            if (!uri.scheme.equals("http", true) && !uri.scheme.equals("https", true)) return
+            val candidateHost = uri.host.orEmpty().lowercase(Locale.ROOT)
+            val isNaverHostPair = candidateHost in setOf("blog.naver.com", "m.blog.naver.com") && host in setOf("blog.naver.com", "m.blog.naver.com")
+            if (!uri.host.equals(host, true) && !isNaverHostPair) return
+            posts.putIfAbsent(resolved, label.orEmpty())
+        }
+        val queries = listOf(title.trim(), title.trim().replace(Regex("\\s*(?:시즌|season)\\s*\\d+|\\s*\\d+\\s*기$", RegexOption.IGNORE_CASE), "").trim())
+            .filter { it.length >= 2 }.distinct()
+        val cachedIndex = siteIndexCache[origin]?.takeIf { System.currentTimeMillis() - it.savedAt < SITE_INDEX_TTL_MS }
+        if (cachedIndex != null) posts.putAll(cachedIndex.posts)
+        try {
+            if (cachedIndex == null) when {
+                host.endsWith(".blogspot.com") -> {
+                    // Blogger feed pagination: inspect older archive pages as well as recent posts.
+                    // Stop when the feed ends or no new post URLs are returned.
+                    for (start in (1..3000 step 150)) {
+                        val before = posts.size
+                        val feedUrl = "$origin/feeds/posts/default?alt=json&max-results=150&start-index=$start"
+                        val raw = try {
+                            Jsoup.connect(feedUrl).userAgent(USER_AGENT).referrer("$origin/")
+                                .timeout(12000).ignoreContentType(true).execute().body()
+                        } catch (e: Exception) {
+                            Log.d(TAG, "BLOGGER_FEED_PAGE_FAILED start=$start reason=${e.message}")
+                            break
+                        }
+                        val feed = JSONObject(raw).optJSONObject("feed") ?: break
+                        val entries = feed.optJSONArray("entry") ?: break
+                        for (i in 0 until entries.length()) {
+                            val entry = entries.optJSONObject(i) ?: continue
+                            val label = entry.optJSONObject("title")?.optString("\$t").orEmpty()
+                            val links = entry.optJSONArray("link") ?: continue
+                            for (j in 0 until links.length()) {
+                                val link = links.optJSONObject(j) ?: continue
+                                if (link.optString("rel") == "alternate") add(link.optString("href"), label)
+                            }
+                        }
+                        if (entries.length() < 150 || posts.size == before) break
+                    }
+                }
+                host.endsWith(".tistory.com") -> {
+                    // RSS includes recent posts; /search/{query} fills in older episode posts.
+                    runCatching {
+                        val rss = Jsoup.connect("$origin/rss").userAgent(USER_AGENT).referrer("$origin/")
+                            .header("Accept", "application/rss+xml,application/xml;q=0.9,*/*;q=0.8")
+                            .timeout(12000).get()
+                        rss.select("item").forEach { item -> add(item.selectFirst("link")?.text(), item.selectFirst("title")?.text()) }
+                    }.onFailure { Log.d(TAG, "TISTORY_RSS_UNAVAILABLE host=$host reason=${it.message}") }
+                    for (query in queries) {
+                        runCatching {
+                            val searchUrl = "$origin/search/${URLEncoder.encode(query, "UTF-8")}"
+                            val doc = Jsoup.connect(searchUrl).userAgent(USER_AGENT).referrer("$origin/").timeout(12000).get()
+                            doc.select("a[href]").forEach { a ->
+                                val href = a.attr("href")
+                                if (Regex("^(?:https?://[^/]+)?/(?:entry/)?\\d+(?:[?#].*)?$").containsMatchIn(href)) add(href, a.text())
+                            }
+                        }.onFailure { Log.d(TAG, "TISTORY_SEARCH_FAILED query=$query reason=${it.message}") }
+                    }
+                }
+                host == "blog.naver.com" || host == "m.blog.naver.com" -> {
+                    val uri = URI(initialUrl)
+                    val segments = uri.path.split('/').filter { it.isNotBlank() }
+                    val blogId = uri.getQueryParameterCompat("blogId") ?: segments.firstOrNull().orEmpty()
+                    if (blogId.isNotBlank()) {
+                        val apiBase = "https://m.blog.naver.com/api/blogs/${URLEncoder.encode(blogId, "UTF-8")}"
+                        fun fetchNaverPage(apiUrl: String): Int {
+                            val before = posts.size
+                            runCatching {
+                                val raw = Jsoup.connect(apiUrl).userAgent(USER_AGENT)
+                                    .referrer("https://m.blog.naver.com/$blogId")
+                                    .timeout(12000).ignoreContentType(true).execute().body()
+                                val root = JSONObject(raw).optJSONObject("result") ?: return@runCatching
+                                val items = root.optJSONArray("items") ?: root.optJSONArray("list") ?: return@runCatching
+                                for (i in 0 until items.length()) {
+                                    val item = items.optJSONObject(i) ?: continue
+                                    val logNo = item.optString("logNo").ifBlank { item.optString("logNoStr") }
+                                    val label = item.optString("title").ifBlank { item.optString("titleWithInspectMessage") }
+                                    if (logNo.isNotBlank()) add(
+                                        "https://blog.naver.com/PostView.naver?blogId=${URLEncoder.encode(blogId, "UTF-8")}&logNo=${URLEncoder.encode(logNo, "UTF-8")}",
+                                        label
+                                    )
+                                }
+                                items.length()
+                            }.onFailure { Log.d(TAG, "NAVER_INDEX_REQUEST_FAILED url=$apiUrl reason=${it.message}") }
+                            return posts.size - before
+                        }
+                        // Stop each pagination stream once it stops yielding new posts.
+                        for (page in 1..20) {
+                            val added = fetchNaverPage("$apiBase/post-list?categoryNo=0&itemCount=30&page=$page")
+                            if (added == 0) break
+                        }
+                        for (query in queries) {
+                            for (page in 1..10) {
+                                val encodedQuery = URLEncoder.encode(query, "UTF-8")
+                                val added = fetchNaverPage("$apiBase/search/post?query=$encodedQuery&page=$page")
+                                if (added == 0) break
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "SITE_INDEX_DISCOVERY_FAILED host=$host title=$title episode=$episode", e)
+        }
+        if (cachedIndex == null && posts.isNotEmpty()) {
+            siteIndexCache[origin] = SiteIndexCache(System.currentTimeMillis(), posts.toMap())
+        }
+        Log.i(TAG, "SITE_INDEX_READY host=$host title=$title episode=$episode posts=${posts.size}")
+        return posts.entries
+            .map { it.key to scorePageLink(it.key, it.value, title, episode) }
+            .filter { it.second >= 10 }
+            .sortedByDescending { it.second }
+            .take(30)
+            .map { it.first }
+    }
+
+    private fun URI.getQueryParameterCompat(name: String): String? = rawQuery?.split('&')
+        ?.mapNotNull { part ->
+            val pieces = part.split('=', limit = 2)
+            if (pieces.firstOrNull() == name) pieces.getOrNull(1)?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull() } else null
+        }?.firstOrNull()
 
     /**
      * Anissia episode values are not guaranteed to be plain "1".
@@ -490,7 +641,12 @@ object AnissiaSubtitleService {
             .trimStart('\uFEFF')
             .trimStart()
             .lowercase(Locale.ROOT)
-        if (head.startsWith("<!doctype html") || head.startsWith("<html") || head.startsWith("<head")) return null
+        if (head.startsWith("<!doctype html") || head.startsWith("<html") || head.startsWith("<head") ||
+            head.startsWith("<body") || head.contains("just a moment...") ||
+            head.contains("enable javascript and cookies") || head.contains("access denied")) {
+            Log.w(TAG, "DOWNLOAD_NOT_SUBTITLE_HTML file=${downloaded.name} head=${head.take(120)}")
+            return null
+        }
 
         val lowerName = downloaded.name.lowercase(Locale.ROOT)
         val isZipPayload = bytes.size >= 2 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()
@@ -659,12 +815,16 @@ object AnissiaSubtitleService {
         }
         return try {
             val status = connection.responseCode
+            val finalUrl = connection.url?.toString().orEmpty()
+            val contentType = connection.contentType.orEmpty()
+            val disposition = connection.getHeaderField("Content-Disposition").orEmpty()
             if (status !in 200..299) {
-                Log.w(TAG, "HTTP_DOWNLOAD_FAILED status=$status type=${connection.contentType} url=${url.take(220)}")
+                Log.w(TAG, "HTTP_DOWNLOAD_FAILED status=$status type=$contentType url=${url.take(220)} final=$finalUrl")
                 return false
             }
             connection.inputStream.use { input -> target.outputStream().use { input.copyTo(it) } }
-            if (target.length() == 0L) Log.w(TAG, "HTTP_DOWNLOAD_ZERO type=${connection.contentType} url=${url.take(220)}")
+            Log.i(TAG, "HTTP_DOWNLOAD_RESPONSE status=$status type=$contentType disposition=${disposition.take(120)} bytes=${target.length()} url=${url.take(160)} final=$finalUrl")
+            if (target.length() == 0L) Log.w(TAG, "HTTP_DOWNLOAD_ZERO type=$contentType url=${url.take(220)}")
             target.length() > 0L
         } finally {
             connection.disconnect()
@@ -691,7 +851,8 @@ object AnissiaSubtitleService {
     private fun looksLikeSubtitleLink(url: String, text: String, episode: Int): Boolean {
         val value = (url + " " + text).lowercase(Locale.ROOT)
         if (value.contains("youtube.com") || value.contains("youtu.be")) return false
-        val ext = value.substringBefore('?').substringAfterLast('.')
+        val path = runCatching { URI(url).path.orEmpty() }.getOrDefault(url.substringBefore('?').substringBefore('#'))
+        val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
         if (ext in setOf("ass", "ssa", "srt", "smi", "sami", "vtt", "sub", "idx", "sup", "ttml", "dfxp", "xml", "sbv", "mpl", "mpl2", "txt", "scc", "lrc", "zip", "7z", "rar", "ttf", "otf", "ttc")) return true
         return Regex("(?:^|\\D)0*${episode}(?:화|회|ep|화\\b|\\b)").containsMatchIn(value)
     }
@@ -699,16 +860,45 @@ object AnissiaSubtitleService {
     private fun scoreLink(url: String, episode: Int, title: String = ""): Int {
         var score = 0
         val value = url.lowercase(Locale.ROOT)
-        if (Regex("(?:^|\\D)0*${episode}(?:\\D|$)").containsMatchIn(value)) score += 100
-        if (value.endsWith(".ass") || value.endsWith(".ssa")) score += 40
-        if (value.endsWith(".srt") || value.endsWith(".vtt")) score += 30
-        if (value.endsWith(".zip")) score += 20
-        if (value.endsWith(".7z") || value.endsWith(".rar")) score += 8
+        val path = runCatching { URI(url).path.orEmpty() }.getOrDefault(url.substringBefore('?').substringBefore('#'))
+        val pathAndQuery = "$path ${runCatching { URI(url).rawQuery.orEmpty() }.getOrDefault("")}".lowercase(Locale.ROOT)
+        if (Regex("(?:^|\\D)0*${episode}(?:\\D|$)").containsMatchIn("$pathAndQuery $value")) score += 100
+        val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        if (ext in setOf("ass", "ssa")) score += 40
+        if (ext in setOf("srt", "vtt", "smi", "sami")) score += 30
+        if (ext == "zip") score += 20
+        if (ext in setOf("7z", "rar")) score += 8
         if (isGoogleDrive(value)) score += 10
         title.lowercase(Locale.ROOT).split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length >= 2 }.forEach {
             if (value.contains(it)) score += 5
         }
         return score
+    }
+
+    private fun isUsableCachedSubtitle(path: String): Boolean {
+        val file = File(path)
+        if (!file.isFile || file.length() <= 0L || file.length() > 100L * 1024 * 1024) return false
+        val ext = file.extension.lowercase(Locale.ROOT)
+        if (ext in setOf("idx", "sup")) return true
+        val bytes = runCatching {
+            java.io.FileInputStream(file).use { input ->
+                val buffer = ByteArray(128 * 1024)
+                val count = input.read(buffer)
+                if (count <= 0) byteArrayOf() else buffer.copyOf(count)
+            }
+        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return false
+        val text = decodeSubtitleText(bytes).removePrefix("\uFEFF").trimStart()
+        val valid = when (ext) {
+            "ass", "ssa" -> text.contains("[Events]", true) && text.contains("Dialogue:", true)
+            "smi", "sami" -> text.contains("<SYNC", true) || text.contains("<SAMI", true)
+            "vtt" -> text.startsWith("WEBVTT", true)
+            "ttml", "dfxp", "xml" -> text.contains("<tt", true) && (text.contains("<p", true) || text.contains("<div", true))
+            "srt" -> Regex("(?m)^\\s*\\d{1,3}\\s*$").containsMatchIn(text) && Regex("(?m)\\d{1,2}:\\d{2}:\\d{2}[,.]\\d{1,3}\\s*-->\\s*").containsMatchIn(text)
+            "sub", "mpl", "mpl2", "sbv", "txt", "lrc", "scc" -> isSubtitlePayload(text, ext)
+            else -> false
+        }
+        if (!valid) Log.w(TAG, "CACHE_INVALID_SUBTITLE path=${file.name} ext=$ext bytes=${file.length()}")
+        return valid
     }
 
     private fun optionSourceKey(creator: String, website: String): String {

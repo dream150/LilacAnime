@@ -28,12 +28,15 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 
 class AnimeRepository {
     private val linkkfApi = LinkkfApiClient()
     private val animenosubClient = AnimenosubHttpClient()
     private val reAnimeClient = ReAnimeClient()
     private val reAnimeHarClient = ReAnimeHarClient()
+    private val miruroClient = MiruroClient()
+    private val ohli24Client = Ohli24Client()
 
     companion object {
         private const val LINKKF_BASE_URL = LinkkfApiClient.WEB_BASE
@@ -46,6 +49,8 @@ class AnimeRepository {
 
     suspend fun getHomeAnimeList(source: String = "linkkf"): List<Anime> {
         return when (source) {
+            "miruro" -> withContext(Dispatchers.IO) { miruroClient.catalog().first }
+            "ohli24" -> withContext(Dispatchers.IO) { ohli24Client.catalog(1) }
             "animenosub" -> {
                 val document = animenosubClient.getDocument(ANIMENOSUB_BASE_URL, ANIMENOSUB_BASE_URL + "/")
                 AnimenosubParser.parseAnimeList(document)
@@ -58,20 +63,154 @@ class AnimeRepository {
     fun getAllAnimeListFlow(source: String = "linkkf"): Flow<List<Anime>> = flow {
         val result = LinkedHashMap<String, Anime>()
 
-        if (source == "animenosub") {
+        if (source == "miruro") {
+            var cursor = ""
+            var consecutiveFailures = 0
+            // The desktop catalog follows the API cursor until has_more/next_cursor says it is done.
+            // Track successfully processed cursors rather than using a fixed page-count cap, so a
+            // repeated/cyclic cursor cannot create an infinite request loop.
+            val processedCursors = HashSet<String>()
+            while (consecutiveFailures < 3) {
+                var page: Pair<List<Anime>, String?>? = null
+                repeat(3) { attempt ->
+                    if (page != null) return@repeat
+                    try {
+                        android.util.Log.d("MiruroCatalog", "PAGE_REQUEST cursor=${cursor.ifBlank { "<first>" }} attempt=${attempt + 1}")
+                        page = miruroClient.catalog(cursor = cursor)
+                    } catch (e: Exception) {
+                        android.util.Log.e("MiruroCatalog", "PAGE_FAILED cursor=$cursor attempt=${attempt + 1}", e)
+                        if (attempt < 2) kotlinx.coroutines.delay(350L * (attempt + 1))
+                    }
+                }
+                if (page == null) {
+                    consecutiveFailures++
+                    android.util.Log.e("MiruroCatalog", "CURSOR_RETRY cursor=$cursor failures=$consecutiveFailures/3")
+                    // Keep the last valid cursor and retry it on the next outer iteration.
+                    continue
+                }
+                consecutiveFailures = 0
+                val pageData = page ?: break
+                if (cursor.isNotBlank() && !processedCursors.add(cursor)) {
+                    android.util.Log.w("MiruroCatalog", "STOP_REPEATED_CURSOR cursor=$cursor loaded=${result.size}")
+                    break
+                }
+                pageData.first.forEach { result[it.id] = it }
+                if (pageData.first.isNotEmpty()) {
+                    emit(result.values.toList())
+                    android.util.Log.d("MiruroCatalog", "PAGE_LOADED cursor=${cursor.ifBlank { "<first>" }} pageSize=${pageData.first.size} total=${result.size}")
+                }
+                val next = pageData.second
+                if (next.isNullOrBlank()) {
+                    android.util.Log.d("MiruroCatalog", "CATALOG_COMPLETE total=${result.size} reason=no_next_cursor")
+                    break
+                }
+                if (next == cursor || next in processedCursors) {
+                    android.util.Log.w("MiruroCatalog", "STOP_CURSOR_CYCLE current=$cursor next=$next loaded=${result.size}")
+                    break
+                }
+                cursor = next
+                kotlinx.coroutines.delay(120L)
+            }
+            if (consecutiveFailures >= 3) {
+                android.util.Log.e("MiruroCatalog", "STOP_AFTER_FAILURES cursor=$cursor loaded=${result.size}")
+            }
+            return@flow
+        }
+
+        if (source == "ohli24") {
+            var page = 1
             var emptyPages = 0
-            for (page in 1..50) {
-                val url = if (page == 1) ANIMENOSUB_BASE_URL else "$ANIMENOSUB_BASE_URL/page/$page/"
-                val list = try {
-                    val document = animenosubClient.getDocument(url, ANIMENOSUB_BASE_URL + "/")
-                    AnimenosubParser.parseAnimeList(document)
-                } catch (_: Exception) { emptyList() }
-                if (list.isEmpty()) {
+            var consecutiveFailures = 0
+            while (page <= 120 && consecutiveFailures < 3) {
+                var items: List<Anime>? = null
+                repeat(3) { attempt ->
+                    if (items != null) return@repeat
+                    try {
+                        items = withContext(Dispatchers.IO) { ohli24Client.catalog(page) }
+                    } catch (e: Exception) {
+                        android.util.Log.e("Ohli24Catalog", "PAGE_FAILED page=$page attempt=${attempt + 1}", e)
+                        if (attempt < 2) kotlinx.coroutines.delay(350L * (attempt + 1))
+                    }
+                }
+                if (items == null) {
+                    consecutiveFailures++
+                    if (consecutiveFailures >= 3) {
+                        android.util.Log.e("Ohli24Catalog", "STOP_AFTER_FAILURES page=$page")
+                        break
+                    }
+                    // Retry the same page on the next loop; never skip catalog entries due to a transient error.
+                    continue
+                }
+                consecutiveFailures = 0
+                val pageItems = items.orEmpty()
+                if (pageItems.isEmpty()) {
                     emptyPages++
                     if (emptyPages >= 2) break
                 } else {
                     emptyPages = 0
-                    list.forEach { result[it.id] = it }
+                    pageItems.forEach { result[it.id] = it }
+                    emit(result.values.toList())
+                }
+                page++
+                kotlinx.coroutines.delay(200L)
+            }
+            var consecutiveMovieFailures = 0
+            var moviePage = 1
+            while (moviePage <= 20 && consecutiveMovieFailures < 3) {
+                var movies: List<Anime>? = null
+                repeat(3) { attempt ->
+                    if (movies != null) return@repeat
+                    try {
+                        movies = withContext(Dispatchers.IO) { ohli24Client.movies(moviePage) }
+                    } catch (e: Exception) {
+                        android.util.Log.w("Ohli24Catalog", "MOVIE_PAGE_FAILED page=$moviePage attempt=${attempt + 1}", e)
+                        if (attempt < 2) kotlinx.coroutines.delay(300L * (attempt + 1))
+                    }
+                }
+                if (movies == null) {
+                    consecutiveMovieFailures++
+                    continue
+                }
+                consecutiveMovieFailures = 0
+                val movieItems = movies.orEmpty()
+                if (movieItems.isEmpty()) break
+                movieItems.forEach { result[it.id] = it }
+                emit(result.values.toList())
+                moviePage++
+                kotlinx.coroutines.delay(150L)
+            }
+            return@flow
+        }
+
+        if (source == "animenosub") {
+            var emptyPages = 0
+            var consecutiveFailures = 0
+            for (page in 1..50) {
+                val url = if (page == 1) ANIMENOSUB_BASE_URL else "$ANIMENOSUB_BASE_URL/page/$page/"
+                var list: List<Anime>? = null
+                repeat(3) { attempt ->
+                    if (list != null) return@repeat
+                    try {
+                        val document = animenosubClient.getDocument(url, ANIMENOSUB_BASE_URL + "/")
+                        list = AnimenosubParser.parseAnimeList(document)
+                    } catch (e: Exception) {
+                        android.util.Log.w("AnimenosubCatalog", "PAGE_FAILED page=$page attempt=${attempt + 1}", e)
+                        if (attempt < 2) kotlinx.coroutines.delay(300L * (attempt + 1))
+                    }
+                }
+                if (list == null) {
+                    consecutiveFailures++
+                    if (consecutiveFailures >= 3) break
+                    continue
+                }
+                consecutiveFailures = 0
+                val pageItems = list.orEmpty()
+                if (pageItems.isEmpty()) {
+                    emptyPages++
+                    if (emptyPages >= 2) break
+                } else {
+                    emptyPages = 0
+                    pageItems.forEach { result[it.id] = it }
                     emit(result.values.toList())
                 }
                 kotlinx.coroutines.delay(250L)
@@ -120,20 +259,32 @@ class AnimeRepository {
         // Do not scrape /list/ pages: the site no longer uses the old the previous site markup
         // HTML card structure.
         var page = 1
-        while (page <= 351) {
-            val items = try {
-                android.util.Log.d("LinkkfAPI", "CATALOG_REQUEST page=$page limit=12")
-                val parsed = linkkfApi.getHome(page = page, limit = 12)
-                android.util.Log.d("LinkkfAPI", "CATALOG_PAGE page=$page size=${parsed.size}")
-                parsed
-            } catch (e: Exception) {
-                android.util.Log.e("LinkkfAPI", "CATALOG_FAILED page=$page", e)
-                emptyList()
+        var consecutiveFailures = 0
+        while (page <= 351 && consecutiveFailures < 3) {
+            var items: List<Anime>? = null
+            repeat(3) { attempt ->
+                if (items != null) return@repeat
+                try {
+                    android.util.Log.d("LinkkfAPI", "CATALOG_REQUEST page=$page limit=12 attempt=${attempt + 1}")
+                    items = linkkfApi.getHome(page = page, limit = 12)
+                    android.util.Log.d("LinkkfAPI", "CATALOG_PAGE page=$page size=${items?.size ?: 0}")
+                } catch (e: Exception) {
+                    android.util.Log.e("LinkkfAPI", "CATALOG_FAILED page=$page attempt=${attempt + 1}", e)
+                    if (attempt < 2) kotlinx.coroutines.delay(300L * (attempt + 1))
+                }
             }
-            if (items.isEmpty()) break
-            items.forEach { result[it.id] = it }
+            if (items == null) {
+                consecutiveFailures++
+                // Skip a repeatedly failing page instead of treating a network error as end-of-catalog.
+                page++
+                continue
+            }
+            consecutiveFailures = 0
+            val pageItems = items.orEmpty()
+            if (pageItems.isEmpty()) break
+            pageItems.forEach { result[it.id] = it }
             emit(result.values.toList())
-            if (items.size < 12) break
+            if (pageItems.size < 12) break
             page++
             kotlinx.coroutines.delay(100L)
         }
@@ -257,13 +408,24 @@ class AnimeRepository {
     }
 
     suspend fun searchAnime(query: String, source: String = "linkkf"): List<Anime> {
-        if (source != "reanime") return emptyList()
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return emptyList()
-        return ReAnimeHarParser.parseSearch(reAnimeHarClient.search(query = trimmed, limit = 36, offset = 0))
+        return when (source) {
+            "miruro" -> withContext(Dispatchers.IO) { miruroClient.catalog(query = trimmed).first }
+            "ohli24" -> withContext(Dispatchers.IO) { ohli24Client.catalog(query = trimmed) }
+            "reanime" -> ReAnimeHarParser.parseSearch(reAnimeHarClient.search(query = trimmed, limit = 36, offset = 0))
+            "animenosub" -> {
+                val document = animenosubClient.getDocument("$ANIMENOSUB_BASE_URL/?s=${java.net.URLEncoder.encode(trimmed, "UTF-8")}", "$ANIMENOSUB_BASE_URL/")
+                AnimenosubParser.parseAnimeList(document)
+            }
+            "linkkf" -> withContext(Dispatchers.IO) { linkkfApi.search(trimmed) }
+            else -> emptyList()
+        }
     }
 
     suspend fun getAnimeDetail(anime: Anime, source: String = "linkkf"): Anime {
+        if (source == "miruro") return withContext(Dispatchers.IO) { miruroClient.detail(anime) }
+        if (source == "ohli24") return withContext(Dispatchers.IO) { ohli24Client.detail(anime) }
         if (source == "reanime") {
             val detailUrl = anime.detailUrl.trim().ifBlank {
                 anime.id.removePrefix("reanime:").trim('/').let { "$REANIME_BASE_URL/anime/$it" }
@@ -290,10 +452,15 @@ class AnimeRepository {
         }
 
         val apiAnime = linkkfApi.getAnime(anime.id) ?: anime
-        val episodes = linkkfApi.getEpisodes(anime.id)
+        // getAnime() already parses the episode tabs from the detail page. Re-fetching
+        // getEpisodes() used to request and parse the same page a second time, and a
+        // transient failure on that second request could erase a valid episode list.
+        val episodes = apiAnime.episodes.ifEmpty { linkkfApi.getEpisodes(anime.id) }
         AnimeGenreCache.put(AppContextHolder.context, source, apiAnime.detailUrl, apiAnime.genres)
         return apiAnime.copy(
-            description = anime.description,
+            // Prefer the full detail-page synopsis; use the catalog synopsis only if
+            // the detail page really has no description.
+            description = apiAnime.description.ifBlank { anime.description },
             episodes = episodes,
             dubEpisodes = emptyList()
         )
@@ -335,6 +502,8 @@ class AnimeRepository {
         }
 
     suspend fun getEpisodes(anime: Anime, source: String = "linkkf"): List<Episode> {
+        if (source == "miruro") return anime.episodes.ifEmpty { withContext(Dispatchers.IO) { miruroClient.detail(anime).episodes } }
+        if (source == "ohli24") return anime.episodes.ifEmpty { withContext(Dispatchers.IO) { ohli24Client.detail(anime).episodes } }
         if (source == "reanime") {
             val slug = anime.detailUrl.substringAfter("/anime/").substringBefore("/").trim()
                 .ifBlank { anime.id.removePrefix("reanime:").trim('/') }

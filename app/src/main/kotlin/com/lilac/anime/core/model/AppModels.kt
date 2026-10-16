@@ -88,7 +88,14 @@ data class PlayerSettings(
     // 번역 대상 자막 앞에서 모델에 참고로 유지할 이전 자막 Cue 수.
     val aiContextCues: Int = 6,
     val aiPrefetchEnabled: Boolean = true,
-    val aiPrefetchAhead: Int = 10
+    val aiPrefetchAhead: Int = 10,
+    // Video upscaling engine selection for the mpv playback path.
+    val aiUpscalingEnabled: Boolean = false,
+    // gpu = mpv GPU scaler; anime4k = GLSL shaders; animejanai = Android port pending.
+    val aiUpscalingBackend: String = "gpu",
+    val aiUpscalingMode: String = "A",
+    // Kept for settings migration compatibility.
+    val aiUpscalingScale: Int = 2
 )
 
 data class ExoVideoQualityOption(

@@ -1,5 +1,8 @@
 #v2
 2
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/providers/CloudTranslationPrompt.kt	270	0	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/AnissiaSubtitleService.kt	15533	318	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/README.md	8383	242	split
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/DiagnosticLogExporter.kt	0	13	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/SettingsScreen.kt	9075	190	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/providers/LocalTranslator.kt	4062	96	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/Ohli24Client.kt	17611	251	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/player/upscaling/AnimeSuperResolutionRuntime.kt	226	1	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/player/upscaling/AiUpscalingVideoTestScreen.kt	1664	4	text

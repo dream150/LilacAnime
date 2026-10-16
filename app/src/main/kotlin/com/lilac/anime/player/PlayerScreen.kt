@@ -2,6 +2,9 @@ package com.lilac.anime.player
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContentValues
+import android.os.Environment
+import android.provider.MediaStore
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.graphics.Typeface
@@ -41,6 +44,7 @@ import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Settings
@@ -126,6 +130,9 @@ import com.lilac.anime.data.subtitle.SubtitleTrack
 import com.lilac.anime.data.subtitle.downloadSubtitleFile
 import com.lilac.anime.data.subtitle.translation.RealtimeSubtitleTranslator
 import com.lilac.anime.network.LinkkfPlayerResolver
+import com.lilac.anime.data.AnimenosubClient
+import com.lilac.anime.data.MiruroClient
+import com.lilac.anime.data.Ohli24Client
 import com.lilac.anime.network.FlixCloudHlsProxy
 import com.lilac.anime.viewmodel.AnimeViewModel
 import kotlinx.coroutines.Dispatchers
@@ -145,6 +152,50 @@ import java.util.Locale
  *
  * The WebView is a resolver only; it is never the playback surface.
  */
+private suspend fun savePlayerScreenshot(context: Context, engine: MpvPlayerEngine, animeTitle: String, episodeTitle: String): Boolean = withContext(Dispatchers.IO) {
+    val temp = File(context.cacheDir, "screenshots/frame_${System.currentTimeMillis()}.png")
+    runCatching { temp.delete() }
+    engine.screenshotToFile(temp.absolutePath)
+    var waited = 0
+    while (waited < 4000 && (!temp.isFile || temp.length() < 256L)) {
+        delay(100L)
+        waited += 100
+    }
+    if (!temp.isFile || temp.length() < 256L) {
+        temp.delete()
+        throw IllegalStateException("영상 프레임을 저장하지 못했습니다.")
+    }
+    val safe = listOf(animeTitle, episodeTitle).joinToString("_")
+        .replace(Regex("[\\/:*?\"<>|]"), "_")
+        .replace(Regex("\\s+"), " ").take(100).ifBlank { "LilacAnime" }
+    val filename = "${safe}_${System.currentTimeMillis()}.png"
+    val resolver = context.contentResolver
+    val values = ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/LilacAnime")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+    }
+    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        ?: throw IllegalStateException("사진 저장 위치를 만들지 못했습니다.")
+    try {
+        resolver.openOutputStream(uri)?.use { output -> temp.inputStream().use { input -> input.copyTo(output) } }
+            ?: throw IllegalStateException("사진 파일을 기록하지 못했습니다.")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val ready = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+            resolver.update(uri, ready, null, null)
+        }
+        true
+    } catch (error: Throwable) {
+        resolver.delete(uri, null, null)
+        throw error
+    } finally {
+        temp.delete()
+    }
+}
+
 @Composable
 fun PlayerScreen(
     anime: Anime,
@@ -293,6 +344,15 @@ fun PlayerScreen(
         // Korean translation mode is rendered exclusively by the in-memory
         // libass overlay. mpv must never display the source subtitle track.
         engine.setSubtitleVisible(if (subtitleTranslationMode == "korean") false else visible)
+    }
+
+    LaunchedEffect(engine, vm.playerSettings.aiUpscalingEnabled, vm.playerSettings.aiUpscalingBackend, vm.playerSettings.aiUpscalingScale, vm.playerSettings.aiUpscalingMode) {
+        engine.configureAiUpscaling(
+            enabled = vm.playerSettings.aiUpscalingEnabled,
+            backendPreference = vm.playerSettings.aiUpscalingBackend,
+            scaleMultiplier = vm.playerSettings.aiUpscalingScale,
+            anime4kMode = vm.playerSettings.aiUpscalingMode
+        )
     }
 
     LaunchedEffect(localSubtitle, currentEpisode.id, subtitleTranslationMode, vm.playerSettings.translationProvider) {
@@ -964,11 +1024,46 @@ fun PlayerScreen(
             Log.d("ReAnimeStream", "PLAYER_TARGET episode=${currentEpisode.number} url=$watchUrl anilist=${anime.anilistId}")
             return@LaunchedEffect
         }
+        if (source == "animenosub") {
+            // Animenosub is an episode page whose media URL is exposed by the
+            // hidden WebView network observer. Do not send this page to the
+            // Linkkf resolver (which previously caused a false stream-not-found).
+            streamUrl = null
+            streamHeaders = null
+            streamReferer = null
+            subtitleUrl = null
+            subtitleReferer = null
+            localSubtitle = null
+            parsedStreamingQualities = emptyList()
+            selectedStreamingQuality = null
+            reAnimeSubtitleTracks = emptyList()
+            selectedReAnimeSubtitleUrl = null
+            val animenosubTarget = currentEpisode.videoUrl?.takeIf { it.isNotBlank() }
+                ?: withContext(Dispatchers.IO) {
+                    AnimenosubClient().resolveEpisodeUrl(anime.title, currentEpisode.displayNumber)
+                }
+            if (animenosubTarget.isNullOrBlank()) {
+                loading = false
+                error = "Animenosub 회차 페이지를 찾지 못했습니다. 작품명과 회차 번호를 확인해 주세요."
+                Log.e("AnimenosubStream", "PLAYER_TARGET_NOT_FOUND episode=${currentEpisode.displayNumber} title=${anime.title}")
+                return@LaunchedEffect
+            }
+            resolvedVideoPageUrl = animenosubTarget
+            loading = true
+            Log.i("AnimenosubStream", "PLAYER_TARGET episode=${currentEpisode.number} url=$animenosubTarget")
+            return@LaunchedEffect
+        }
         resolvedVideoPageUrl = currentEpisode.videoUrl
 
         val episodeForResolve = currentEpisode
         val resolved = withContext(Dispatchers.Main.immediate) {
-            runCatching { LinkkfPlayerResolver.resolve(context, episodeForResolve) }
+            runCatching {
+                when (source) {
+                    "miruro" -> withContext(Dispatchers.IO) { MiruroClient().resolve(episodeForResolve) }
+                    "ohli24" -> withContext(Dispatchers.IO) { Ohli24Client().resolve(episodeForResolve) }
+                    else -> LinkkfPlayerResolver.resolve(context, episodeForResolve)
+                }
+            }
                 .onFailure {
                     Log.e("PlayerResolve", "RESOLVE_FAILED episode=${episodeForResolve.displayNumber}", it)
                 }
@@ -1068,7 +1163,7 @@ fun PlayerScreen(
                         vttUrl = subtitleToFetch,
                         episodeKey = currentEpisode.id,
                         referer = resolved.subtitleReferer ?: resolved.referer,
-                        source = if (vm.playerSettings.videoSourcePreference == "reanime") "reanime" else "linkkf"
+                        source = vm.playerSettings.videoSourcePreference.takeIf { it in setOf("linkkf", "animenosub", "reanime", "miruro", "ohli24") } ?: "linkkf"
                     )
                 }.getOrNull()
                 if (!downloaded.isNullOrBlank() && File(downloaded).isFile) {
@@ -1086,7 +1181,8 @@ fun PlayerScreen(
 
     // Re:ANIME/FlixCloud stream resolver. The WebView is deliberately 1dp and transparent:
     // it only observes the provider request; libmpv remains the visible playback surface.
-    if (vm.playerSettings.videoSourcePreference == "reanime" &&
+    val extractorSource = vm.playerSettings.videoSourcePreference
+    if (extractorSource in setOf("reanime", "animenosub") &&
         offlineResolutionComplete &&
         !offlinePlaybackActive &&
         !resolvedVideoPageUrl.isNullOrBlank() &&
@@ -1097,17 +1193,17 @@ fun PlayerScreen(
         StreamUrlExtractor(
             targetUrl = extractorTargetUrl,
             modifier = Modifier.size(1.dp),
-            reAnimeAnilistId = anime.anilistId
+            reAnimeAnilistId = if (extractorSource == "reanime") anime.anilistId
                 ?: Regex("(?:bx|anime/)(\\d+)", RegexOption.IGNORE_CASE)
                     .find(anime.poster)
                     ?.groupValues
                     ?.getOrNull(1)
-                    ?.toIntOrNull(),
-            reAnimeEpisodeNumber = currentEpisode.number,
+                    ?.toIntOrNull() else null,
+            reAnimeEpisodeNumber = currentEpisode.number.takeIf { extractorSource == "reanime" },
             onQualitiesFound = { qualities ->
                 if (generation != playbackGeneration ||
                     resolvedVideoPageUrl != extractorTargetUrl ||
-                    vm.playerSettings.videoSourcePreference != "reanime"
+                    vm.playerSettings.videoSourcePreference != extractorSource
                 ) return@StreamUrlExtractor
 
                 parsedStreamingQualities = qualities
@@ -1117,7 +1213,7 @@ fun PlayerScreen(
                 selected.referer?.let { streamReferer = it }
 
                 val pk = selected.flixCloudPk
-                streamUrl = if (!pk.isNullOrBlank() &&
+                streamUrl = if (extractorSource == "reanime" && !pk.isNullOrBlank() &&
                     selected.url.contains("m3u8", ignoreCase = true)
                 ) {
                     FlixCloudHlsProxy.createProxyUrl(
@@ -1127,7 +1223,7 @@ fun PlayerScreen(
                     ).also {
                         android.util.Log.d(
                             "LilacMpv",
-                            "FLIXCLOUD_PROXY_CREATED episode=${currentEpisode.displayNumber} url=$it"
+                            "FLIXCLOUD_PROXY_CREATED source=$extractorSource episode=${currentEpisode.displayNumber} url=$it"
                         )
                     }
                 } else {
@@ -1139,7 +1235,7 @@ fun PlayerScreen(
             onSubtitleTracksFound = { tracks ->
                 if (generation == playbackGeneration &&
                     resolvedVideoPageUrl == extractorTargetUrl &&
-                    tracks.isNotEmpty()
+                    tracks.isNotEmpty() && extractorSource == "reanime"
                 ) {
                     reAnimeSubtitleTracks = tracks
                     // Korean remains the default selection when available, but every
@@ -1161,7 +1257,7 @@ fun PlayerScreen(
             onSubtitleFound = { foundUrl ->
                 if (generation == playbackGeneration &&
                     resolvedVideoPageUrl == extractorTargetUrl &&
-                    foundUrl.isNotBlank()
+                    foundUrl.isNotBlank() && extractorSource == "reanime"
                 ) {
                     subtitleUrl = foundUrl
                     if (reAnimeSubtitleTracks.isEmpty()) {
@@ -1208,7 +1304,7 @@ fun PlayerScreen(
                 }
             },
             onSubtitleRefererFound = { _, referer ->
-                if (generation == playbackGeneration && resolvedVideoPageUrl == extractorTargetUrl) {
+                if (generation == playbackGeneration && resolvedVideoPageUrl == extractorTargetUrl && extractorSource == "reanime") {
                     subtitleReferer = referer
                 }
             },
@@ -1218,6 +1314,7 @@ fun PlayerScreen(
                 }
             },
             onFlixCloudPkFound = { pk ->
+                if (extractorSource != "reanime") return@StreamUrlExtractor
                 android.util.Log.d(
                     "ReAnimeStream",
                     "FLIXCLOUD_PK_READY episode=${currentEpisode.displayNumber} length=${pk.length}"
@@ -1230,12 +1327,12 @@ fun PlayerScreen(
     // auto-attach path is intentionally disabled so it cannot overwrite the user's
     // source selection or cause subtitle flicker while the player is already running.
 
-    // Once the Re:ANIME extractor has produced the decrypted/proxied HLS URL,
-    // hand it to libmpv. This is separate from the page resolver because the WebView
-    // callback is asynchronous.
+    // Re:ANIME and Animenosub resolve their media asynchronously through the hidden
+    // WebView. Hand the detected URL and captured request headers to libmpv here.
     LaunchedEffect(streamUrl, currentEpisode.id, playbackGeneration) {
         val generation = playbackGeneration
-        if (vm.playerSettings.videoSourcePreference != "reanime") return@LaunchedEffect
+        val activeSource = vm.playerSettings.videoSourcePreference
+        if (activeSource !in setOf("reanime", "animenosub")) return@LaunchedEffect
         val url = streamUrl?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         if (url.startsWith("/") || url.startsWith("file://")) return@LaunchedEffect
 
@@ -1245,15 +1342,19 @@ fun PlayerScreen(
         )
 
         val saved = vm.getProgress(anime.id, currentEpisode.id, currentEpisode.number)
-        val cachedReAnimeSubtitleSource = localSubtitle?.takeIf { File(it).isFile }
-            ?: resolveCachedSubtitle(currentEpisode, "reanime")
-        val cachedReAnimeSubtitle = maybeTranslateSubtitle(cachedReAnimeSubtitleSource)
-        if (!cachedReAnimeSubtitle.isNullOrBlank()) {
-            localSubtitle = cachedReAnimeSubtitle
+        val cachedSubtitleSource = if (activeSource == "reanime") {
+            localSubtitle?.takeIf { File(it).isFile } ?: resolveCachedSubtitle(currentEpisode, "reanime")
+        } else {
+            localSubtitle?.takeIf { File(it).isFile }
+                ?: resolveCachedSubtitle(currentEpisode, vm.playerSettings.subtitleSourcePreference)
+        }
+        val cachedSubtitle = maybeTranslateSubtitle(cachedSubtitleSource)
+        if (!cachedSubtitle.isNullOrBlank()) {
+            localSubtitle = cachedSubtitle
         }
         engine.load(
             url = url,
-            subtitlePath = cachedReAnimeSubtitle,
+            subtitlePath = cachedSubtitle,
             syncOffsetMs = vm.playerSettings.syncOffsetMs,
             customFontPath = vm.playerSettings.subtitleFontPath
                 ?: vm.playerSettings.customFontPath,
@@ -1963,6 +2064,26 @@ fun PlayerScreen(
 
                 Spacer(Modifier.weight(1f))
 
+                Surface(
+                    onClick = {
+                        playerScope.launch {
+                            runCatching { savePlayerScreenshot(context, engine, anime.title, currentEpisode.title.ifBlank { "${currentEpisode.number}화" }) }
+                                .onSuccess { Toast.makeText(context, "사진 > LilacAnime에 저장했습니다.", Toast.LENGTH_SHORT).show() }
+                                .onFailure { Toast.makeText(context, it.message ?: "스크린샷 저장 실패", Toast.LENGTH_SHORT).show() }
+                        }
+                    },
+                    modifier = Modifier.tvFocusable(),
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = .48f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = .10f))
+                ) {
+                    Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.PhotoCamera, "스크린샷 저장", tint = Color.White, modifier = Modifier.size(21.dp))
+                    }
+                }
+
+                Spacer(Modifier.size(8.dp))
+
                 Box {
                     Surface(
                         onClick = { settingsOpen = !settingsOpen },
@@ -2182,11 +2303,9 @@ fun PlayerScreen(
                                                 playerScope.launch { realtimeTranslator.clear() }
                                                 setSubtitleVisibleForMode(subtitleEnabled)
                                             } else {
+                                                // LaunchedEffect owns translator lifecycle. Do not call prepare here as
+                                                // well, or the same episode starts two competing prefetch sessions.
                                                 setSubtitleVisibleForMode(false)
-                                                playerScope.launch {
-                                                    realtimeTranslator.prepare(localSubtitle, engine.currentPosition, playerScope)
-                                                    realtimeTranslator.updatePlaybackPosition(engine.currentPosition)
-                                                }
                                             }
                                         },
                                         shape = RoundedCornerShape(8.dp),
@@ -2407,7 +2526,9 @@ fun PlayerScreen(
                                                                 playerScope.launch {
                                                                     val title = SubtitleTitleResolver.resolve(context, anime)
                                                                     val wasPlaying = engine.isPlaying
-                                                                    engine.pause()
+                                                                    // Download/apply the subtitle without forcing a pause. Some engines report
+                                                                    // stale isPlaying state around subtitle-track replacement; the old pause/play
+                                                                    // pair could leave playback stopped after selecting an Anissia subtitle.
                                                                     try {
                                                                         val downloaded = AnissiaSubtitleService.downloadSelectedSubtitle(
                                                                             context, title, currentEpisode.number, currentEpisode.id, anime.id, option
@@ -2421,13 +2542,16 @@ fun PlayerScreen(
                                                                             vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleSourcePreference = "anissia"))
                                                                             savedSubtitles = SubtitleStore.list(context, anime.id, currentEpisode.id, currentEpisode.number)
                                                                             anissiaSubtitlePickerOpen = false
+                                                                            // Selecting an Anissia subtitle should leave the video playable,
+                                                                            // even if the playback engine briefly transitioned to paused.
+                                                                            engine.play()
                                                                             Toast.makeText(context, "${option.creator.ifBlank { "Anissia" }} 자막을 적용했습니다.", Toast.LENGTH_SHORT).show()
                                                                         } else {
                                                                             Toast.makeText(context, "선택한 Anissia 자막을 불러오지 못했습니다.", Toast.LENGTH_SHORT).show()
                                                                         }
                                                                     } finally {
                                                                         anissiaSubtitleLoading = false
-                                                                        if (wasPlaying) engine.play()
+                                                                        if (wasPlaying && !engine.isPlaying) engine.play()
                                                                     }
                                                                 }
                                                             }
