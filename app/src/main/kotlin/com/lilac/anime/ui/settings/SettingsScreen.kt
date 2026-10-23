@@ -46,6 +46,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
 import kotlin.math.roundToInt
 import com.lilac.anime.network.OfflineOpEdFingerprintStore
+import com.lilac.anime.data.subtitle.whisper.WhisperTranscriptionService
 
 private fun formatModelBytes(bytes: Long): String {
     if (bytes < 1024L * 1024L) return "${bytes / 1024L} KB"
@@ -136,6 +137,10 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val settings = vm.playerSettings
     var deleteTarget by remember { mutableStateOf<String?>(null) }
+    var whisperDownloadProgress by remember { mutableStateOf(-1) }
+    var whisperModelStatus by remember { mutableStateOf("") }
+    var whisperSelectedModel by remember { mutableStateOf(WhisperTranscriptionService.selectedModelId(context)) }
+    var whisperModelMenuExpanded by remember { mutableStateOf(false) }
 
 
     AppScaffold(selected = "settings", onSelect = onNavigate) { padding ->
@@ -215,6 +220,102 @@ fun SettingsScreen(
             Spacer(Modifier.height(20.dp))
             HorizontalDivider()
             Spacer(Modifier.height(14.dp))
+            Text("재생 방식", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+            Text("재생 엔진과 AI 처리를 여기서 선택합니다. Whisper는 일본어 음성으로 SRT를 생성하고 기존 한국어 번역 기능에 전달합니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                listOf(
+                    Triple("default", "기본 재생", "기존 mpv 재생 기능을 그대로 사용합니다."),
+                    Triple("anime4k", "Anime4K 업스케일링", "mpv 셰이더로 실시간 업스케일링합니다."),
+                    Triple("whisper", "Whisper AI 자막", "일본어 음성을 인식해 자막을 생성한 뒤 한국어로 번역합니다."),
+                    Triple("animejanai", "AnimeJaNai", "Android 추론 엔진이 없어 현재 사용할 수 없습니다.")
+                ).forEach { (mode, label, description) ->
+                    val selected = settings.playbackAiMode == mode
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            if (mode == "animejanai") return@Card
+                            val updated = when (mode) {
+                                "anime4k" -> settings.copy(playbackAiMode = mode, aiUpscalingEnabled = true, aiUpscalingBackend = "anime4k")
+                                "whisper" -> settings.copy(playbackAiMode = mode, aiUpscalingEnabled = false)
+                                else -> settings.copy(playbackAiMode = "default", aiUpscalingEnabled = false)
+                            }
+                            vm.updatePlayerSettings(context, updated)
+                        },
+                        enabled = mode != "animejanai",
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                        ),
+                        border = if (selected) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = selected, onClick = null, enabled = mode != "animejanai")
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                                Spacer(Modifier.height(3.dp))
+                                Text(description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+            if (settings.playbackAiMode == "whisper") {
+                val selectedOption = WhisperTranscriptionService.modelOptions.first { it.id == whisperSelectedModel }
+                val installed = WhisperTranscriptionService.isModelInstalled(context, whisperSelectedModel)
+                Text("Whisper 모델", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
+                Text("모델 크기가 클수록 메모리 사용량이 증가합니다. OOM이 발생하면 Tiny를 권장합니다.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f))
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { whisperModelMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("${selectedOption.title} · ${if (installed) "설치됨" else "미설치"}")
+                    }
+                    DropdownMenu(expanded = whisperModelMenuExpanded, onDismissRequest = { whisperModelMenuExpanded = false }) {
+                        WhisperTranscriptionService.modelOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(option.title)
+                                        Text(option.note, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                },
+                                onClick = {
+                                    whisperSelectedModel = option.id
+                                    WhisperTranscriptionService.setSelectedModel(context, option.id)
+                                    whisperModelMenuExpanded = false
+                                    whisperModelStatus = ""
+                                    whisperDownloadProgress = -1
+                                }
+                            )
+                        }
+                    }
+                }
+                Text(
+                    if (installed) "${selectedOption.title} 모델이 설치되어 있습니다."
+                    else "${selectedOption.title} 모델을 다운로드해야 합니다.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f)
+                )
+                if (whisperDownloadProgress in 0..100) {
+                    LinearProgressIndicator(progress = { whisperDownloadProgress / 100f }, modifier = Modifier.fillMaxWidth())
+                }
+                if (whisperModelStatus.isNotBlank()) Text(whisperModelStatus, fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f))
+                OutlinedButton(
+                    enabled = whisperDownloadProgress !in 0..100 && !installed,
+                    onClick = {
+                        val modelId = whisperSelectedModel
+                        scope.launch {
+                            whisperDownloadProgress = 0
+                            whisperModelStatus = "${selectedOption.title} 모델 다운로드 중"
+                            runCatching { WhisperTranscriptionService.downloadModel(context, modelId) { whisperDownloadProgress = it } }
+                                .onSuccess { whisperDownloadProgress = -1; whisperModelStatus = "${selectedOption.title} 모델 다운로드 완료" }
+                                .onFailure { whisperDownloadProgress = -1; whisperModelStatus = "모델 다운로드 실패: ${it.message ?: "알 수 없는 오류"}" }
+                        }
+                    }, modifier = Modifier.fillMaxWidth()
+                ) { Text(if (installed) "모델 설치 완료" else "${selectedOption.title} 다운로드") }
+            }
+            Spacer(Modifier.height(20.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(14.dp))
             Text("실시간 영상 업스케일링", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
             Text("Anime4K는 mpv GLSL 셰이더를 사용합니다. AnimeJaNai의 원본 실시간 엔진은 Windows 전용이므로 Android용 추론 경로가 준비되기 전까지 선택 시 기본 GPU 스케일러로 대체됩니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -224,7 +325,7 @@ fun SettingsScreen(
                 }
                 Switch(
                     checked = settings.aiUpscalingEnabled,
-                    onCheckedChange = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingEnabled = it)) }
+                    onCheckedChange = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingEnabled = it, playbackAiMode = if (it && settings.aiUpscalingBackend == "anime4k") "anime4k" else if (!it && settings.playbackAiMode == "anime4k") "default" else settings.playbackAiMode)) }
                 )
             }
             if (settings.aiUpscalingEnabled) {
@@ -233,7 +334,7 @@ fun SettingsScreen(
                     listOf("anime4k" to "Anime4K (실시간 셰이더)", "animejanai" to "AnimeJaNai (Android 포팅 대기)", "gpu" to "기본 GPU 스케일러").forEach { (value, label) ->
                         FilterChip(
                             selected = settings.aiUpscalingBackend == value,
-                            onClick = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingBackend = value)) },
+                            onClick = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingBackend = value, playbackAiMode = if (value == "anime4k") "anime4k" else if (settings.playbackAiMode == "anime4k") "default" else settings.playbackAiMode)) },
                             label = { Text(label) }
                         )
                     }

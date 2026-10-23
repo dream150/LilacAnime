@@ -90,6 +90,8 @@ data class PlayerSettings(
     val aiPrefetchEnabled: Boolean = true,
     val aiPrefetchAhead: Int = 10,
     // Video upscaling engine selection for the mpv playback path.
+    // Playback mode: default, anime4k, whisper, animejanai.
+    val playbackAiMode: String = "default",
     val aiUpscalingEnabled: Boolean = false,
     // gpu = mpv GPU scaler; anime4k = GLSL shaders; animejanai = Android port pending.
     val aiUpscalingBackend: String = "gpu",

@@ -1,8 +1,11 @@
 #v2
-2
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/DiagnosticLogExporter.kt	0	13	text
+8
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/DiagnosticLogExporter.kt	0	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/SettingsScreen.kt	9075	190	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/providers/LocalTranslator.kt	4062	96	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/providers/LocalTranslator.kt	4062	91	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/Ohli24Client.kt	17611	251	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/player/upscaling/AnimeSuperResolutionRuntime.kt	226	1	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/player/upscaling/AiUpscalingVideoTestScreen.kt	1664	4	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/player/Media3PlayerEngine.kt	0	394	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/cpp/whisper_jni.cpp	0	0	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/cpp/CMakeLists.txt	747	47	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/native-whisper/whisper-build-config.h	0	0	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/cpp/whisper_engine/compile/ggml-base/ggml_src_ggml-alloc.c	0	1	text

@@ -80,6 +80,7 @@ object OfflineStore {
             putInt("pref_ai_context_cues", settings.aiContextCues)
             putBoolean("pref_ai_prefetch_enabled", settings.aiPrefetchEnabled)
             putInt("pref_ai_prefetch_ahead", settings.aiPrefetchAhead)
+            putString("pref_playback_ai_mode", settings.playbackAiMode)
             putBoolean("pref_ai_upscaling_enabled", settings.aiUpscalingEnabled)
             putString("pref_ai_upscaling_backend", settings.aiUpscalingBackend)
             putString("pref_ai_upscaling_mode", settings.aiUpscalingMode)
@@ -177,6 +178,9 @@ object OfflineStore {
             aiContextCues = prefs.getInt("pref_ai_context_cues", 6).coerceIn(0, 10),
             aiPrefetchEnabled = prefs.getBoolean("pref_ai_prefetch_enabled", true),
             aiPrefetchAhead = prefs.getInt("pref_ai_prefetch_ahead", 10).coerceIn(0, 40),
+            playbackAiMode = prefs.getString("pref_playback_ai_mode", null)
+                ?.takeIf { it in setOf("default", "anime4k", "whisper", "animejanai") }
+                ?: if (prefs.getBoolean("pref_ai_upscaling_enabled", false) && prefs.getString("pref_ai_upscaling_backend", "gpu") == "anime4k") "anime4k" else "default",
             aiUpscalingEnabled = prefs.getBoolean("pref_ai_upscaling_enabled", false),
             aiUpscalingBackend = when (prefs.getString("pref_ai_upscaling_backend", "gpu")) {
                 "anime4k" -> "anime4k"

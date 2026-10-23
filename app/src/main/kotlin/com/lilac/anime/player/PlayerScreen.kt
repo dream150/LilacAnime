@@ -129,6 +129,7 @@ import com.lilac.anime.data.subtitle.StreamUrlExtractor
 import com.lilac.anime.data.subtitle.SubtitleTrack
 import com.lilac.anime.data.subtitle.downloadSubtitleFile
 import com.lilac.anime.data.subtitle.translation.RealtimeSubtitleTranslator
+import com.lilac.anime.data.subtitle.whisper.WhisperTranscriptionService
 import com.lilac.anime.network.LinkkfPlayerResolver
 import com.lilac.anime.data.AnimenosubClient
 import com.lilac.anime.data.MiruroClient
@@ -344,6 +345,49 @@ fun PlayerScreen(
         // Korean translation mode is rendered exclusively by the in-memory
         // libass overlay. mpv must never display the source subtitle track.
         engine.setSubtitleVisible(if (subtitleTranslationMode == "korean") false else visible)
+    }
+
+    LaunchedEffect(vm.playerSettings.playbackAiMode, streamUrl, streamHeaders, streamReferer, currentEpisode.id, offlinePlaybackActive) {
+        if (vm.playerSettings.playbackAiMode != "whisper") return@LaunchedEffect
+        if (!localSubtitle.isNullOrBlank() && File(localSubtitle!!).isFile) return@LaunchedEffect
+        val mediaSource = streamUrl?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        if (mediaSource.startsWith("http") && (mediaSource.contains("/watch/") || mediaSource.contains("/anime/"))) return@LaunchedEffect
+        val episodeKey = currentEpisode.id
+        Log.i("LilacWhisper", "TRANSCRIPTION_REQUEST episode=${currentEpisode.displayNumber} source=${if (mediaSource.startsWith("/")) "offline" else "stream"}")
+        val whisperHeaders = buildMap {
+            val raw = streamHeaders.orEmpty()
+            if (raw.trimStart().startsWith("{")) {
+                runCatching {
+                    val json = org.json.JSONObject(raw)
+                    val keys = json.keys()
+                    while (keys.hasNext()) { val key = keys.next(); val value = json.optString(key); if (value.isNotBlank()) put(key, value) }
+                }
+            } else raw.lineSequence().forEach { line ->
+                val split = line.indexOf(':')
+                if (split > 0) put(line.substring(0, split).trim(), line.substring(split + 1).trim())
+            }
+            streamReferer?.takeIf { it.isNotBlank() }?.let { put("Referer", it) }
+        }
+        runCatching {
+            WhisperTranscriptionService.transcribe(context, mediaSource, whisperHeaders) { stage ->
+                Log.i("LilacWhisper", "TRANSCRIPTION_STAGE episode=$episodeKey stage=$stage")
+            }
+        }.onSuccess { subtitleFile ->
+            if (currentEpisode.id != episodeKey || vm.playerSettings.playbackAiMode != "whisper") return@onSuccess
+            withContext(Dispatchers.Main.immediate) {
+                localSubtitle = subtitleFile.absolutePath
+                subtitleSource = "user"
+                engine.replaceSubtitleTrack(subtitleFile.absolutePath)
+                engine.setSubtitleDelay(vm.playerSettings.syncOffsetMs)
+                // The generated Japanese SRT enters the same existing translation pipeline as downloaded subtitles.
+                subtitleTranslationMode = "korean"
+                setSubtitleVisibleForMode(false)
+                Log.i("LilacWhisper", "GENERATED_SUBTITLE_ATTACHED episode=$episodeKey path=${subtitleFile.absolutePath}")
+            }
+        }.onFailure {
+            Log.e("LilacWhisper", "TRANSCRIPTION_FAILED episode=$episodeKey source=$mediaSource", it)
+            error = "Whisper 자막 생성 실패: ${it.message ?: "미디어 음성 추출 실패"}"
+        }
     }
 
     LaunchedEffect(engine, vm.playerSettings.aiUpscalingEnabled, vm.playerSettings.aiUpscalingBackend, vm.playerSettings.aiUpscalingScale, vm.playerSettings.aiUpscalingMode) {
