@@ -482,7 +482,7 @@ class MpvPlayerEngine(private val context: Context) {
         if (key == subtitleEraseKey) return
         subtitleEraseKey = key
         if (subtitleEraseRegions.isNotEmpty()) {
-            runCatching { subtitleEraseFile.writeText(buildSubtitleEraseShader(subtitleEraseRegions), Charsets.US_ASCII) }
+            runCatching { subtitleEraseFile.writeText(SubtitleEraseShaderHq.build(subtitleEraseRegions), Charsets.US_ASCII) }
                 .onFailure { Log.e(TAG, "SUBTITLE_ERASE write failed", it) }
         }
         applyHwdecPolicy()
