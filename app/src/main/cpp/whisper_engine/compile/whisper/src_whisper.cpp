@@ -1,3 +1,7 @@
+#ifndef WHISPER_VERSION
+#define WHISPER_VERSION "1.9.5-dev"
+#endif
+
 #include "whisper.h"
 #include "whisper-arch.h"
 

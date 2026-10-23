@@ -60,7 +60,11 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_lilac_anime_data_subtitle_whisper_
    }
   } // Chunk buffers are destroyed before the next allocation.
   offset+=count;
+#if defined(__GLIBC__)
   malloc_trim(0);
+#elif defined(M_PURGE)
+  mallopt(M_PURGE, 0); // Android (bionic) has no malloc_trim
+#endif
  }
  return env->NewStringUTF(out.str().c_str());
 }

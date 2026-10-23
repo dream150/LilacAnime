@@ -85,6 +85,10 @@ object OfflineStore {
             putString("pref_ai_upscaling_backend", settings.aiUpscalingBackend)
             putString("pref_ai_upscaling_mode", settings.aiUpscalingMode)
             putInt("pref_ai_upscaling_scale", settings.aiUpscalingScale)
+            putBoolean("pref_watermark_removal_enabled", settings.watermarkRemovalEnabled)
+            putString("pref_watermark_regions", settings.watermarkRegions)
+            putBoolean("pref_subtitle_erase_enabled", settings.subtitleEraseEnabled)
+            putString("pref_subtitle_erase_regions", settings.subtitleEraseRegions)
             apply()
         }
     }
@@ -191,7 +195,11 @@ object OfflineStore {
             aiUpscalingMode = prefs.getString("pref_ai_upscaling_mode", "A")
                 .takeIf { it in setOf("A", "B", "C", "A+A", "B+B", "C+A") } ?: "A",
             aiUpscalingScale = prefs.getInt("pref_ai_upscaling_scale", 2)
-                .takeIf { it in setOf(2, 3, 4) } ?: 2
+                .takeIf { it in setOf(2, 3, 4) } ?: 2,
+            watermarkRemovalEnabled = prefs.getBoolean("pref_watermark_removal_enabled", false),
+            watermarkRegions = prefs.getString("pref_watermark_regions", "").orEmpty(),
+            subtitleEraseEnabled = prefs.getBoolean("pref_subtitle_erase_enabled", false),
+            subtitleEraseRegions = prefs.getString("pref_subtitle_erase_regions", "").orEmpty()
         )
     }
 

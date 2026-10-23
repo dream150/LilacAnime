@@ -97,7 +97,13 @@ data class PlayerSettings(
     val aiUpscalingBackend: String = "gpu",
     val aiUpscalingMode: String = "A",
     // Kept for settings migration compatibility.
-    val aiUpscalingScale: Int = 2
+    val aiUpscalingScale: Int = 2,
+    // Watermark removal (mpv delogo). Regions are normalized "x,y,w,h" rectangles joined by ';'.
+    val watermarkRemovalEnabled: Boolean = false,
+    val watermarkRegions: String = "",
+    // Hard-coded (burned-in) subtitle erasing. Regions use the same normalized format.
+    val subtitleEraseEnabled: Boolean = false,
+    val subtitleEraseRegions: String = ""
 )
 
 data class ExoVideoQualityOption(

@@ -74,6 +74,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -399,6 +400,111 @@ fun PlayerScreen(
         )
     }
 
+    LaunchedEffect(engine, vm.playerSettings.watermarkRemovalEnabled, vm.playerSettings.watermarkRegions) {
+        engine.configureWatermarkRemoval(
+            enabled = vm.playerSettings.watermarkRemovalEnabled,
+            regions = vm.playerSettings.watermarkRegions
+        )
+    }
+
+    var watermarkFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var watermarkWasPlaying by remember { mutableStateOf(false) }
+    val startWatermarkSelection: () -> Unit = {
+        settingsOpen = false
+        playerScope.launch {
+            watermarkWasPlaying = engine.isPlaying
+            engine.pause()
+            engine.prepareCleanFrameCapture()
+            // Give mpv a moment to redraw the frame without the filter.
+            delay(500L)
+            runCatching { captureVideoFrame(context, engine) }
+                .onSuccess { watermarkFrame = it }
+                .onFailure {
+                    Toast.makeText(context, it.message ?: "영상 프레임을 가져오지 못했습니다.", Toast.LENGTH_SHORT).show()
+                    engine.configureWatermarkRemoval(
+                        vm.playerSettings.watermarkRemovalEnabled,
+                        vm.playerSettings.watermarkRegions
+                    )
+                    if (watermarkWasPlaying) engine.play()
+                }
+        }
+    }
+    watermarkFrame?.let { frame ->
+        WatermarkRegionPickerDialog(
+            frame = frame,
+            initial = WatermarkRegions.parse(vm.playerSettings.watermarkRegions),
+            onConfirm = { regions ->
+                vm.updatePlayerSettings(
+                    context,
+                    vm.playerSettings.copy(
+                        watermarkRemovalEnabled = true,
+                        watermarkRegions = WatermarkRegions.serialize(regions)
+                    )
+                )
+                watermarkFrame = null
+                if (watermarkWasPlaying) engine.play()
+            },
+            onCancel = {
+                watermarkFrame = null
+                engine.configureWatermarkRemoval(
+                    vm.playerSettings.watermarkRemovalEnabled,
+                    vm.playerSettings.watermarkRegions
+                )
+                if (watermarkWasPlaying) engine.play()
+            }
+        )
+    }
+
+    LaunchedEffect(engine, vm.playerSettings.subtitleEraseEnabled, vm.playerSettings.subtitleEraseRegions) {
+        engine.configureSubtitleErase(
+            enabled = vm.playerSettings.subtitleEraseEnabled,
+            regions = vm.playerSettings.subtitleEraseRegions
+        )
+    }
+
+    var subtitleEraseFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var subtitleEraseWasPlaying by remember { mutableStateOf(false) }
+    val startSubtitleEraseSelection: () -> Unit = {
+        settingsOpen = false
+        playerScope.launch {
+            subtitleEraseWasPlaying = engine.isPlaying
+            engine.pause()
+            // 지우기를 잠시 꺼서 자막이 그대로 보이는 프레임에서 영역을 고르게 한다.
+            engine.setSubtitleErasePaused(true)
+            delay(700L)
+            runCatching { captureVideoFrame(context, engine) }
+                .onSuccess { subtitleEraseFrame = it }
+                .onFailure {
+                    Toast.makeText(context, it.message ?: "영상 프레임을 가져오지 못했습니다.", Toast.LENGTH_SHORT).show()
+                    engine.setSubtitleErasePaused(false)
+                    if (subtitleEraseWasPlaying) engine.play()
+                }
+        }
+    }
+    subtitleEraseFrame?.let { frame ->
+        WatermarkRegionPickerDialog(
+            frame = frame,
+            initial = WatermarkRegions.parse(vm.playerSettings.subtitleEraseRegions),
+            onConfirm = { regions ->
+                vm.updatePlayerSettings(
+                    context,
+                    vm.playerSettings.copy(
+                        subtitleEraseEnabled = regions.isNotEmpty(),
+                        subtitleEraseRegions = WatermarkRegions.serialize(regions)
+                    )
+                )
+                subtitleEraseFrame = null
+                engine.setSubtitleErasePaused(false)
+                if (subtitleEraseWasPlaying) engine.play()
+            },
+            onCancel = {
+                subtitleEraseFrame = null
+                engine.setSubtitleErasePaused(false)
+                if (subtitleEraseWasPlaying) engine.play()
+            }
+        )
+    }
+
     LaunchedEffect(localSubtitle, currentEpisode.id, subtitleTranslationMode, vm.playerSettings.translationProvider) {
         realtimeSubtitleText = ""
         if (subtitleTranslationMode == "korean") {
@@ -480,6 +586,69 @@ fun PlayerScreen(
                 withContext(kotlinx.coroutines.Dispatchers.Main) { Toast.makeText(context, "폰트를 불러오지 못했습니다.", Toast.LENGTH_SHORT).show() }
             }
         }
+    }
+
+    var watermarkShaderPresent by remember { mutableStateOf(engine.hasWatermarkShader()) }
+    var watermarkPreviewOn by remember { mutableStateOf(false) }
+    var watermarkTestOn by remember { mutableIntStateOf(0) }
+    val watermarkShaderPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        playerScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                context.contentResolver.openInputStream(uri)?.use { engine.importWatermarkShader(it).getOrThrow() }
+                    ?: error("파일을 열 수 없습니다.")
+            }
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                if (result.isSuccess) {
+                    watermarkShaderPresent = engine.hasWatermarkShader()
+                    val settings = vm.playerSettings.copy(watermarkRemovalEnabled = true)
+                    vm.updatePlayerSettings(context, settings)
+                    engine.configureWatermarkRemoval(true, settings.watermarkRegions)
+                    Toast.makeText(context, "워터마크 마스크를 적용했습니다.", Toast.LENGTH_SHORT).show()
+                } else {
+                    Log.e("Watermark", "WATERMARK_SHADER_IMPORT_FAILED", result.exceptionOrNull())
+                    Toast.makeText(context, result.exceptionOrNull()?.message ?: "마스크를 불러오지 못했습니다.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    var watermarkLearnProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var watermarkLearnJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val startWatermarkLearning: () -> Unit = {
+        settingsOpen = false
+        watermarkPreviewOn = false
+        watermarkTestOn = 0
+        watermarkLearnJob?.cancel()
+        watermarkLearnJob = playerScope.launch {
+            watermarkLearnProgress = 0 to 0
+            val result = engine.learnWatermarkMask(72) { frames, dark -> watermarkLearnProgress = frames to dark }
+            watermarkLearnProgress = null
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                result.onSuccess { r ->
+                    watermarkShaderPresent = engine.hasWatermarkShader()
+                    val settings = vm.playerSettings.copy(watermarkRemovalEnabled = true)
+                    vm.updatePlayerSettings(context, settings)
+                    engine.configureWatermarkRemoval(true, settings.watermarkRegions)
+                    val quality = when {
+                        r.expectedError <= 0.015f -> "정확도 좋음"
+                        r.expectedError <= 0.04f -> "정확도 보통"
+                        else -> "어두운 장면이 부족해 잔상이 남을 수 있어요"
+                    }
+                    Toast.makeText(context, "워터마크 마스크를 만들었습니다 ($quality · 장면 ${r.frames}개, 어두운 장면 ${r.darkFrames}개)", Toast.LENGTH_LONG).show()
+                }.onFailure {
+                    Toast.makeText(context, it.message ?: "마스크를 만들지 못했습니다.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+    watermarkLearnProgress?.let { (frames, dark) ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("워터마크 마스크 학습 중") },
+            text = { Text("영상을 여러 장면으로 이동하며 분석하고 있어요. 어두운 장면을 찾으면 더 정확해집니다.\n분석한 장면 ${frames}개 · 어두운 장면 ${dark}개") },
+            confirmButton = { TextButton(onClick = { watermarkLearnJob?.cancel() }) { Text("취소") } }
+        )
     }
 
     val subtitleFilePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -2228,6 +2397,117 @@ fun PlayerScreen(
                                     vm.updatePlayerSettings(context, vm.playerSettings.copy(autoSkip = it))
                                 }
                             )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                                Text("워터마크 제거", color = Color.White, fontSize = 13.sp)
+                                Text(
+                                    when {
+                                        !vm.playerSettings.watermarkRemovalEnabled ->
+                                            if (watermarkShaderPresent) "켜면 만들어 둔 마스크로 워터마크를 지웁니다" else "켜면 영상을 분석해 마스크를 자동으로 만듭니다"
+                                        watermarkShaderPresent -> "마스크로 역합성해 실시간으로 지웁니다 (GPU)"
+                                        else -> "선택한 영역을 실시간으로 지웁니다"
+                                    },
+                                    color = Color.White.copy(.55f),
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Switch(
+                                checked = vm.playerSettings.watermarkRemovalEnabled,
+                                onCheckedChange = { on ->
+                                    if (on) {
+                                        if (watermarkShaderPresent) {
+                                            vm.updatePlayerSettings(context, vm.playerSettings.copy(watermarkRemovalEnabled = true))
+                                        } else {
+                                            startWatermarkLearning()
+                                        }
+                                    } else {
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(watermarkRemovalEnabled = false))
+                                    }
+                                }
+                            )
+                        }
+                        Row(Modifier.padding(horizontal = 14.dp)) {
+                            TextButton(onClick = { startWatermarkLearning() }) {
+                                Text(if (watermarkShaderPresent) "마스크 다시 학습" else "마스크 자동 학습", fontSize = 12.sp)
+                            }
+                            if (!watermarkShaderPresent) {
+                                TextButton(onClick = { startWatermarkSelection() }) { Text("영역 직접 지정", fontSize = 12.sp) }
+                            }
+                        }
+                        Row(Modifier.padding(horizontal = 14.dp)) {
+                            TextButton(onClick = { watermarkShaderPickerLauncher.launch(arrayOf("*/*")) }) {
+                                Text(if (watermarkShaderPresent) "파일로 교체 (.glsl)" else "파일 가져오기 (.glsl)", fontSize = 12.sp)
+                            }
+                            if (watermarkShaderPresent) {
+                                TextButton(onClick = {
+                                    engine.deleteWatermarkShader()
+                                    watermarkShaderPresent = false
+                                    watermarkPreviewOn = false
+                                    watermarkTestOn = 0
+                                }) { Text("마스크 삭제", fontSize = 12.sp) }
+                            }
+                        }
+                        if (vm.playerSettings.watermarkRemovalEnabled) {
+                            TextButton(
+                                onClick = {
+                                    val next = (watermarkTestOn + 1) % 4
+                                    engine.setWatermarkTest(next)
+                                        .onSuccess { watermarkTestOn = next }
+                                        .onFailure {
+                                            Toast.makeText(context, it.message ?: "테스트를 켜지 못했습니다.", Toast.LENGTH_SHORT).show()
+                                            if (next == 3) watermarkTestOn = 2
+                                        }
+                                },
+                                modifier = Modifier.padding(horizontal = 14.dp)
+                            ) { Text(when (watermarkTestOn) { 0 -> "셰이더 테스트 1: 화면 파랗게"; 1 -> "셰이더 테스트 2: 작은 텍스처 (화면 초록)"; 2 -> "셰이더 테스트 3: 실제 마스크 영역 초록"; else -> "셰이더 테스트 끄기" }, fontSize = 12.sp) }
+                        }
+                        if (vm.playerSettings.watermarkRemovalEnabled && watermarkShaderPresent) {
+                            TextButton(
+                                onClick = {
+                                    val next = !watermarkPreviewOn
+                                    engine.setWatermarkPreview(next)
+                                        .onSuccess { watermarkPreviewOn = next }
+                                        .onFailure {
+                                            Toast.makeText(context, it.message ?: "미리보기를 켜지 못했습니다.", Toast.LENGTH_SHORT).show()
+                                        }
+                                },
+                                modifier = Modifier.padding(horizontal = 14.dp)
+                            ) { Text(if (watermarkPreviewOn) "미리보기 끄기" else "마스크 미리보기 (빨간색 표시)", fontSize = 12.sp) }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                                Text("영상에 박힌 자막 지우기", color = Color.White, fontSize = 13.sp)
+                                Text(
+                                    if (vm.playerSettings.subtitleEraseRegions.isBlank()) "켜면 박힌 자막이 나오는 영역을 먼저 지정합니다"
+                                    else "지정한 영역의 글자를 주변 화면으로 메웁니다 (GPU, 실험적)",
+                                    color = Color.White.copy(.55f),
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Switch(
+                                checked = vm.playerSettings.subtitleEraseEnabled,
+                                onCheckedChange = { on ->
+                                    if (on && vm.playerSettings.subtitleEraseRegions.isBlank()) {
+                                        startSubtitleEraseSelection()
+                                    } else {
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleEraseEnabled = on))
+                                    }
+                                }
+                            )
+                        }
+                        Row(Modifier.padding(horizontal = 14.dp)) {
+                            TextButton(onClick = { startSubtitleEraseSelection() }) {
+                                Text(if (vm.playerSettings.subtitleEraseRegions.isBlank()) "자막 영역 지정" else "자막 영역 다시 지정", fontSize = 12.sp)
+                            }
                         }
 
                         // 자막 관련 옵션은 이 하나의 섹션에서만 관리합니다.

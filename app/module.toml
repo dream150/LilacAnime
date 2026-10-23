@@ -58,6 +58,6 @@ cppStandard = "c++17"
 cStandard = "c17"
 stl = "c++_static"
 optimization = "-O2"
-compilerFlags = ["-pthread", "-D_GNU_SOURCE", "-DGGML_USE_CPU"]
+compilerFlags = ["-pthread", "-D_GNU_SOURCE", "-DGGML_USE_CPU", "-DGGML_CPU_GENERIC", "-I/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/cpp", "-I/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/native-whisper/include", "-I/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/native-whisper/ggml/include", "-I/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/native-whisper/ggml/src", "-I/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/native-whisper/ggml/src/ggml-cpu", "-I/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/native-whisper/ggml/src/ggml-cpu/amx", "-I/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/native-whisper/ggml/src/ggml-cpu/tiled", "-I/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/native-whisper/src", "-I/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/native-whisper/src/aneforge"]
 linkLibraries = ["log", "android", "dl", "m"]
 nativeActivity = false
