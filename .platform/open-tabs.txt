@@ -8,4 +8,4 @@
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/cpp/whisper_jni.cpp	0	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/cpp/CMakeLists.txt	747	47	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/native-whisper/whisper-build-config.h	0	0	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/cpp/whisper_engine/compile/ggml-base/ggml_src_ggml-alloc.c	0	1	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/cpp/whisper_engine/compile/ggml-base/ggml_src_ggml-alloc.c	0	0	text
