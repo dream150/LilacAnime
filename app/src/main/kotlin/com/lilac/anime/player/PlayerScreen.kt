@@ -651,6 +651,44 @@ fun PlayerScreen(
         )
     }
 
+    var subtitleLearnProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var subtitleLearnJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var subtitleStylePresent by remember { mutableStateOf(engine.hasSubtitleStyle()) }
+    var subtitlePreviewOn by remember { mutableStateOf(false) }
+    val startSubtitleStyleLearning: () -> Unit = {
+        settingsOpen = false
+        subtitleLearnJob?.cancel()
+        subtitleLearnJob = playerScope.launch {
+            subtitleLearnProgress = 0 to 0
+            val result = try {
+                engine.learnSubtitleStyle(60) { captures, frames -> subtitleLearnProgress = captures to frames }
+            } finally {
+                subtitleLearnProgress = null
+            }
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                result.onSuccess { r ->
+                    subtitleStylePresent = engine.hasSubtitleStyle()
+                    val quality = when {
+                        r.confidence >= 0.75f -> "정확도 좋음"
+                        r.confidence >= 0.4f -> "정확도 보통"
+                        else -> "자막이 나온 장면이 적어 정확도가 낮을 수 있어요"
+                    }
+                    Toast.makeText(context, "자막 스타일을 학습했습니다 ($quality · 자막 장면 ${r.subtitleFrames}개)", Toast.LENGTH_LONG).show()
+                }.onFailure {
+                    Toast.makeText(context, it.message ?: "자막 스타일을 학습하지 못했습니다.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+    subtitleLearnProgress?.let { (captures, frames) ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("자막 스타일 학습 중") },
+            text = { Text("영상을 여러 장면으로 이동하며 자막의 색과 윤곽선을 분석하고 있어요.\n확인한 장면 ${captures}개 · 자막이 보인 장면 ${frames}개") },
+            confirmButton = { TextButton(onClick = { subtitleLearnJob?.cancel() }) { Text("취소") } }
+        )
+    }
+
     val subtitleFilePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
         playerScope.launch(Dispatchers.IO) {
@@ -2507,6 +2545,27 @@ fun PlayerScreen(
                         Row(Modifier.padding(horizontal = 14.dp)) {
                             TextButton(onClick = { startSubtitleEraseSelection() }) {
                                 Text(if (vm.playerSettings.subtitleEraseRegions.isBlank()) "자막 영역 지정" else "자막 영역 다시 지정", fontSize = 12.sp)
+                            }
+                        }
+                        if (vm.playerSettings.subtitleEraseRegions.isNotBlank()) {
+                            Row(Modifier.padding(horizontal = 14.dp)) {
+                                TextButton(onClick = { startSubtitleStyleLearning() }) {
+                                    Text(if (subtitleStylePresent) "자막 스타일 다시 학습" else "자막 스타일 자동 학습", fontSize = 12.sp)
+                                }
+                                if (subtitleStylePresent) {
+                                    TextButton(onClick = {
+                                        engine.clearSubtitleStyle()
+                                        subtitleStylePresent = false
+                                    }) { Text("학습 초기화", fontSize = 12.sp) }
+                                }
+                            }
+                            Row(Modifier.padding(horizontal = 14.dp)) {
+                                TextButton(onClick = {
+                                    subtitlePreviewOn = !subtitlePreviewOn
+                                    engine.setSubtitleErasePreview(subtitlePreviewOn)
+                                }) {
+                                    Text(if (subtitlePreviewOn) "마스크 미리보기 끄기" else "마스크 미리보기 (빨강=지워질 곳, 노랑=글자 인식)", fontSize = 12.sp)
+                                }
                             }
                         }
 

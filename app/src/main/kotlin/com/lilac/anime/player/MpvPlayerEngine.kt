@@ -462,6 +462,45 @@ class MpvPlayerEngine(private val context: Context) {
     @Volatile private var subtitleErasePaused = false
     private var subtitleEraseRegions: List<WatermarkRect> = emptyList()
     private var subtitleEraseKey = ""
+
+    // ---- 자막 스타일 학습 결과 (채움 색/윤곽선/획 굵기). 파일로 저장해 재시작 후에도 쓴다. ----
+    private var subtitleEraseStyle: SubtitleStyle? = null
+    private var subtitleStyleLoaded = false
+    private val subtitleStyleFile: File
+        get() = File(File(context.filesDir, "watermark").apply { mkdirs() }, "sub_erase_style.txt")
+
+    private fun ensureSubtitleStyleLoaded() {
+        if (subtitleStyleLoaded) return
+        subtitleStyleLoaded = true
+        subtitleEraseStyle = runCatching {
+            SubtitleStyle.parse(subtitleStyleFile.takeIf { it.isFile }?.readText())
+        }.getOrNull()
+    }
+
+    fun hasSubtitleStyle(): Boolean {
+        ensureSubtitleStyleLoaded()
+        return subtitleEraseStyle != null
+    }
+
+    /** 학습한 스타일을 지우고 기본 분류 기준으로 되돌린다. */
+    fun clearSubtitleStyle() {
+        subtitleStyleLoaded = true
+        subtitleEraseStyle = null
+        runCatching { subtitleStyleFile.delete() }
+        rebuildSubtitleErase()
+    }
+
+    @Volatile private var subtitleErasePreview = false
+
+    /** 진단용: 지우는 대신 빨강(지워질 곳)/노랑(글자로 인식한 획)으로 표시한다. */
+    fun setSubtitleErasePreview(on: Boolean) {
+        subtitleErasePreview = on
+        rebuildSubtitleErase()
+    }
+
+    private fun rebuildSubtitleErase() {
+        configureSubtitleErase(subtitleEraseRequested, WatermarkRegions.serialize(subtitleEraseRegions))
+    }
     private val subtitleEraseFile: File
         get() = File(File(context.filesDir, "watermark").apply { mkdirs() }, "sub_erase.glsl")
 
@@ -478,11 +517,12 @@ class MpvPlayerEngine(private val context: Context) {
     fun configureSubtitleErase(enabled: Boolean, regions: String) {
         subtitleEraseRequested = enabled
         subtitleEraseRegions = WatermarkRegions.parse(regions)
-        val key = "$enabled:${WatermarkRegions.serialize(subtitleEraseRegions)}"
+        ensureSubtitleStyleLoaded()
+        val key = "$enabled:${WatermarkRegions.serialize(subtitleEraseRegions)}:${subtitleEraseStyle?.serialize()}:$subtitleErasePreview"
         if (key == subtitleEraseKey) return
         subtitleEraseKey = key
         if (subtitleEraseRegions.isNotEmpty()) {
-            runCatching { subtitleEraseFile.writeText(SubtitleEraseShaderHq.build(subtitleEraseRegions), Charsets.US_ASCII) }
+            runCatching { subtitleEraseFile.writeText(SubtitleEraseShaderHq.build(subtitleEraseRegions, style = subtitleEraseStyle, debug = subtitleErasePreview), Charsets.US_ASCII) }
                 .onFailure { Log.e(TAG, "SUBTITLE_ERASE write failed", it) }
         }
         applyHwdecPolicy()
@@ -880,6 +920,97 @@ vec4 hook() {
                 applyHwdecPolicy()
                 applyShaderList()
                 applyWatermarkFilter()
+                if (wasPlaying) play()
+            }
+        }
+    }
+
+    class SubtitleLearnReport(val subtitleFrames: Int, val captures: Int, val confidence: Float)
+
+    /**
+     * 영상을 여러 장면으로 건너뛰며 프레임을 캡처해, 지정한 자막 영역 안의 글자 색/윤곽선/획 굵기를 학습합니다.
+     * 결과는 sub_erase_style.txt 에 저장되고 자막 지우기 셰이더에 바로 반영됩니다.
+     * 학습 중에는 지우기 셰이더를 꺼서 자막이 그대로 찍힌 프레임을 얻고, 끝나면(취소/실패 포함) 재생 위치와 상태를 되돌립니다.
+     */
+    suspend fun learnSubtitleStyle(
+        maxCaptures: Int = 60,
+        onProgress: (captures: Int, subtitleFrames: Int) -> Unit
+    ): Result<SubtitleLearnReport> {
+        val regions = subtitleEraseRegions
+        if (regions.isEmpty()) {
+            return Result.failure(IllegalStateException("먼저 자막 영역을 지정해 주세요."))
+        }
+        val durMs = duration
+        if (durMs < 120_000L) {
+            return Result.failure(IllegalStateException("영상 길이를 알 수 없거나 너무 짧아 학습할 수 없습니다."))
+        }
+        val startPos = currentPosition
+        val wasPlaying = isPlaying
+        val learner = SubtitleStyleLearner()
+        var captures = 0
+        var subtitleFrames = 0
+
+        // 한 곳을 캡처한다. 충분히 모였으면 true.
+        suspend fun sampleAt(posMs: Long): Boolean {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val sec = posMs.coerceAtLeast(0L) / 1000.0
+            runCatching { mpv.command(arrayOf("seek", sec.toString(), "absolute+keyframes")) }
+            waitForSeekSettled()
+            val bmp = runCatching { captureVideoBitmap() }.getOrNull()
+            captures++
+            var enough = false
+            if (bmp != null) {
+                kotlinx.coroutines.withContext(Dispatchers.Default) {
+                    learner.addFrame(bmp, regions)
+                    if (captures % 3 == 0) {
+                        val (frames, ok) = learner.progress()
+                        subtitleFrames = frames
+                        enough = ok
+                    }
+                }
+                bmp.recycle()
+            }
+            onProgress(captures, subtitleFrames)
+            return enough
+        }
+
+        return try {
+            learningWatermark = true // 지우기 셰이더/업스케일 셰이더를 끈다
+            pause()
+            applyShaderList()
+            // 황금비 수열이라 어디서 멈춰도 구간이 고르게 퍼져 있다.
+            var i = 0
+            while (captures < maxCaptures) {
+                val frac = 0.03 + 0.94 * (((i + 1) * 0.6180339887498949) % 1.0)
+                if (sampleAt((durMs * frac).toLong())) break
+                i++
+            }
+            val report = learner.finish()
+                ?: return Result.failure(IllegalStateException(learner.failureReason ?: "자막 스타일을 학습하지 못했습니다."))
+            runCatching { subtitleStyleFile.writeText(report.style.serialize()) }
+                .onFailure { Log.w(TAG, "SUBTITLE_STYLE write failed", it) }
+            subtitleEraseStyle = report.style
+            subtitleStyleLoaded = true
+            Log.i(
+                TAG,
+                "SUBTITLE_LEARN captures=$captures subtitleFrames=${report.subtitleFrames} runs=${report.usedRuns} " +
+                    "share=${report.share} style=${report.style.serialize()}"
+            )
+            Result.success(SubtitleLearnReport(report.subtitleFrames, captures, report.confidence))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            Log.e(TAG, "SUBTITLE_LEARN_FAILED", t)
+            Result.failure(t)
+        } finally {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                learningWatermark = false
+                appliedShaderKey = ""
+                runCatching { seekTo(startPos) }
+                kotlinx.coroutines.delay(200L)
+                applyHwdecPolicy()
+                applyShaderList()
+                rebuildSubtitleErase() // 새 스타일로 셰이더 다시 생성
                 if (wasPlaying) play()
             }
         }
