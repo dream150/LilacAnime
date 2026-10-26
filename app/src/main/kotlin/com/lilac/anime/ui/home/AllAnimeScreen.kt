@@ -1,178 +1,95 @@
 package com.lilac.anime.ui.home
 
-import com.lilac.anime.*
-import com.lilac.anime.cast.*
-import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.matcher.*
-import com.lilac.anime.data.offline.*
-import com.lilac.anime.data.subtitle.*
-import com.lilac.anime.network.*
-import com.lilac.anime.player.*
-import com.lilac.anime.ui.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.settings.*
-import com.lilac.anime.ui.theme.*
-import com.lilac.anime.viewmodel.*
-
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.lilac.anime.ui.AnimeImage
-import com.lilac.anime.data.*
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Explore
+import com.lilac.anime.Anime
+import com.lilac.anime.ui.components.BackdropCard
+import com.lilac.anime.ui.components.EmptyState
+import com.lilac.anime.ui.components.ScreenHeader
+import com.lilac.anime.viewmodel.AnimeViewModel
 
+/**
+ * 전체 작품 탐색. 아래로 당겨서 새로고침(Material3 PullToRefreshBox)한다.
+ * (직접 포인터 이벤트를 가로채던 수제 당겨서 새로고침은 스크롤과 충돌하고 진행 표시도 없었다.)
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AllAnimeScreen(
     vm: AnimeViewModel,
     openDetail: (Anime) -> Unit,
     onNavigate: (String) -> Unit
 ) {
-    LaunchedEffect(Unit) {
-        vm.loadAllAnime()
-    }
+    // 목적지 쪽(AppNavigation)에서도 loadAllAnime 을 부르던 중복 호출을 여기 한 곳으로 합쳤다.
+    LaunchedEffect(Unit) { vm.loadAllAnime() }
 
     val gridState = rememberLazyGridState()
-    var pullDistance by remember { mutableFloatStateOf(0f) }
-    var refreshing by remember { mutableStateOf(false) }
+    val items = vm.allAnime.distinctBy { it.id }
 
-    LaunchedEffect(vm.isAllAnimeLoading) {
-        if (!vm.isAllAnimeLoading) refreshing = false
-    }
-
-    val pullModifier = Modifier.pointerInput(vm.isAllAnimeLoading, vm.playerSettings.videoSourcePreference) {
-        awaitPointerEventScope {
-            while (true) {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                pullDistance = 0f
-                var lastY = down.position.y
-                var triggered = false
-
-                while (true) {
-                    val event = awaitPointerEvent()
-                    val change = event.changes.firstOrNull() ?: break
-                    if (!change.pressed) {
-                        if (triggered && pullDistance > 120f &&
-                            gridState.firstVisibleItemIndex == 0 &&
-                            gridState.firstVisibleItemScrollOffset == 0 &&
-                            !vm.isAllAnimeLoading && !refreshing
-                        ) {
-                            refreshing = true
-                            vm.refreshAnime()
-                        }
-                        pullDistance = 0f
-                        break
-                    }
-
-                    val dy = change.position.y - lastY
-                    lastY = change.position.y
-                    if (dy > 0f &&
-                        gridState.firstVisibleItemIndex == 0 &&
-                        gridState.firstVisibleItemScrollOffset == 0
-                    ) {
-                        pullDistance += dy
-                        if (pullDistance > 120f) triggered = true
-                    } else if (dy < 0f) {
-                        pullDistance = 0f
-                    }
-                }
-            }
-        }
-    }
-
-    AppScaffold(selected = "all", onSelect = onNavigate) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("전체 애니메이션", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader(
+            title = "탐색",
+            subtitle = if (items.isEmpty()) null else "${items.size}개 작품",
+            actions = {
                 if (vm.isAllAnimeLoading) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = Lilac,
-                        strokeWidth = 2.dp
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
                     )
-                } else {
-                    Text("${vm.allAnime.size}개", color = LilacDark, fontSize = 14.sp)
                 }
             }
+        )
 
-            LazyVerticalGrid(
-                state = gridState,
-                columns = GridCells.Adaptive(minSize = 200.dp),
-                modifier = pullModifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                contentPadding = PaddingValues(bottom = 20.dp)
-            ) {
-                // AllAnimeScreen 내의 items 항목 수정
-items(
-    items = vm.allAnime,
-    key = { anime -> anime.id }
-) { anime ->
-    Column(
-        modifier = Modifier.clickableNoIndication { openDetail(anime) }
-    ) {
-        AnimeImage(
-            model = anime.backdrop.ifEmpty { anime.poster }, // backdrop을 사용하고, 없을 경우 poster로 대체
-            contentDescription = anime.title,
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f) // 가로 16:9 비율 설정
-                .clip(RoundedCornerShape(12.dp)),
-            contentScale = ContentScale.Crop
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            anime.title,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onBackground
-        )
-        Text(
-            anime.genres.joinToString(" · "),
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-            fontSize = 11.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
+        PullToRefreshBox(
+            isRefreshing = vm.isAllAnimeLoading,
+            onRefresh = { vm.refreshAnime() },
+            modifier = Modifier.fillMaxSize()
+        ) {
+            if (items.isEmpty() && !vm.isAllAnimeLoading) {
+                Box(Modifier.fillMaxSize()) {
+                    EmptyState(
+                        icon = Icons.Filled.Explore,
+                        title = "작품이 없어요",
+                        message = "아래로 당겨서 다시 불러오세요."
+                    )
+                }
+            } else {
+                LazyVerticalGrid(
+                    state = gridState,
+                    columns = GridCells.Adaptive(minSize = 180.dp),
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp)
+                ) {
+                    items(items = items, key = { it.id }) { anime ->
+                        BackdropCard(
+                            anime = anime,
+                            onClick = { openDetail(anime) },
+                            caption = anime.genres.take(3).joinToString(" · ")
+                        )
+                    }
+                }
             }
         }
     }
 }
-
-// ============================================================
-// HOME RAILS & CARDS
-// ============================================================

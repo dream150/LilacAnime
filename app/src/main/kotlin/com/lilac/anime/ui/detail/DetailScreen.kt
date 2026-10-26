@@ -1,21 +1,13 @@
 package com.lilac.anime.ui.detail
 
 import com.lilac.anime.*
-import com.lilac.anime.cast.*
 import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.matcher.*
 import com.lilac.anime.data.offline.*
 import com.lilac.anime.data.subtitle.*
 import com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime
 import com.lilac.anime.network.*
-import com.lilac.anime.player.*
 import com.lilac.anime.ui.*
-import com.lilac.anime.ui.home.*
 import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.settings.*
-import com.lilac.anime.ui.theme.*
 import com.lilac.anime.viewmodel.*
 
 import android.content.Context
@@ -245,42 +237,6 @@ private suspend fun persistOfflineSubtitleAssets(
                 "SUBTITLE_ASSETS_PERSIST_FAILED source=$source episode=$episodeKey",
                 e
             )
-        }
-    }
-}
-
-@Composable
-private fun DetailStat(label: String, value: Int) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(java.text.NumberFormat.getIntegerInstance().format(value), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f))
-    }
-}
-
-@Composable
-private fun DetailInfoContent(anime: Anime) {
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        val rows = listOf(
-            "방영" to anime.airedDate,
-            "형식" to anime.format,
-            "연도" to anime.year,
-            "제작" to anime.studios.joinToString(", "),
-            "원어" to anime.native,
-            "영어" to anime.english,
-            "로마자" to anime.romaji,
-            "동의어" to anime.synonyms,
-            "출처" to anime.source,
-            "진행" to anime.note
-        )
-        rows.filter { it.second.isNotBlank() }.forEach { (label, value) ->
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text(label, modifier = Modifier.width(58.dp), fontSize = 12.sp, color = Lilac, fontWeight = FontWeight.Bold)
-                Text(value, modifier = Modifier.weight(1f), fontSize = 13.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f))
-            }
-        }
-        if (anime.genres.isNotEmpty()) {
-            Text("장르", fontSize = 12.sp, color = Lilac, fontWeight = FontWeight.Bold)
-            Text(anime.genres.joinToString(" · "), fontSize = 13.sp)
         }
     }
 }
@@ -823,7 +779,6 @@ fun DetailScreen(
                 )
                 Toast.makeText(context, "${ep.displayNumber}화 (${selectedQuality.label}) 다운로드를 시작합니다.", Toast.LENGTH_SHORT).show()
 
-
                 withContext(Dispatchers.IO) {
                     // 영상 메타데이터는 다운로드 큐 등록 직후 저장한다. 자막 서버가 실패/지연되어도
                     // 영상 다운로드 자체와 오프라인 회차 상태가 영향을 받지 않게 한다.
@@ -1074,6 +1029,15 @@ fun DetailScreen(
         }
     }
 
+    // 재생 버튼: 본 기록이 있으면 "EP.n 이어보기", 없으면 "재생"
+    val playLabel = if (lastPlayedProgress != null && lastPlayedEpisode != null) {
+        "EP.${lastPlayedEpisode.displayNumber} 이어보기"
+    } else {
+        "재생"
+    }
+    val canPlay = lastPlayedEpisode != null &&
+        (!isOffline || vm.isEpisodeDownloaded(currentAnime.id, lastPlayedEpisode))
+
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         LazyColumn(
             modifier = Modifier
@@ -1081,224 +1045,124 @@ fun DetailScreen(
                 .navigationBarsPadding(),
             contentPadding = PaddingValues(bottom = 96.dp)
         ) {
+            // ── 상단 히어로 ──────────────────────────────────────────
             item {
-                Box(Modifier.fillMaxWidth().height(280.dp)) {
-                    AnimeImage(
-                        model = currentAnime.backdrop,
-                        contentDescription = currentAnime.title,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.2f)))
-                    IconButton(onClick = back, modifier = Modifier.padding(top = 12.dp, start = 8.dp)) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "뒤로가기", tint = Color.White)
+                DetailHero(
+                    anime = currentAnime,
+                    episodeCount = episodes.size,
+                    onBack = back,
+                    onPosterClick = { showCover = true }
+                )
+            }
+
+            // ── 장르 / 재생·보관·전체 저장 / 조회수 ──────────────────
+            item {
+                Column(Modifier.padding(horizontal = 20.dp)) {
+                    if (currentAnime.genres.isNotEmpty()) {
+                        GenreChips(currentAnime.genres)
+                        Spacer(Modifier.height(16.dp))
                     }
+
+                    DetailActions(
+                        playLabel = playLabel,
+                        canPlay = canPlay,
+                        onPlay = { lastPlayedEpisode?.let(playEpisode) },
+                        saved = saved,
+                        onToggleSaved = { vm.toggleLibrary(context, currentAnime.id) },
+                        showBatch = !isOffline && episodes.isNotEmpty(),
+                        isBatchDownloading = isBatchDownloading,
+                        batchIndex = batchCurrentIndex,
+                        batchTotal = batchTotalCount,
+                        onBatchClick = {
+                            if (isBatchDownloading) {
+                                // 전체 다운로드 진행 중 클릭 시 취소
+                                isBatchDownloading = false
+                                activeExtractEpisode = null
+                                currentExtractDeferred?.cancel()
+                                Toast.makeText(context, "전체 다운로드가 중단되었습니다.", Toast.LENGTH_SHORT).show()
+                            } else {
+                                val notDownloaded = episodes.filter { !vm.isEpisodeDownloaded(currentAnime.id, it) }
+                                if (notDownloaded.isNotEmpty()) {
+                                    processBatchDownload(notDownloaded)
+                                } else {
+                                    Toast.makeText(context, "모든 에피소드가 이미 다운로드되었습니다.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    )
+
+                    if (isLinkkf && viewStats != null) {
+                        Spacer(Modifier.height(14.dp))
+                        ViewStatsCard(
+                            day = viewStats.day,
+                            week = viewStats.week,
+                            month = viewStats.month,
+                            total = viewStats.total
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
                 }
             }
 
+            // ── 정보 / 스토리 / 관련 작품 / (Re:Anime) 회차 탭 ─────────
             item {
-                Column(Modifier.padding(20.dp)) {
-                    Row {
-                        AnimeImage(
-                            model = currentAnime.poster,
-                            contentDescription = currentAnime.title,
-                            modifier = Modifier
-                                .size(width = 110.dp, height = 160.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { showCover = true },
-                            contentScale = ContentScale.Crop
-                        )
-                        Spacer(Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(currentAnime.title, fontSize = 23.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-                            Spacer(Modifier.height(8.dp))
-                            Text("${episodes.size}화", color = LilacDark)
-                            if (currentAnime.note.isNotBlank()) {
-                                Spacer(Modifier.height(4.dp))
-                                Text(currentAnime.note, color = Lilac, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                currentAnime.genres.joinToString(" · "),
-                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.height(18.dp))
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(
-                            enabled = lastPlayedEpisode != null && (!isOffline || vm.isEpisodeDownloaded(currentAnime.id, lastPlayedEpisode)),
-                            onClick = {
-                                lastPlayedEpisode?.let(playEpisode)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Lilac, contentColor = Color.White)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
-                            Spacer(Modifier.width(5.dp))
-                            Text("재생", color = Color.White)
-                        }
-
-                        OutlinedButton(onClick = { vm.toggleLibrary(context, currentAnime.id) }) {
-                            Icon(if (saved) Icons.Default.Favorite else Icons.Default.FavoriteBorder, contentDescription = null, tint = MaterialTheme.colorScheme.onBackground)
-                            Spacer(Modifier.width(5.dp))
-                            Text(if (saved) "저장됨" else "내 목록", color = MaterialTheme.colorScheme.onBackground)
-                        }
-
-                        if (!isOffline && episodes.isNotEmpty()) {
-                            OutlinedButton(
-                                onClick = {
-                                    if (isBatchDownloading) {
-                                        // 전체 다운로드 진행 중 클릭 시 취소
-                                        isBatchDownloading = false
-                                        activeExtractEpisode = null
-                                        currentExtractDeferred?.cancel()
-                                        Toast.makeText(context, "전체 다운로드가 중단되었습니다.", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        val notDownloaded = episodes.filter { !vm.isEpisodeDownloaded(currentAnime.id, it) }
-                                        if (notDownloaded.isNotEmpty()) {
-                                            processBatchDownload(notDownloaded)
-                                        } else {
-                                            Toast.makeText(context, "모든 에피소드가 이미 다운로드되었습니다.", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
-                            ) {
-                                Icon(
-                                    if (isBatchDownloading) Icons.Default.Close else Icons.Default.DownloadForOffline,
-                                    contentDescription = null,
-                                    tint = if (isBatchDownloading) Color.Red else Lilac
-                                )
-                                Spacer(Modifier.width(5.dp))
-                                Text(
-                                    if (isBatchDownloading) "취소 ($batchCurrentIndex/$batchTotalCount)" else "전체 저장",
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
-                            }
-                        }
-                    }
-
-                    if (isLinkkf && viewStats != null) {
-                        Spacer(Modifier.height(12.dp))
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceEvenly
-                            ) {
-                                DetailStat("오늘", viewStats.day)
-                                DetailStat("이번 주", viewStats.week)
-                                DetailStat("이번 달", viewStats.month)
-                                DetailStat("전체", viewStats.total)
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.height(18.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Lilac.copy(alpha = 0.08f)),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(onClick = { detailTab = 0 }, modifier = Modifier.weight(1f)) {
-                            Text("정보", color = if (detailTab == 0) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontWeight = if (detailTab == 0) FontWeight.Bold else FontWeight.Normal)
-                        }
-                        TextButton(onClick = { detailTab = 1 }, modifier = Modifier.weight(1f)) {
-                            Text("스토리", color = if (detailTab == 1) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontWeight = if (detailTab == 1) FontWeight.Bold else FontWeight.Normal)
-                        }
-                        TextButton(onClick = { detailTab = 2 }, modifier = Modifier.weight(1f)) {
-                            Text("관련 작품", color = if (detailTab == 2) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f), fontWeight = if (detailTab == 2) FontWeight.Bold else FontWeight.Normal)
-                        }
-                        if (isReAnime) {
-                            TextButton(onClick = { detailTab = 3 }, modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "회차",
-                                    color = if (detailTab == 3) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                                    fontWeight = if (detailTab == 3) FontWeight.Bold else FontWeight.Normal
-                                )
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
+                Column(Modifier.padding(horizontal = 20.dp)) {
+                    DetailTabs(
+                        selected = detailTab,
+                        showEpisodeTab = isReAnime,
+                        onSelect = { detailTab = it }
+                    )
+                    Spacer(Modifier.height(16.dp))
                     when (detailTab) {
                         0 -> DetailInfoContent(currentAnime)
-                        1 -> Text(
-                            currentAnime.description.replace("\r\n", "\n").trim().ifBlank { "설명이 없습니다." },
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
-                            lineHeight = 22.sp
+                        1 -> ExpandableText(
+                            currentAnime.description.replace("\r\n", "\n").trim().ifBlank { "설명이 없습니다." }
                         )
                         2 -> {
                             if (isReAnime && currentAnime.reAnimeRelated.isNotEmpty()) {
-                                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     currentAnime.reAnimeRelated.forEach { related ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().clickable {
-                                                val slug = related.id.removePrefix("reanime:")
-                                                vm.cacheAnime(Anime(
-                                                    id = related.id,
-                                                    title = related.title,
-                                                    native = related.nativeTitle,
-                                                    poster = related.poster,
-                                                    backdrop = related.poster,
-                                                    format = related.format,
-                                                    year = related.seasonYear?.toString().orEmpty(),
-                                                    detailUrl = "https://reanime.to/anime/$slug"
-                                                ))
-                                                openRelated(Anime(
-                                                    id = related.id, title = related.title, native = related.nativeTitle,
-                                                    poster = related.poster, backdrop = related.poster, format = related.format,
-                                                    year = related.seasonYear?.toString().orEmpty(), detailUrl = "https://reanime.to/anime/$slug"
-                                                ))
-                                            }.padding(vertical = 2.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            AnimeImage(
-                                                model = related.poster,
-                                                contentDescription = related.title,
-                                                modifier = Modifier.size(64.dp, 88.dp).clip(RoundedCornerShape(10.dp)),
-                                                contentScale = ContentScale.Crop
-                                            )
-                                            Spacer(Modifier.width(12.dp))
-                                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                Text(related.title, fontWeight = FontWeight.SemiBold, maxLines = 2)
-                                                if (related.nativeTitle.isNotBlank()) Text(related.nativeTitle, fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f))
-                                                Text(
-                                                    listOfNotNull(related.relationType.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }.takeIf { it.isNotBlank() }, related.format.takeIf { it.isNotBlank() }, related.seasonYear?.toString()).joinToString(" · "),
-                                                    fontSize = 11.sp, color = Lilac
-                                                )
+                                        val slug = related.id.removePrefix("reanime:")
+                                        val relatedAnime = Anime(
+                                            id = related.id,
+                                            title = related.title,
+                                            native = related.nativeTitle,
+                                            poster = related.poster,
+                                            backdrop = related.poster,
+                                            format = related.format,
+                                            year = related.seasonYear?.toString().orEmpty(),
+                                            detailUrl = "https://reanime.to/anime/$slug"
+                                        )
+                                        RelatedEntryRow(
+                                            title = related.title,
+                                            subtitle = related.nativeTitle,
+                                            meta = listOfNotNull(
+                                                related.relationType.replace('_', ' ').lowercase()
+                                                    .replaceFirstChar { it.uppercase() }
+                                                    .takeIf { it.isNotBlank() },
+                                                related.format.takeIf { it.isNotBlank() },
+                                                related.seasonYear?.toString()
+                                            ).joinToString(" · "),
+                                            poster = related.poster,
+                                            onClick = {
+                                                vm.cacheAnime(relatedAnime)
+                                                openRelated(relatedAnime)
                                             }
-                                        }
+                                        )
                                     }
                                 }
                             } else if (relatedSeries.isNotEmpty() && isLinkkf) {
-                                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
                                     relatedSeries.forEach { series ->
                                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             if (relatedSeries.size > 1) {
-                                                Text(series.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                                Text(series.name, style = MaterialTheme.typography.titleSmall)
                                             }
-                                            LazyRow(
-                                                contentPadding = PaddingValues(horizontal = 2.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                            ) {
+                                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                                 items(series.items.take(12)) { related ->
-                                                    Column(
-                                                        modifier = Modifier.width(120.dp).clickable {
-                                                            vm.cacheAnime(related)
-                                                            openRelated(related)
-                                                        }
-                                                    ) {
-                                                        AnimeImage(
-                                                            model = related.poster,
-                                                            contentDescription = related.title,
-                                                            modifier = Modifier.fillMaxWidth().height(165.dp).clip(RoundedCornerShape(12.dp)),
-                                                            contentScale = ContentScale.Crop
-                                                        )
-                                                        Spacer(Modifier.height(6.dp))
-                                                        Text(related.title, maxLines = 2, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                                        Text(
-                                                            listOfNotNull(related.year.takeIf { it.isNotBlank() }, related.format.takeIf { it.isNotBlank() }).joinToString(" · "),
-                                                            maxLines = 1, fontSize = 10.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                                                        )
+                                                    RelatedPosterCard(anime = related) {
+                                                        vm.cacheAnime(related)
+                                                        openRelated(related)
                                                     }
                                                 }
                                             }
@@ -1306,287 +1170,122 @@ fun DetailScreen(
                                     }
                                 }
                             } else {
-                                Text("관련 작품 정보가 없습니다.", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f), modifier = Modifier.padding(vertical = 16.dp))
+                                Text(
+                                    "관련 작품 정보가 없습니다.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 16.dp)
+                                )
                             }
                         }
                     }
                 }
             }
 
+            // ── 에피소드 목록 ────────────────────────────────────────
             if (!isReAnime || detailTab == 3) {
                 if (episodesLoading) {
                     item {
                         Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = Lilac)
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                         }
                     }
                 } else if (episodes.isNotEmpty()) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "에피소드",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Lilac.copy(alpha = 0.08f))
-                                .padding(3.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    newestFirst = true
-                                    episodePage = 0
-                                    scope.launch { OfflineStore.saveEpisodeSortOrder(context, currentAnime.id, true) }
-                                },
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = if (newestFirst) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
-                                ),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                            ) {
-                                Text("최신화순", fontSize = 12.sp, fontWeight = if (newestFirst) FontWeight.Bold else FontWeight.Normal)
-                            }
-                            TextButton(
-                                onClick = {
-                                    newestFirst = false
-                                    episodePage = 0
-                                    scope.launch { OfflineStore.saveEpisodeSortOrder(context, currentAnime.id, false) }
-                                },
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = if (!newestFirst) Lilac else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
-                                ),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                            ) {
-                                Text("오래된화순", fontSize = 12.sp, fontWeight = if (!newestFirst) FontWeight.Bold else FontWeight.Normal)
-                            }
-                        }
-                    }
-                }
-
-                if (isLinkkf && vm.linkkfEpisodeServers.size > 1) {
                     item {
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
-                        ) {
-                            items(vm.linkkfEpisodeServers) { server ->
-                                FilterChip(
-                                    selected = vm.linkkfSelectedServerId == server.id,
-                                    onClick = {
-                                        episodePage = 0
-                                        episodeQuery = ""
-                                        vm.selectLinkkfEpisodeServer(currentAnime, server.id)
-                                    },
-                                    label = { Text(server.name) }
-                                )
+                        EpisodeListHeader(
+                            total = sortedEpisodes.size,
+                            newestFirst = newestFirst,
+                            onSortChange = { newest ->
+                                newestFirst = newest
+                                episodePage = 0
+                                scope.launch { OfflineStore.saveEpisodeSortOrder(context, currentAnime.id, newest) }
                             }
-                        }
-                    }
-                }
-
-                item {
-                    OutlinedTextField(
-                        value = episodeQuery,
-                        onValueChange = { episodeQuery = it },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
-                        singleLine = true,
-                        placeholder = { Text("회차 검색") },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                }
-
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            enabled = episodePage > 0,
-                            onClick = { episodePage-- }
-                        ) {
-                            Icon(Icons.Default.ChevronLeft, contentDescription = "이전 회차 페이지")
-                        }
-                        Text(
-                            "${episodePage + 1} / $episodePageCount",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
                         )
-                        IconButton(
-                            enabled = episodePage < episodePageCount - 1,
-                            onClick = { episodePage++ }
-                        ) {
-                            Icon(Icons.Default.ChevronRight, contentDescription = "다음 회차 페이지")
+                    }
+
+                    if (isLinkkf && vm.linkkfEpisodeServers.size > 1) {
+                        item {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                            ) {
+                                items(vm.linkkfEpisodeServers) { server ->
+                                    FilterChip(
+                                        selected = vm.linkkfSelectedServerId == server.id,
+                                        onClick = {
+                                            episodePage = 0
+                                            episodeQuery = ""
+                                            vm.selectLinkkfEpisodeServer(currentAnime, server.id)
+                                        },
+                                        label = { Text(server.name) }
+                                    )
+                                }
+                            }
                         }
                     }
-                }
 
-                items(visibleEpisodes) { ep ->
-                    val downloadKey = offlineDownloadId(currentAnime.id, ep)
-                    val isDownloaded = vm.isEpisodeDownloaded(currentAnime.id, ep)
-                    val downloadingProgress = downloadProgressMap[downloadKey]
-                    val epProgress = vm.getProgress(currentAnime.id, ep.displayNumber, ep.number)
+                    item {
+                        OutlinedTextField(
+                            value = episodeQuery,
+                            onValueChange = { episodeQuery = it },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+                            singleLine = true,
+                            placeholder = { Text("회차 검색") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            shape = RoundedCornerShape(28.dp)
+                        )
+                    }
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isDownloaded) Lilac.copy(alpha = 0.15f) else Color.Transparent)
-                            .clickableNoIndication {
+                    if (episodePageCount > 1) {
+                        item {
+                            EpisodePager(
+                                page = episodePage,
+                                pageCount = episodePageCount,
+                                onPrev = { episodePage-- },
+                                onNext = { episodePage++ }
+                            )
+                        }
+                    }
+
+                    items(visibleEpisodes) { ep ->
+                        val downloadKey = offlineDownloadId(currentAnime.id, ep)
+                        val isDownloaded = vm.isEpisodeDownloaded(currentAnime.id, ep)
+                        val downloadingProgress = downloadProgressMap[downloadKey]
+                        val epProgress = vm.getProgress(currentAnime.id, ep.displayNumber, ep.number)
+                        val isLastPlayed = lastPlayedProgress != null && lastPlayedEpisode?.id == ep.id
+
+                        EpisodeRow(
+                            ep = ep,
+                            isReAnime = isReAnime,
+                            isDownloaded = isDownloaded,
+                            downloadingProgress = downloadingProgress,
+                            watchProgress = epProgress?.progress,
+                            isLastPlayed = isLastPlayed,
+                            isOffline = isOffline,
+                            canDownload = ep.playable && !isBatchDownloading && downloadingProgress == null,
+                            onPlay = {
                                 if (ep.playable && (isDownloaded || !isOffline)) playEpisode(ep)
-                            }
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Lilac.copy(alpha = 0.1f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(ep.displayNumber, color = Lilac, fontWeight = FontWeight.Bold)
-                        }
-
-                        Spacer(Modifier.width(16.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(ep.title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-                            if (isReAnime && ep.nativeTitle.isNotBlank()) {
-                                Text(
-                                    ep.nativeTitle,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.58f),
-                                    maxLines = 1
-                                )
-                            }
-                            if (isReAnime) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (ep.isFiller) {
-                                        Text(
-                                            "FILLER",
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.10f))
-                                                .padding(horizontal = 5.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                    if (ep.isRecap) {
-                                        Text(
-                                            "RECAP",
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.tertiary,
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f))
-                                                .padding(horizontal = 5.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                    if (ep.airedDate.isNotBlank()) {
-                                        Text(
-                                            ep.airedDate.substringBefore("T"),
-                                            fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.48f)
-                                        )
-                                    }
-                                }
-                            }
-                            if (!ep.playable) {
-                                Text(
-                                    "재생 불가",
-                                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                                    fontSize = 11.sp
-                                )
-                            }
-                            if (isDownloaded) {
-                                Text("오프라인 시청 가능", color = LilacDark, fontSize = 12.sp)
-                            } else if (downloadingProgress != null) {
-                                val percentText = (downloadingProgress * 100).toInt()
-                                Text("다운로드 중... $percentText%", color = Lilac, fontSize = 12.sp)
-                            }
-
-                            if (epProgress != null && epProgress.progress > 0f) {
-                                Spacer(Modifier.height(4.dp))
-                                LinearProgressIndicator(
-                                    progress = { epProgress.progress },
-                                    modifier = Modifier.fillMaxWidth(0.8f).height(3.dp),
-                                    color = Lilac
-                                )
-                            }
-                        }
-
-                        when {
-                            isDownloaded -> {
-                                IconButton(
-                                    onClick = { vm.deleteDownload(context, anime, ep) }
-                                ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "삭제", tint = MaterialTheme.colorScheme.error)
-                                }
-                            }
-                            downloadingProgress != null -> {
-                                // 다운로드 진행 중: Circular Progress + 클릭 시 다운로드 취소
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clickable {
-                                            vm.cancelDownload(context, currentAnime, ep)
-                                            Toast.makeText(context, "${ep.number}화 다운로드가 취소되었습니다.", Toast.LENGTH_SHORT).show()
-                                        }
-                                ) {
-                                    CircularProgressIndicator(
-                                        progress = { downloadingProgress ?: 0f },
-                                        modifier = Modifier.fillMaxSize(),
-                                        color = Lilac,
-                                        strokeWidth = 3.dp
-                                    )
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = "취소",
-                                        tint = Lilac,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                            !isOffline -> {
-                                IconButton(
-                                    enabled = ep.playable && !isBatchDownloading && downloadingProgress == null,
-                                    onClick = { processSingleDownload(ep) }
-                                ) {
-                                    Icon(Icons.Default.Download, contentDescription = "다운로드", tint = Lilac)
-                                }
-                            }
-                            else -> {
-                                Icon(Icons.Default.CloudOff, contentDescription = "오프라인", tint = Color.Gray)
-                            }
-                        }
+                            },
+                            onDelete = { vm.deleteDownload(context, anime, ep) },
+                            onCancelDownload = {
+                                vm.cancelDownload(context, currentAnime, ep)
+                                Toast.makeText(context, "${ep.number}화 다운로드가 취소되었습니다.", Toast.LENGTH_SHORT).show()
+                            },
+                            onDownload = { processSingleDownload(ep) }
+                        )
                     }
-                }
                 } else {
                     item {
-                        Text("에피소드가 없습니다.", modifier = Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onBackground)
+                        Text(
+                            "에피소드가 없습니다.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(20.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
-
         }
 
         if (showCover) {
@@ -1662,10 +1361,9 @@ fun DetailScreen(
                                 onClick = {
                                     currentQualityDeferred?.complete(quality)
                                 },
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Lilac)
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                             ) {
-                                Text("${quality.label} 선택", color = Color.White)
+                                Text("${quality.label} 선택")
                             }
                         }
                     }
@@ -1685,7 +1383,6 @@ fun DetailScreen(
 // ============================================================
 // PLAYER
 // ============================================================
-
 
 const val USER_SUBTITLE_DIR = "user_subtitles"
 

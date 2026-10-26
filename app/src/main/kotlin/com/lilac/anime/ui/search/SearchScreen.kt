@@ -1,10 +1,11 @@
 package com.lilac.anime.ui.search
 
+import com.lilac.anime.ui.components.EmptyState
+import com.lilac.anime.ui.components.PosterRow
+import com.lilac.anime.ui.components.ScreenHeader
 import com.lilac.anime.*
 import com.lilac.anime.data.*
-import com.lilac.anime.ui.*
 import com.lilac.anime.ui.navigation.AppScaffold
-import com.lilac.anime.ui.theme.*
 import com.lilac.anime.viewmodel.*
 
 import androidx.compose.foundation.background
@@ -104,9 +105,8 @@ fun SearchScreen(
 
     AppScaffold(selected = "search", onSelect = onNavigate) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
-                Text("검색", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(12.dp))
+            ScreenHeader(title = "검색")
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -116,11 +116,11 @@ fun SearchScreen(
                     trailingIcon = {
                         if (query.isNotEmpty()) {
                             IconButton(onClick = { query = "" }) {
-                                Icon(Icons.Default.Clear, null)
+                                Icon(Icons.Default.Clear, contentDescription = "지우기")
                             }
                         }
                     },
-                    shape = RoundedCornerShape(18.dp),
+                    shape = RoundedCornerShape(28.dp),
                     singleLine = true
                 )
             }
@@ -159,7 +159,11 @@ fun SearchScreen(
 
             if (results.isEmpty()) {
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    Text("검색 결과가 없습니다.")
+                    EmptyState(
+                        icon = Icons.Default.Search,
+                        title = "검색 결과가 없어요",
+                        message = "다른 검색어를 입력하거나 필터를 초기화해 보세요."
+                    )
                 }
             } else {
                 LazyColumn(
@@ -325,39 +329,5 @@ private fun FilterSection(
 
 @Composable
 private fun SearchResultRow(anime: Anime, open: (Anime) -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable { open(anime) },
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        AnimeImage(
-            model = anime.poster,
-            contentDescription = anime.title,
-            modifier = Modifier
-                .size(width = 78.dp, height = 110.dp)
-                .clip(RoundedCornerShape(12.dp)),
-            contentScale = ContentScale.Crop
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                anime.title,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (anime.genres.isNotEmpty()) {
-                Spacer(Modifier.height(5.dp))
-                Text(
-                    anime.genres.joinToString(" · "),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
+    PosterRow(anime = anime, onClick = { open(anime) })
 }

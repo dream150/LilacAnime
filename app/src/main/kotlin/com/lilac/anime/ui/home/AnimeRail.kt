@@ -1,75 +1,33 @@
 package com.lilac.anime.ui.home
 
-import com.lilac.anime.*
-import com.lilac.anime.cast.*
-import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.matcher.*
-import com.lilac.anime.data.offline.*
-import com.lilac.anime.data.subtitle.*
-import com.lilac.anime.network.*
-import com.lilac.anime.player.*
-import com.lilac.anime.ui.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.settings.*
-import com.lilac.anime.ui.theme.*
-import com.lilac.anime.viewmodel.*
-
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.lilac.anime.ui.AnimeImage
-import com.lilac.anime.data.*
+import com.lilac.anime.Anime
+import com.lilac.anime.ui.components.BackdropCard
 
+/** 가로로 넘기는 작품 목록. 카드 모양은 시청 기록/탐색과 같은 BackdropCard. */
 @Composable
 fun AnimeRail(list: List<Anime>, openDetail: (Anime) -> Unit) {
+    // 같은 작품이 두 번 들어오면 LazyRow 의 key 충돌로 앱이 죽으므로 먼저 중복을 없앤다.
+    val unique = remember(list) { list.distinctBy { it.id } }
     LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        items(list) { anime ->
-            Column(
-                modifier = Modifier
-                    .width(190.dp) // 계속 시청하기와 동일한 가로 너비
-                    .clickableNoIndication { openDetail(anime) }
-            ) {
-                AnimeImage(
-                    model = anime.backdrop.ifEmpty { anime.poster }, // backdrop 사용[cite: 8]
-                    contentDescription = anime.title,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(110.dp) // 계속 시청하기와 동일한 가로 높이[cite: 8]
-                        .clip(RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Crop
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    anime.title,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-            }
+        items(unique, key = { it.id }) { anime ->
+            BackdropCard(
+                anime = anime,
+                onClick = { openDetail(anime) },
+                modifier = Modifier.width(200.dp),
+                caption = anime.genres.take(2).joinToString(" · ")
+            )
         }
     }
 }
-
-// ============================================================
-// SEARCH & LIBRARY
-// ============================================================

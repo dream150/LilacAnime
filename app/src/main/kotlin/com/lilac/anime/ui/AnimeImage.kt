@@ -1,29 +1,20 @@
 package com.lilac.anime.ui
 
-import com.lilac.anime.*
-import com.lilac.anime.cast.*
-import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.*
-import com.lilac.anime.data.matcher.*
-import com.lilac.anime.data.offline.*
-import com.lilac.anime.data.subtitle.*
-import com.lilac.anime.network.*
-import com.lilac.anime.player.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.home.*
-import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.settings.*
-import com.lilac.anime.ui.theme.*
-import com.lilac.anime.viewmodel.*
-
 import android.util.Log
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
 
+/**
+ * 작품 이미지. 로딩 중/실패/주소 없음일 때도 자리를 유지해서 목록이 덜컥거리지 않게 한다.
+ * (이전에는 주소가 비면 아무것도 그리지 않아 카드 크기가 줄어들었고,
+ * 이미지 하나가 로드될 때마다 로그를 남겨서 스크롤이 무거웠다.)
+ */
 @Composable
 fun AnimeImage(
     model: String,
@@ -32,29 +23,23 @@ fun AnimeImage(
     contentScale: ContentScale = ContentScale.Crop
 ) {
     val normalized = model.trim()
+    val placeholderColor = MaterialTheme.colorScheme.surfaceContainerHigh
 
     if (normalized.isBlank()) {
-        Log.w("AnimeImage", "EMPTY_URL title=$contentDescription")
+        Box(modifier.background(placeholderColor))
         return
     }
 
+    val painter = ColorPainter(placeholderColor)
     AsyncImage(
         model = normalized,
         contentDescription = contentDescription,
         modifier = modifier,
+        placeholder = painter,
+        error = painter,
         contentScale = contentScale,
-        onSuccess = {
-            Log.d(
-                "AnimeImage",
-                "LOADED title=$contentDescription url=$normalized"
-            )
-        },
         onError = { state ->
-            Log.e(
-                "AnimeImage",
-                "FAILED title=$contentDescription url=$normalized error=${state.result.throwable}",
-                state.result.throwable
-            )
+            Log.w("AnimeImage", "FAILED title=$contentDescription url=$normalized error=${state.result.throwable}")
         }
     )
 }

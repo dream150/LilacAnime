@@ -1,203 +1,113 @@
 package com.lilac.anime.ui.home
 
-import com.lilac.anime.*
-import com.lilac.anime.cast.*
-import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.*
-import com.lilac.anime.data.matcher.*
-import com.lilac.anime.data.offline.*
-import com.lilac.anime.data.subtitle.*
-import com.lilac.anime.network.*
-import com.lilac.anime.player.*
-import com.lilac.anime.ui.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.settings.*
-import com.lilac.anime.ui.theme.*
-import com.lilac.anime.viewmodel.*
-
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.SelectAll
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.lilac.anime.ui.AnimeImage
+import com.lilac.anime.Anime
+import com.lilac.anime.WatchProgress
+import com.lilac.anime.ui.components.BackdropCard
+import com.lilac.anime.ui.components.EmptyState
+import com.lilac.anime.ui.components.ScreenHeader
+import com.lilac.anime.ui.components.SelectionBar
+import com.lilac.anime.viewmodel.AnimeViewModel
 
+/** 예전 "history" 경로용 화면. 내용은 보관함의 '시청 기록' 탭과 같다. */
 @Composable
 fun WatchHistoryScreen(
     vm: AnimeViewModel,
     open: (Anime) -> Unit,
     onNavigate: (String) -> Unit
 ) {
-    val context = LocalContext.current
-    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var selectionMode by remember { mutableStateOf(false) }
-    var resolvedAnime by remember { mutableStateOf<Map<String, Anime>>(emptyMap()) }
-
-    val historyAnimeIds = vm.watchHistory.map { it.animeId }.distinct()
-
-    LaunchedEffect(historyAnimeIds, vm.homeAnime, vm.allAnime) {
-        val available = (vm.homeAnime + vm.allAnime).distinctBy { it.id }.associateBy { it.id }.toMutableMap()
-        for (id in historyAnimeIds) {
-            if (!available.containsKey(id)) OfflineStore.getAnime(context, id)?.let { available[id] = it }
-        }
-        resolvedAnime = available
-    }
-
-    val historyItems = vm.watchHistory
-        .distinctBy { it.animeId }
-        .mapNotNull { progress -> resolvedAnime[progress.animeId]?.let { it to progress } }
-
-    fun toggleSelection(id: String) {
-        selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
-        if (selectedIds.isEmpty()) selectionMode = false
-    }
-
-    AppScaffold(selected = "history", onSelect = onNavigate) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
-            if (selectionMode) {
-                SelectionToolbar(
-                    selectedCount = selectedIds.size,
-                    totalCount = historyItems.size,
-                    onSelectAll = { selectedIds = historyItems.map { it.first.id }.toSet() },
-                    onDelete = {
-                        vm.deleteWatchHistory(context, selectedIds)
-                        selectedIds = emptySet()
-                        selectionMode = false
-                    },
-                    onCancel = { selectedIds = emptySet(); selectionMode = false }
-                )
-            } else {
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("시청기록", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                    Text("${historyItems.size}개", color = LilacDark, fontSize = 14.sp)
-                }
-            }
-
-            if (historyItems.isEmpty()) {
-                Column(
-                    Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Icon(Icons.Default.History, null, Modifier.size(64.dp), tint = Lilac)
-                    Spacer(Modifier.height(16.dp))
-                    Text("시청기록이 없습니다", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                }
-            } else {
-                androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                    columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(minSize = 200.dp),
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    contentPadding = PaddingValues(bottom = 20.dp)
-                ) {
-                    items(historyItems, key = { it.first.id }) { (anime, progress) ->
-                        val selected = anime.id in selectedIds
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .combinedClickable(
-                                    onClick = { if (selectionMode) toggleSelection(anime.id) else open(anime) },
-                                    onLongClick = {
-                                        if (!selectionMode) {
-                                            selectionMode = true
-                                            selectedIds = setOf(anime.id)
-                                        } else toggleSelection(anime.id)
-                                    }
-                                )
-                        ) {
-                            Column {
-                                Box(
-                                    Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                                        .clip(RoundedCornerShape(12.dp))
-                                ) {
-                                    AnimeImage(
-                                        model = anime.backdrop.ifEmpty { anime.poster },
-                                        contentDescription = anime.title,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                    Box(Modifier.fillMaxSize().background(Lilac.copy(alpha = if (selected) .42f else 0f)))
-                                    if (selected) {
-                                        Surface(
-                                            modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).size(32.dp),
-                                            shape = RoundedCornerShape(50),
-                                            color = Lilac,
-                                            shadowElevation = 2.dp
-                                        ) {
-                                            Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.padding(6.dp))
-                                        }
-                                    }
-                                    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(8.dp)) {
-                                        LinearProgressIndicator(
-                                            progress = { progress.progress.coerceIn(0f, 1f) },
-                                            modifier = Modifier.fillMaxWidth().height(4.dp),
-                                            color = Lilac
-                                        )
-                                    }
-                                }
-                                Spacer(Modifier.height(6.dp))
-                                Text(anime.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
-                                Text("EP.${progress.episodeKey}", color = Lilac, fontSize = 11.sp, maxLines = 1)
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader(title = "시청 기록")
+        WatchHistoryContent(vm = vm, open = open)
     }
 }
 
+/**
+ * 시청 기록 목록(Scaffold 없는 알맹이). 길게 눌러 여러 개를 골라 지울 수 있다.
+ * 작품 정보는 캐시에 없으면 저장된 스냅샷에서 찾는다.
+ */
 @Composable
-private fun SelectionToolbar(
-    selectedCount: Int,
-    totalCount: Int,
-    onSelectAll: () -> Unit,
-    onDelete: () -> Unit,
-    onCancel: () -> Unit
-) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        TextButton(onClick = onSelectAll, contentPadding = PaddingValues(horizontal = 4.dp)) {
-            Icon(Icons.Default.SelectAll, null, Modifier.size(20.dp))
-            Spacer(Modifier.width(4.dp))
-            Text(if (selectedCount == totalCount) "전체해제" else "전체선택")
+fun WatchHistoryContent(vm: AnimeViewModel, open: (Anime) -> Unit) {
+    val context = LocalContext.current
+    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val selectionMode = selectedIds.isNotEmpty()
+    var resolved by remember { mutableStateOf<Map<String, Anime>>(emptyMap()) }
+
+    val historyIds = vm.watchHistory.map { it.animeId }.distinct()
+    LaunchedEffect(historyIds, vm.homeAnime, vm.allAnime) {
+        resolved = vm.resolveAnimeMap(context, historyIds)
+    }
+
+    val items: List<Pair<Anime, WatchProgress>> = vm.watchHistory
+        .distinctBy { it.animeId }
+        .mapNotNull { progress -> resolved[progress.animeId]?.let { it to progress } }
+
+    Column(Modifier.fillMaxSize()) {
+        if (selectionMode) {
+            SelectionBar(
+                selectedCount = selectedIds.size,
+                totalCount = items.size,
+                onSelectAll = {
+                    selectedIds = if (selectedIds.size == items.size) emptySet()
+                    else items.map { it.first.id }.toSet()
+                },
+                onDelete = {
+                    vm.deleteWatchHistory(context, selectedIds)
+                    selectedIds = emptySet()
+                },
+                onCancel = { selectedIds = emptySet() }
+            )
         }
-        Text("${selectedCount}개 선택", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-        IconButton(enabled = selectedCount > 0, onClick = onDelete) {
-            Icon(Icons.Default.Delete, "삭제", tint = if (selectedCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = .35f))
+
+        if (items.isEmpty()) {
+            EmptyState(
+                icon = Icons.Filled.History,
+                title = "시청 기록이 없어요",
+                message = "작품을 보기 시작하면 여기에 이어보기 목록이 쌓여요."
+            )
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 180.dp),
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp)
+            ) {
+                items(items, key = { it.first.id }) { (anime, progress) ->
+                    val selected = anime.id in selectedIds
+                    BackdropCard(
+                        anime = anime,
+                        progress = progress.progress,
+                        selected = selected,
+                        caption = "EP.${progress.episodeKey}",
+                        onClick = {
+                            if (selectionMode) {
+                                selectedIds = if (selected) selectedIds - anime.id else selectedIds + anime.id
+                            } else {
+                                open(anime)
+                            }
+                        },
+                        onLongClick = { selectedIds = selectedIds + anime.id }
+                    )
+                }
+            }
         }
-        IconButton(onClick = onCancel) { Icon(Icons.Default.Close, "취소") }
     }
 }

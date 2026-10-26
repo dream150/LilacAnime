@@ -1,19 +1,9 @@
 package com.lilac.anime
 
-import com.lilac.anime.cast.*
-import com.lilac.anime.core.model.*
 import com.lilac.anime.core.update.*
-import com.lilac.anime.data.matcher.*
 import com.lilac.anime.data.offline.*
-import com.lilac.anime.data.subtitle.*
-import com.lilac.anime.network.*
 import com.lilac.anime.player.*
-import com.lilac.anime.ui.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.home.*
 import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.settings.*
 import com.lilac.anime.ui.theme.*
 import com.lilac.anime.viewmodel.*
 
@@ -55,6 +45,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
@@ -113,7 +104,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.lilac.anime.ui.AnimeImage
-import com.lilac.anime.data.*
 import com.lilac.anime.data.subtitle.translation.providers.LocalAiTranslationRuntime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -335,6 +325,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 상태바/내비게이션바를 투명하게 하고 앱 테마(LilacTheme)가 아이콘 색을 정한다.
+        enableEdgeToEdge()
         currentActivity = this
 
         requestNotificationPermission()
@@ -351,6 +343,8 @@ class MainActivity : FragmentActivity() {
             var updateBusy by remember {
                 mutableStateOf(false)
             }
+
+            val updateScope = androidx.compose.runtime.rememberCoroutineScope()
 
             var updateError by remember {
                 mutableStateOf<String?>(null)
@@ -485,9 +479,7 @@ class MainActivity : FragmentActivity() {
                                         installPermissionGranted = true
                                         updateBusy = true
 
-                                        CoroutineScope(
-                                            Dispatchers.Main
-                                        ).launch {
+                                        updateScope.launch {
                                             try {
                                                 val apk =
                                                     GithubReleaseChecker

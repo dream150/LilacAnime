@@ -1,147 +1,157 @@
 package com.lilac.anime.ui.search
 
-import com.lilac.anime.*
-import com.lilac.anime.cast.*
-import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.matcher.*
-import com.lilac.anime.data.offline.*
-import com.lilac.anime.data.subtitle.*
-import com.lilac.anime.network.*
-import com.lilac.anime.player.*
-import com.lilac.anime.ui.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.home.*
-import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.settings.*
-import com.lilac.anime.ui.theme.*
-import com.lilac.anime.viewmodel.*
-
-import androidx.annotation.OptIn
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.lilac.anime.ui.AnimeImage
-import com.lilac.anime.data.*
+import com.lilac.anime.Anime
+import com.lilac.anime.ui.components.EmptyState
+import com.lilac.anime.ui.components.PosterRow
+import com.lilac.anime.ui.components.ScreenHeader
+import com.lilac.anime.ui.home.WatchHistoryContent
+import com.lilac.anime.viewmodel.AnimeViewModel
 
+private const val TAB_SAVED = 0
+private const val TAB_HISTORY = 1
+private const val TAB_DOWNLOADS = 2
+
+/**
+ * 보관함: 내 목록 / 시청 기록 / 다운로드를 한 화면의 탭으로 모았다.
+ * 하단 탭이 6개에서 5개로 줄고, 비슷한 성격의 목록이 한곳에 모인다.
+ */
 @Composable
 fun LibraryScreen(
     vm: AnimeViewModel,
     open: (Anime) -> Unit,
-    onNavigate: (String) -> Unit
+    onNavigate: (String) -> Unit,
+    initialTab: Int = TAB_SAVED
 ) {
     val context = LocalContext.current
     val isOffline by vm.isOffline.collectAsState()
     val downloadedIds by vm.downloadedIds.collectAsState()
-    
-    LaunchedEffect(Unit) {
-        vm.refreshDownloads()
-    }
 
-    var downloadedAnimeList by remember { mutableStateOf<List<Anime>>(emptyList()) }
+    LaunchedEffect(Unit) { vm.refreshDownloads() }
+
+    var downloaded by remember { mutableStateOf<List<Anime>>(emptyList()) }
     LaunchedEffect(downloadedIds, vm.homeAnime, vm.allAnime) {
-        downloadedAnimeList = vm.getDownloadedAnimeList(context)
+        downloaded = vm.getDownloadedAnimeList(context)
     }
 
-    val allAnimeList = (vm.allAnime + vm.homeAnime).distinctBy { it.id }
-    val savedAnime = allAnimeList.filter { it.id in vm.library }
+    // 내 목록: 현재 불러온 목록에 없어도 저장된 스냅샷에서 찾아 보여준다.
+    var saved by remember { mutableStateOf<List<Anime>>(emptyList()) }
+    LaunchedEffect(vm.library, vm.homeAnime, vm.allAnime) {
+        val map = vm.resolveAnimeMap(context, vm.library)
+        saved = vm.library.mapNotNull { map[it] }
+    }
 
-    var selectedTab by remember { mutableIntStateOf(if (isOffline) 1 else 0) }
+    var selectedTab by remember {
+        mutableIntStateOf(if (initialTab != TAB_SAVED) initialTab else if (isOffline) TAB_DOWNLOADS else TAB_SAVED)
+    }
 
-    AppScaffold(selected = "library", onSelect = onNavigate) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            Text(
-                text = "보관함", 
-                fontSize = 28.sp, 
-                fontWeight = FontWeight.Bold, 
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp)
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader(title = "보관함")
+
+        TabRow(
+            selectedTabIndex = selectedTab,
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.primary
+        ) {
+            Tab(
+                selected = selectedTab == TAB_SAVED,
+                onClick = { selectedTab = TAB_SAVED },
+                text = { Text("내 목록 ${saved.size}") }
             )
+            Tab(
+                selected = selectedTab == TAB_HISTORY,
+                onClick = { selectedTab = TAB_HISTORY },
+                text = { Text("시청 기록") }
+            )
+            Tab(
+                selected = selectedTab == TAB_DOWNLOADS,
+                onClick = { selectedTab = TAB_DOWNLOADS },
+                text = { Text("다운로드 ${downloaded.size}") }
+            )
+        }
 
-            Spacer(Modifier.height(12.dp))
-
-            TabRow(selectedTabIndex = selectedTab, containerColor = MaterialTheme.colorScheme.surface) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = { Text("내 목록", color = MaterialTheme.colorScheme.onSurface) }
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = { Text("다운로드 완료 (${downloadedAnimeList.size})", color = MaterialTheme.colorScheme.onSurface) }
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            val currentList = if (selectedTab == 0) savedAnime else downloadedAnimeList
-
-            if (currentList.isEmpty()) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Icon(
-                        imageVector = if (selectedTab == 0) Icons.Default.FavoriteBorder else Icons.Default.DownloadDone,
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = Lilac
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        text = if (selectedTab == 0) "내 목록이 비어 있습니다" else "다운로드된 애니메이션이 없습니다",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(currentList) { anime ->
-                        Row(modifier = Modifier.fillMaxWidth().clickableNoIndication { open(anime) }) {
-                            AnimeImage(
-                                model = anime.poster,
-                                contentDescription = anime.title,
-                                modifier = Modifier.size(width = 90.dp, height = 130.dp).clip(RoundedCornerShape(14.dp)),
-                                contentScale = ContentScale.Crop
-                            )
-                            Spacer(Modifier.width(16.dp))
-                            Column {
-                                Text(anime.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-                                Spacer(Modifier.height(6.dp))
-                                Text(anime.genres.joinToString(" · "), color = LilacDark)
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    anime.description,
-                                    maxLines = 2,
-                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
-                                )
-                            }
-                        }
+        when (selectedTab) {
+            TAB_HISTORY -> WatchHistoryContent(vm = vm, open = open)
+            TAB_DOWNLOADS -> AnimeList(
+                list = downloaded,
+                open = open,
+                emptyIcon = { Icons.Filled.DownloadDone },
+                emptyTitle = "다운로드한 작품이 없어요",
+                emptyMessage = "작품 상세에서 회차를 내려받으면 오프라인에서도 볼 수 있어요."
+            )
+            else -> AnimeList(
+                list = saved,
+                open = open,
+                emptyIcon = { Icons.Filled.FavoriteBorder },
+                emptyTitle = "내 목록이 비어 있어요",
+                emptyMessage = "작품 상세의 하트를 눌러 담아 두세요.",
+                trailing = { anime ->
+                    IconButton(onClick = { vm.toggleLibrary(context, anime.id) }) {
+                        Icon(
+                            Icons.Filled.Favorite,
+                            contentDescription = "내 목록에서 빼기",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
-            }
+            )
+        }
+    }
+}
+
+@Composable
+private fun AnimeList(
+    list: List<Anime>,
+    open: (Anime) -> Unit,
+    emptyIcon: () -> androidx.compose.ui.graphics.vector.ImageVector,
+    emptyTitle: String,
+    emptyMessage: String,
+    trailing: (@Composable (Anime) -> Unit)? = null
+) {
+    if (list.isEmpty()) {
+        EmptyState(icon = emptyIcon(), title = emptyTitle, message = emptyMessage)
+        return
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(list.distinctBy { it.id }, key = { it.id }) { anime ->
+            PosterRow(
+                anime = anime,
+                onClick = { open(anime) },
+                trailing = if (trailing != null) {
+                    { trailing(anime) }
+                } else null
+            )
         }
     }
 }

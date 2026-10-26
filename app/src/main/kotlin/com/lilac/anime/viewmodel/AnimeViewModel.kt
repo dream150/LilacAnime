@@ -1,21 +1,11 @@
 package com.lilac.anime.viewmodel
 
 import com.lilac.anime.*
-import com.lilac.anime.cast.*
 import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.matcher.*
 import com.lilac.anime.data.offline.*
 import com.lilac.anime.data.subtitle.*
 import com.lilac.anime.network.*
 import com.lilac.anime.player.*
-import com.lilac.anime.ui.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.home.*
-import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.settings.*
-import com.lilac.anime.ui.theme.*
 
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
@@ -905,6 +895,35 @@ class AnimeViewModel : ViewModel() {
             ?: allAnime.firstOrNull { it.id == id }
     }
 
+    /**
+     * 보관함 / 이어보기 / 시청 기록처럼 "id 목록 → 작품" 변환이 필요한 곳에서 쓴다.
+     * 메모리 캐시에 없으면 저장해 둔 스냅샷(OfflineStore)에서 찾는다.
+     * (이전에는 현재 불러온 홈/전체 목록에 없는 작품이 보관함·이어보기에서 조용히 사라졌다.)
+     */
+    suspend fun resolveAnimeMap(context: Context, ids: Collection<String>): Map<String, Anime> =
+        withContext(Dispatchers.IO) {
+            val result = LinkedHashMap<String, Anime>()
+            for (id in ids) {
+                val found = getAnime(context, id) ?: OfflineStore.getAnime(context, id)
+                if (found != null) result[id] = found
+            }
+            result
+        }
+
+    /** 작품 정보를 한 번만 저장해 두어, 나중에 목록에 없어도 보관함/기록에서 다시 열 수 있게 한다. */
+    private val snapshotSavedIds: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    private fun rememberAnimeSnapshot(context: Context, animeId: String) {
+        if (animeId in snapshotSavedIds) return
+        val appCtx = context.applicationContext
+        viewModelScope.launch(Dispatchers.IO) {
+            // 아직 캐시에 없으면 저장하지 않고 다음 기회에 다시 시도한다.
+            val anime = getAnime(appCtx, animeId) ?: return@launch
+            OfflineStore.saveAnime(appCtx, anime)
+            snapshotSavedIds.add(animeId)
+        }
+    }
+
     fun episodes(anime: Anime): List<Episode> {
         return episodeCache[anime.id] ?: emptyList()
     }
@@ -1084,7 +1103,9 @@ class AnimeViewModel : ViewModel() {
     }
 
     fun toggleLibrary(context: Context, animeId: String) {
-        library = if (animeId in library) library - animeId else library + animeId
+        val adding = animeId !in library
+        library = if (adding) library + animeId else library - animeId
+        if (adding) rememberAnimeSnapshot(context, animeId)
         val updated = library
         viewModelScope.launch(Dispatchers.IO) {
             OfflineStore.saveLibrary(context, updated)
@@ -1096,6 +1117,7 @@ class AnimeViewModel : ViewModel() {
     }
 
     fun updateProgress(context: Context, animeId: String, episodeNumber: Int, progress: Float, episodeKey: String = episodeNumber.toString()) {
+        rememberAnimeSnapshot(context, animeId)
         val filtered = watchHistory.filterNot { it.animeId == animeId && it.episodeKey.equals(episodeKey, ignoreCase = true) }
         val updatedItem = WatchProgress(animeId = animeId, episodeNumber = episodeNumber, progress = progress, episodeKey = episodeKey)
         val newList = listOf(updatedItem) + filtered
@@ -1145,7 +1167,6 @@ class AnimeViewModel : ViewModel() {
     fun cancelDownload(context: Context, anime: Anime, episode: Episode) {
         val downloadKey = offlineDownloadId(anime.id, episode)
 
-
         // ViewModel 진행률 맵에서 제거
         _downloadProgressMap.update { currentMap -> currentMap - downloadKey }
 
@@ -1153,22 +1174,3 @@ class AnimeViewModel : ViewModel() {
         deleteDownload(context, anime, episode)
     }
 }
-
-// ==========================================
-// 1. DataStore 싱글톤 선언 및 테마 저장 키
-// ==========================================
-val Context.dataStore by preferencesDataStore(name = "theme_settings")
-val THEME_KEY = stringPreferencesKey("theme_mode")
-
-enum class ThemeMode {
-    SYSTEM, LIGHT, DARK
-}
-
-// 색상 값 정의
-val Lilac = Color(0xFFC8A2C8)
-val LilacDark = Color(0xFF9A7B9A)
-val DarkBackground = Color(0xFF121212)
-val DarkSurface = Color(0xFF1E1E1E)
-val LightBackground = Color(0xFFFFFFFF)
-val LightSurface = Color(0xFFF5F5F5)
-

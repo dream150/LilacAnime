@@ -1,130 +1,79 @@
 package com.lilac.anime.ui.settings
 
-import kotlinx.coroutines.withContext
-import com.lilac.anime.*
-import com.lilac.anime.cast.*
-import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.*
-import com.lilac.anime.data.DeviceSyncClient
-import com.lilac.anime.data.matcher.*
-import com.lilac.anime.data.offline.*
-import com.lilac.anime.data.subtitle.*
-import com.lilac.anime.network.*
-import com.lilac.anime.player.*
-import com.lilac.anime.ui.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.home.*
-import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.theme.*
-import com.lilac.anime.viewmodel.*
-
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.Image
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateOf
-import kotlinx.coroutines.launch
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import kotlin.math.roundToInt
-import com.lilac.anime.network.OfflineOpEdFingerprintStore
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import com.lilac.anime.data.DeviceSyncClient
 import com.lilac.anime.data.subtitle.whisper.WhisperTranscriptionService
+import com.lilac.anime.network.OfflineOpEdFingerprintStore
+import com.lilac.anime.ui.components.ScreenHeader
+import com.lilac.anime.viewmodel.AnimeViewModel
+import com.lilac.anime.viewmodel.ThemeMode
+import kotlin.math.abs
+import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-private fun formatModelBytes(bytes: Long): String {
-    if (bytes < 1024L * 1024L) return "${bytes / 1024L} KB"
-    if (bytes < 1024L * 1024L * 1024L) return String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
-    return String.format(java.util.Locale.US, "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+/** 설정의 하위 페이지. 상위 목록에서 고르면 같은 화면 안에서 해당 페이지가 열린다. */
+private enum class SettingsPage(val title: String, val subtitle: String, val icon: ImageVector) {
+    GENERAL("일반", "테마 · 기기 동기화", Icons.Filled.Tune),
+    SOURCE("콘텐츠 소스", "영상 소스 · 재생 문제 진단", Icons.Filled.Dns),
+    PLAYBACK("재생", "화질 · 배속 · 이동 시간", Icons.Filled.PlayCircle),
+    SUBTITLE("자막", "크기 · 위치 · 싱크 · 폰트", Icons.Filled.Subtitles),
+    AI("AI 재생", "재생 방식 · Whisper · 업스케일링", Icons.Filled.AutoAwesome),
+    OPED("OP/ED 데이터", "분석 결과 · Fingerprint", Icons.Filled.GraphicEq)
 }
 
-@Composable
-private fun DeviceSyncSettings(vm: AnimeViewModel) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var serverUrl by remember { mutableStateOf(DeviceSyncClient.savedServer(context)) }
-    var password by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf(if (DeviceSyncClient.isConnected(context)) "토큰이 기기에 안전하게 저장되어 있습니다." else "서버 주소와 비밀번호로 연결하세요.") }
-    var busy by remember { mutableStateOf(false) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-        Spacer(Modifier.height(18.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(8.dp))
-        Text("기기 동기화", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-        Text("내 목록과 시청 기록을 개인 LilacAnime 서버와 동기화합니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
-        OutlinedTextField(
-            value = serverUrl,
-            onValueChange = { serverUrl = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("서버 주소") },
-            placeholder = { Text("https://lilacanime-server.vercel.app") },
-            singleLine = true,
-            enabled = !busy
-        )
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("서버 비밀번호") },
-            singleLine = true,
-            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-            enabled = !busy
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(enabled = !busy && serverUrl.isNotBlank() && password.length >= 8, onClick = {
-                busy = true
-                status = "서버 확인 및 로그인 중…"
-                val url = serverUrl
-                val secret = password
-                password = ""
-                scope.launch {
-                    try {
-                        val message = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { DeviceSyncClient.connect(context, url, secret) }
-                        status = message
-                        serverUrl = DeviceSyncClient.savedServer(context)
-                    } catch (e: Exception) { status = e.message ?: "서버 연결에 실패했습니다." }
-                    finally { busy = false }
-                }
-            }) { Text("연결") }
-            Button(enabled = !busy && DeviceSyncClient.isConnected(context), onClick = {
-                busy = true
-                status = "동기화 중…"
-                scope.launch {
-                    try {
-                        val result = DeviceSyncClient.sync(context, vm.library, vm.watchHistory)
-                        vm.applySyncedCollections(context, result.library, result.history)
-                        status = "동기화 완료 · 보냄 ${result.sent}개 · 받음 ${result.received}개 · 리비전 ${result.revision}"
-                    } catch (e: Exception) { status = e.message ?: "동기화에 실패했습니다." }
-                    finally { busy = false }
-                }
-            }) { Text("지금 동기화") }
-            OutlinedButton(enabled = !busy && DeviceSyncClient.isConnected(context), onClick = {
-                DeviceSyncClient.disconnect(context)
-                status = "연결 해제됨. 서버 주소는 유지됩니다."
-            }) { Text("연결 해제") }
-        }
-        if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        Text(status, fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f))
-        Text("비밀번호는 저장하지 않습니다. 로그인 토큰은 Android Keystore 기반 AES-GCM으로 암호화해 저장합니다. 외부 서버는 HTTPS를 사용하세요.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
-    }
-}
+private val SPEED_OPTIONS = listOf(0.1f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
 
 @Composable
 fun SettingsScreen(
@@ -133,138 +82,468 @@ fun SettingsScreen(
     onThemeChange: (ThemeMode) -> Unit,
     onNavigate: (String) -> Unit
 ) {
+    // 열려 있는 페이지는 화면 회전/프로세스 복원 후에도 유지한다.
+    var pageName by rememberSaveable { mutableStateOf<String?>(null) }
+    val page = pageName?.let { name -> SettingsPage.values().firstOrNull { it.name == name } }
+
+    // 하위 페이지에서 뒤로가기를 누르면 앱이 닫히는 대신 설정 목록으로 돌아온다.
+    BackHandler(enabled = page != null) { pageName = null }
+
+    if (page == null) {
+        SettingsHome(onOpen = { pageName = it.name }, onNavigate = onNavigate)
+    } else {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { pageName = null }) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "설정 목록으로")
+                }
+                Text(
+                    page.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 32.dp)
+            ) {
+                when (page) {
+                    SettingsPage.GENERAL -> GeneralPage(vm, themeMode, onThemeChange)
+                    SettingsPage.SOURCE -> SourcePage(vm)
+                    SettingsPage.PLAYBACK -> PlaybackPage(vm)
+                    SettingsPage.SUBTITLE -> SubtitlePage(vm)
+                    SettingsPage.AI -> AiPlaybackPage(vm)
+                    SettingsPage.OPED -> OpEdPage(vm)
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// 상위 목록
+// ============================================================================
+
+@Composable
+private fun SettingsHome(onOpen: (SettingsPage) -> Unit, onNavigate: (String) -> Unit) {
+    val context = LocalContext.current
+    val appVersion = remember(context) {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
+            .getOrNull().orEmpty().ifBlank { "Unknown" }
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 32.dp)
+    ) {
+        ScreenHeader(title = "설정")
+
+        SettingsGroup {
+            listOf(SettingsPage.GENERAL, SettingsPage.SOURCE, SettingsPage.PLAYBACK, SettingsPage.SUBTITLE)
+                .forEach { page ->
+                    SettingsNavRow(page.icon, page.title, page.subtitle) { onOpen(page) }
+                }
+        }
+
+        SettingsGroup {
+            SettingsNavRow(SettingsPage.AI.icon, SettingsPage.AI.title, SettingsPage.AI.subtitle) {
+                onOpen(SettingsPage.AI)
+            }
+            SettingsNavRow(Icons.Filled.Translate, "AI 번역", "로컬 모델 · 번역 프롬프트 · 고급 추론") {
+                onNavigate("settings/ai")
+            }
+            SettingsNavRow(SettingsPage.OPED.icon, SettingsPage.OPED.title, SettingsPage.OPED.subtitle) {
+                onOpen(SettingsPage.OPED)
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "Lilac Anime",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+        Text(
+            "Version $appVersion",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+    }
+}
+
+// ============================================================================
+// 일반: 테마 / 기기 동기화
+// ============================================================================
+
+@Composable
+private fun GeneralPage(vm: AnimeViewModel, themeMode: ThemeMode, onThemeChange: (ThemeMode) -> Unit) {
+    SettingsGroup(title = "테마") {
+        ThemeOption("시스템 설정 따르기", themeMode == ThemeMode.SYSTEM) { onThemeChange(ThemeMode.SYSTEM) }
+        ThemeOption("라이트 모드", themeMode == ThemeMode.LIGHT) { onThemeChange(ThemeMode.LIGHT) }
+        ThemeOption("다크 모드", themeMode == ThemeMode.DARK) { onThemeChange(ThemeMode.DARK) }
+    }
+    DeviceSyncSettings(vm = vm)
+}
+
+@Composable
+private fun DeviceSyncSettings(vm: AnimeViewModel) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var serverUrl by remember { mutableStateOf(DeviceSyncClient.savedServer(context)) }
+    var password by remember { mutableStateOf("") }
+    var status by remember {
+        mutableStateOf(
+            if (DeviceSyncClient.isConnected(context)) "토큰이 기기에 안전하게 저장되어 있습니다."
+            else "서버 주소와 비밀번호로 연결하세요."
+        )
+    }
+    var busy by remember { mutableStateOf(false) }
+
+    SettingsGroup(
+        title = "기기 동기화",
+        description = "내 목록과 시청 기록을 개인 LilacAnime 서버와 동기화합니다."
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedTextField(
+                value = serverUrl,
+                onValueChange = { serverUrl = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("서버 주소") },
+                placeholder = { Text("https://lilacanime-server.vercel.app") },
+                singleLine = true,
+                enabled = !busy
+            )
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("서버 비밀번호") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                enabled = !busy
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(enabled = !busy && serverUrl.isNotBlank() && password.length >= 8, onClick = {
+                    busy = true
+                    status = "서버 확인 및 로그인 중…"
+                    val url = serverUrl
+                    val secret = password
+                    password = ""
+                    scope.launch {
+                        try {
+                            val message = withContext(Dispatchers.IO) { DeviceSyncClient.connect(context, url, secret) }
+                            status = message
+                            serverUrl = DeviceSyncClient.savedServer(context)
+                        } catch (e: Exception) {
+                            status = e.message ?: "서버 연결에 실패했습니다."
+                        } finally {
+                            busy = false
+                        }
+                    }
+                }) { Text("연결") }
+                Button(enabled = !busy && DeviceSyncClient.isConnected(context), onClick = {
+                    busy = true
+                    status = "동기화 중…"
+                    scope.launch {
+                        try {
+                            val result = DeviceSyncClient.sync(context, vm.library, vm.watchHistory)
+                            vm.applySyncedCollections(context, result.library, result.history)
+                            status = "동기화 완료 · 보냄 ${result.sent}개 · 받음 ${result.received}개 · 리비전 ${result.revision}"
+                        } catch (e: Exception) {
+                            status = e.message ?: "동기화에 실패했습니다."
+                        } finally {
+                            busy = false
+                        }
+                    }
+                }) { Text("지금 동기화") }
+                OutlinedButton(enabled = !busy && DeviceSyncClient.isConnected(context), onClick = {
+                    DeviceSyncClient.disconnect(context)
+                    status = "연결 해제됨. 서버 주소는 유지됩니다."
+                }) { Text("연결 해제") }
+            }
+            if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+        }
+        SettingsNote("비밀번호는 저장하지 않습니다. 로그인 토큰은 Android Keystore 기반 AES-GCM으로 암호화해 저장합니다. 외부 서버는 HTTPS를 사용하세요.")
+    }
+}
+
+// ============================================================================
+// 콘텐츠 소스
+// ============================================================================
+
+@Composable
+private fun SourcePage(vm: AnimeViewModel) {
+    val context = LocalContext.current
+    val settings = vm.playerSettings
+
+    SettingsGroup(title = "콘텐츠 / 영상 소스") {
+        SettingsChipRow(
+            title = "사용할 사이트",
+            options = listOf(
+                "linkkf" to "Linkkf / 링크애니",
+                "animenosub" to "Animenosub",
+                "reanime" to "RE:Anime",
+                "miruro" to "Miruro",
+                "ohli24" to "애니24"
+            ),
+            selected = settings.videoSourcePreference,
+            onSelect = { vm.updatePlayerSettings(context, settings.copy(videoSourcePreference = it)) },
+            description = "선택한 사이트의 애니 목록·제목·회차·영상 소스를 함께 사용합니다."
+        )
+    }
+
+    SettingsGroup(
+        title = "재생 문제 진단",
+        description = "Miruro·애니24 재생 실패 시 최근 관련 로그를 파일로 추출해 공유합니다."
+    ) {
+        Box(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Button(onClick = {
+                runCatching { DiagnosticLogExporter.share(context) }
+                    .onFailure {
+                        Toast.makeText(
+                            context,
+                            "로그 추출 실패: ${it.message ?: it.javaClass.simpleName}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+            }) { Text("진단 로그 추출 / 공유") }
+        }
+    }
+}
+
+// ============================================================================
+// 재생
+// ============================================================================
+
+@Composable
+private fun PlaybackPage(vm: AnimeViewModel) {
+    val context = LocalContext.current
+    val settings = vm.playerSettings
+
+    SettingsGroup(title = "화질 · 속도") {
+        SettingsChipRow(
+            title = "기본 화질",
+            options = listOf("Auto" to "Auto", "720p" to "720p", "1080p" to "1080p"),
+            selected = settings.defaultQuality,
+            onSelect = { vm.updatePlayerSettings(context, settings.copy(defaultQuality = it)) }
+        )
+        SettingsDivider()
+        // 저장된 값이 목록에 없어도(예: 1.1x) 가장 가까운 칸에 표시한다.
+        val speedIndex = SPEED_OPTIONS.indices.minByOrNull { abs(SPEED_OPTIONS[it] - settings.playbackSpeed) } ?: 4
+        SettingsSliderRow(
+            title = "기본 재생 배속",
+            valueText = "${String.format(java.util.Locale.US, "%.2f", settings.playbackSpeed)}x",
+            value = speedIndex.toFloat(),
+            onValueChange = { value ->
+                val chosen = SPEED_OPTIONS[value.roundToInt().coerceIn(SPEED_OPTIONS.indices)]
+                vm.updatePlayerSettings(context, settings.copy(playbackSpeed = chosen))
+            },
+            valueRange = 0f..(SPEED_OPTIONS.size - 1).toFloat(),
+            steps = SPEED_OPTIONS.size - 2
+        )
+    }
+
+    SettingsGroup(
+        title = "이동 시간",
+        description = "재생 화면에서 건너뛸 시간을 초 단위로 설정합니다."
+    ) {
+        SecondsField(
+            title = "더블탭 이동 시간",
+            description = "재생 화면의 왼쪽/오른쪽을 두 번 탭했을 때 이동할 시간입니다.",
+            seconds = settings.doubleTapSeekSeconds,
+            onChange = { vm.updatePlayerSettings(context, settings.copy(doubleTapSeekSeconds = it)) }
+        )
+        SettingsDivider()
+        SecondsField(
+            title = "뒤로/앞으로 버튼 이동 시간",
+            description = "재생 화면 중앙의 버튼을 눌렀을 때 이동할 시간입니다. 더블탭 설정과 별도로 사용할 수 있습니다.",
+            seconds = settings.seekButtonSeekSeconds,
+            onChange = { vm.updatePlayerSettings(context, settings.copy(seekButtonSeekSeconds = it)) }
+        )
+    }
+}
+
+@Composable
+private fun SecondsField(title: String, description: String, seconds: Long, onChange: (Long) -> Unit) {
+    var input by remember(seconds) { mutableStateOf(seconds.toString()) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+        Text(
+            description,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = input,
+            onValueChange = { value ->
+                if (value.all { it.isDigit() }) {
+                    input = value
+                    value.toLongOrNull()?.let(onChange)
+                }
+            },
+            singleLine = true,
+            suffix = { Text("초") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.width(180.dp)
+        )
+    }
+}
+
+// ============================================================================
+// 자막
+// ============================================================================
+
+@Composable
+private fun SubtitlePage(vm: AnimeViewModel) {
+    val context = LocalContext.current
+    val settings = vm.playerSettings
+
+    SettingsGroup(title = "모양") {
+        SettingsSliderRow(
+            title = "기본 자막 크기",
+            valueText = "${settings.subtitleSize.toInt()}%",
+            value = settings.subtitleSize,
+            onValueChange = { vm.updatePlayerSettings(context, settings.copy(subtitleSize = it)) },
+            valueRange = 50f..300f,
+            steps = 10
+        )
+        SettingsDivider()
+        SettingsChipRow(
+            title = "기본 자막 폰트",
+            options = listOf("기본체" to "기본체", "나눔고딕" to "나눔고딕", "명조체" to "명조체"),
+            selected = settings.subtitleFont,
+            onSelect = { vm.updatePlayerSettings(context, settings.copy(subtitleFont = it)) }
+        )
+        SettingsDivider()
+        SettingsSwitchRow(
+            title = "VTT 자막 굵게",
+            checked = settings.vttBold,
+            onCheckedChange = { vm.updatePlayerSettings(context, settings.copy(vttBold = it)) }
+        )
+        SettingsDivider()
+        SettingsSliderRow(
+            title = "VTT 자막 테두리 두께",
+            valueText = "${String.format(java.util.Locale.US, "%.1f", settings.vttOutlineWidth)}dp",
+            value = settings.vttOutlineWidth,
+            onValueChange = { vm.updatePlayerSettings(context, settings.copy(vttOutlineWidth = it)) },
+            valueRange = 0.5f..6.0f,
+            steps = 10,
+            description = "2dp는 Media3 기본 VTT 배치를 사용하고, 다른 값에서는 사용자 지정 테두리를 적용합니다."
+        )
+    }
+
+    SettingsGroup(title = "위치 · 싱크") {
+        val positionPercent = (settings.subtitleBottomPaddingFraction * 100f).roundToInt().coerceIn(3, 30)
+        SettingsSliderRow(
+            title = "기본 VTT 자막 위치",
+            valueText = "${positionPercent}%",
+            value = positionPercent.toFloat(),
+            onValueChange = { raw ->
+                val percent = raw.roundToInt().coerceIn(3, 30)
+                vm.updatePlayerSettings(context, settings.copy(subtitleBottomPaddingFraction = percent / 100f))
+            },
+            valueRange = 3f..30f,
+            steps = 26
+        )
+        SettingsDivider()
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "자막 싱크 미세 조정",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    "${settings.syncOffsetMs} ms",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = {
+                    vm.updatePlayerSettings(context, settings.copy(syncOffsetMs = settings.syncOffsetMs - 250L))
+                }) { Text("-250ms") }
+                OutlinedButton(onClick = {
+                    vm.updatePlayerSettings(context, settings.copy(syncOffsetMs = 0L))
+                }) { Text("초기화") }
+                OutlinedButton(onClick = {
+                    vm.updatePlayerSettings(context, settings.copy(syncOffsetMs = settings.syncOffsetMs + 250L))
+                }) { Text("+250ms") }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// AI 재생: 재생 방식 / Whisper / 업스케일링
+// ============================================================================
+
+@Composable
+private fun AiPlaybackPage(vm: AnimeViewModel) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = vm.playerSettings
-    var deleteTarget by remember { mutableStateOf<String?>(null) }
+
     var whisperDownloadProgress by remember { mutableStateOf(-1) }
     var whisperModelStatus by remember { mutableStateOf("") }
     var whisperSelectedModel by remember { mutableStateOf(WhisperTranscriptionService.selectedModelId(context)) }
     var whisperModelMenuExpanded by remember { mutableStateOf(false) }
 
-
-    AppScaffold(selected = "settings", onSelect = onNavigate) { padding ->
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(20.dp)
-                .verticalScroll(rememberScrollState())
-        ) {
-            Text("설정", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-
-            DeviceSyncSettings(vm = vm)
-            
-            Spacer(Modifier.height(24.dp))
-            Text("테마", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-            Spacer(Modifier.height(12.dp))
-
-            ThemeOption("시스템 설정", themeMode == ThemeMode.SYSTEM) { onThemeChange(ThemeMode.SYSTEM) }
-            ThemeOption("라이트 모드", themeMode == ThemeMode.LIGHT) { onThemeChange(ThemeMode.LIGHT) }
-            ThemeOption("다크 모드", themeMode == ThemeMode.DARK) { onThemeChange(ThemeMode.DARK) }
-
-            Spacer(Modifier.height(24.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(20.dp))
-
-            Text("재생 및 자막 설정", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-            Spacer(Modifier.height(16.dp))
-
-            Text("콘텐츠 / 영상 소스", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("linkkf" to "Linkkf / 링크애니", "animenosub" to "Animenosub", "reanime" to "RE:Anime").forEach { (source, label) ->
-                    FilterChip(
-                        selected = settings.videoSourcePreference == source,
-                        onClick = { vm.updatePlayerSettings(context, settings.copy(videoSourcePreference = source)) },
-                        label = { Text(label) }
-                    )
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("miruro" to "Miruro", "ohli24" to "애니24").forEach { (source, label) ->
-                    FilterChip(
-                        selected = settings.videoSourcePreference == source,
-                        onClick = { vm.updatePlayerSettings(context, settings.copy(videoSourcePreference = source)) },
-                        label = { Text(label) }
-                    )
-                }
-            }
-            Text(
-                "선택한 사이트의 애니 목록·제목·회차·영상 소스를 함께 사용합니다.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
-            )
-            Spacer(Modifier.height(12.dp))
-            Text("재생 문제 진단", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-            Text("Miruro·애니24 재생 실패 시 최근 관련 로그를 파일로 추출해 공유합니다.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f))
-            Button(onClick = {
-                runCatching { DiagnosticLogExporter.share(context) }
-                    .onFailure { android.widget.Toast.makeText(context, "로그 추출 실패: ${it.message ?: it.javaClass.simpleName}", android.widget.Toast.LENGTH_LONG).show() }
-            }) { Text("진단 로그 추출 / 공유") }
-
-            Spacer(Modifier.height(16.dp))
-
-            Text("기본 화질", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Auto", "720p", "1080p").forEach { quality ->
-                    FilterChip(
-                        selected = settings.defaultQuality == quality,
-                        onClick = { vm.updatePlayerSettings(context, settings.copy(defaultQuality = quality)) },
-                        label = { Text(quality) }
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(14.dp))
-            Text("재생 방식", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-            Text("재생 엔진과 AI 처리를 여기서 선택합니다. Whisper는 일본어 음성으로 SRT를 생성하고 기존 한국어 번역 기능에 전달합니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f))
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                listOf(
-                    Triple("default", "기본 재생", "기존 mpv 재생 기능을 그대로 사용합니다."),
-                    Triple("anime4k", "Anime4K 업스케일링", "mpv 셰이더로 실시간 업스케일링합니다."),
-                    Triple("whisper", "Whisper AI 자막", "일본어 음성을 인식해 자막을 생성한 뒤 한국어로 번역합니다."),
-                    Triple("animejanai", "AnimeJaNai", "Android 추론 엔진이 없어 현재 사용할 수 없습니다.")
-                ).forEach { (mode, label, description) ->
-                    val selected = settings.playbackAiMode == mode
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            if (mode == "animejanai") return@Card
-                            val updated = when (mode) {
-                                "anime4k" -> settings.copy(playbackAiMode = mode, aiUpscalingEnabled = true, aiUpscalingBackend = "anime4k")
-                                "whisper" -> settings.copy(playbackAiMode = mode, aiUpscalingEnabled = false)
-                                else -> settings.copy(playbackAiMode = "default", aiUpscalingEnabled = false)
-                            }
-                            vm.updatePlayerSettings(context, updated)
-                        },
-                        enabled = mode != "animejanai",
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
-                        ),
-                        border = if (selected) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
-                    ) {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = selected, onClick = null, enabled = mode != "animejanai")
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                                Spacer(Modifier.height(3.dp))
-                                Text(description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
+    SettingsGroup(
+        title = "재생 방식",
+        description = "재생 엔진과 AI 처리를 선택합니다. Whisper는 일본어 음성으로 SRT를 생성하고 기존 한국어 번역 기능에 전달합니다."
+    ) {
+        listOf(
+            Triple("default", "기본 재생", "기존 mpv 재생 기능을 그대로 사용합니다."),
+            Triple("anime4k", "Anime4K 업스케일링", "mpv 셰이더로 실시간 업스케일링합니다."),
+            Triple("whisper", "Whisper AI 자막", "일본어 음성을 인식해 자막을 생성한 뒤 한국어로 번역합니다."),
+            Triple("animejanai", "AnimeJaNai", "Android 추론 엔진이 없어 현재 사용할 수 없습니다.")
+        ).forEach { (mode, label, description) ->
+            SettingsChoiceRow(
+                title = label,
+                description = description,
+                selected = settings.playbackAiMode == mode,
+                enabled = mode != "animejanai",
+                onClick = {
+                    val updated = when (mode) {
+                        "anime4k" -> settings.copy(playbackAiMode = mode, aiUpscalingEnabled = true, aiUpscalingBackend = "anime4k")
+                        "whisper" -> settings.copy(playbackAiMode = mode, aiUpscalingEnabled = false)
+                        else -> settings.copy(playbackAiMode = "default", aiUpscalingEnabled = false)
                     }
+                    vm.updatePlayerSettings(context, updated)
                 }
-            }
-            if (settings.playbackAiMode == "whisper") {
-                val selectedOption = WhisperTranscriptionService.modelOptions.first { it.id == whisperSelectedModel }
-                val installed = WhisperTranscriptionService.isModelInstalled(context, whisperSelectedModel)
-                Text("Whisper 모델", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-                Text("모델 크기가 클수록 메모리 사용량이 증가합니다. OOM이 발생하면 Tiny를 권장합니다.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f))
+            )
+        }
+    }
+
+    if (settings.playbackAiMode == "whisper") {
+        val selectedOption = WhisperTranscriptionService.modelOptions.first { it.id == whisperSelectedModel }
+        val installed = WhisperTranscriptionService.isModelInstalled(context, whisperSelectedModel)
+
+        SettingsGroup(
+            title = "Whisper 모델",
+            description = "모델 크기가 클수록 메모리 사용량이 증가합니다. OOM이 발생하면 Tiny를 권장합니다."
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Box(Modifier.fillMaxWidth()) {
                     OutlinedButton(onClick = { whisperModelMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
                         Text("${selectedOption.title} · ${if (installed) "설치됨" else "미설치"}")
@@ -275,7 +554,11 @@ fun SettingsScreen(
                                 text = {
                                     Column {
                                         Text(option.title)
-                                        Text(option.note, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            option.note,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
                                 },
                                 onClick = {
@@ -292,13 +575,22 @@ fun SettingsScreen(
                 Text(
                     if (installed) "${selectedOption.title} 모델이 설치되어 있습니다."
                     else "${selectedOption.title} 모델을 다운로드해야 합니다.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f)
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 if (whisperDownloadProgress in 0..100) {
-                    LinearProgressIndicator(progress = { whisperDownloadProgress / 100f }, modifier = Modifier.fillMaxWidth())
+                    LinearProgressIndicator(
+                        progress = { whisperDownloadProgress / 100f },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
-                if (whisperModelStatus.isNotBlank()) Text(whisperModelStatus, fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f))
+                if (whisperModelStatus.isNotBlank()) {
+                    Text(
+                        whisperModelStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 OutlinedButton(
                     enabled = whisperDownloadProgress !in 0..100 && !installed,
                     onClick = {
@@ -307,364 +599,135 @@ fun SettingsScreen(
                             whisperDownloadProgress = 0
                             whisperModelStatus = "${selectedOption.title} 모델 다운로드 중"
                             runCatching { WhisperTranscriptionService.downloadModel(context, modelId) { whisperDownloadProgress = it } }
-                                .onSuccess { whisperDownloadProgress = -1; whisperModelStatus = "${selectedOption.title} 모델 다운로드 완료" }
-                                .onFailure { whisperDownloadProgress = -1; whisperModelStatus = "모델 다운로드 실패: ${it.message ?: "알 수 없는 오류"}" }
+                                .onSuccess {
+                                    whisperDownloadProgress = -1
+                                    whisperModelStatus = "${selectedOption.title} 모델 다운로드 완료"
+                                }
+                                .onFailure {
+                                    whisperDownloadProgress = -1
+                                    whisperModelStatus = "모델 다운로드 실패: ${it.message ?: "알 수 없는 오류"}"
+                                }
                         }
-                    }, modifier = Modifier.fillMaxWidth()
+                    },
+                    modifier = Modifier.fillMaxWidth()
                 ) { Text(if (installed) "모델 설치 완료" else "${selectedOption.title} 다운로드") }
             }
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(14.dp))
-            Text("실시간 영상 업스케일링", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-            Text("Anime4K는 mpv GLSL 셰이더를 사용합니다. AnimeJaNai의 원본 실시간 엔진은 Windows 전용이므로 Android용 추론 경로가 준비되기 전까지 선택 시 기본 GPU 스케일러로 대체됩니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("업스케일링 사용", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-                    Text("끄면 일반 재생 스케일러를 사용합니다.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
-                }
-                Switch(
-                    checked = settings.aiUpscalingEnabled,
-                    onCheckedChange = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingEnabled = it, playbackAiMode = if (it && settings.aiUpscalingBackend == "anime4k") "anime4k" else if (!it && settings.playbackAiMode == "anime4k") "default" else settings.playbackAiMode)) }
+        }
+    }
+
+    SettingsGroup(
+        title = "실시간 영상 업스케일링",
+        description = "Anime4K는 mpv GLSL 셰이더를 사용합니다. AnimeJaNai의 원본 실시간 엔진은 Windows 전용이므로 Android용 추론 경로가 준비되기 전까지 선택 시 기본 GPU 스케일러로 대체됩니다."
+    ) {
+        SettingsSwitchRow(
+            title = "업스케일링 사용",
+            subtitle = "끄면 일반 재생 스케일러를 사용합니다.",
+            checked = settings.aiUpscalingEnabled,
+            onCheckedChange = {
+                vm.updatePlayerSettings(
+                    context,
+                    settings.copy(
+                        aiUpscalingEnabled = it,
+                        playbackAiMode = if (it && settings.aiUpscalingBackend == "anime4k") "anime4k"
+                        else if (!it && settings.playbackAiMode == "anime4k") "default"
+                        else settings.playbackAiMode
+                    )
                 )
             }
-            if (settings.aiUpscalingEnabled) {
-                Text("엔진", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("anime4k" to "Anime4K (실시간 셰이더)", "animejanai" to "AnimeJaNai (Android 포팅 대기)", "gpu" to "기본 GPU 스케일러").forEach { (value, label) ->
-                        FilterChip(
-                            selected = settings.aiUpscalingBackend == value,
-                            onClick = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingBackend = value, playbackAiMode = if (value == "anime4k") "anime4k" else if (settings.playbackAiMode == "anime4k") "default" else settings.playbackAiMode)) },
-                            label = { Text(label) }
+        )
+        if (settings.aiUpscalingEnabled) {
+            SettingsDivider()
+            SettingsChipRow(
+                title = "엔진",
+                options = listOf(
+                    "anime4k" to "Anime4K (실시간 셰이더)",
+                    "animejanai" to "AnimeJaNai (Android 포팅 대기)",
+                    "gpu" to "기본 GPU 스케일러"
+                ),
+                selected = settings.aiUpscalingBackend,
+                onSelect = { value ->
+                    vm.updatePlayerSettings(
+                        context,
+                        settings.copy(
+                            aiUpscalingBackend = value,
+                            playbackAiMode = if (value == "anime4k") "anime4k"
+                            else if (settings.playbackAiMode == "anime4k") "default"
+                            else settings.playbackAiMode
                         )
-                    }
+                    )
+                },
+                description = when (settings.aiUpscalingBackend) {
+                    "anime4k" -> "최초 사용 시 공식 Anime4K 릴리스에서 GLSL 파일을 내려받아 앱 내부 저장소에 보관합니다. 셰이더 적용에는 네트워크가 필요하며, 이후에는 저장된 파일을 재사용합니다."
+                    "animejanai" -> "현재 Android에서 원본 AnimeJaNai 엔진을 실행할 수 없어 GPU 스케일러로 대체됩니다. 이 항목은 Android 포팅이 완료된 상태가 아닙니다."
+                    else -> "AI 추론 없이 mpv의 GPU 스케일러를 사용합니다."
                 }
-                Text(
-                    when (settings.aiUpscalingBackend) {
-                        "anime4k" -> "최초 사용 시 공식 Anime4K 릴리스에서 GLSL 파일을 내려받아 앱 내부 저장소에 보관합니다. 셰이더 적용에는 네트워크가 필요하며, 이후에는 저장된 파일을 재사용합니다."
-                        "animejanai" -> "현재 Android에서 원본 AnimeJaNai 엔진을 실행할 수 없어 GPU 스케일러로 대체됩니다. 이 항목은 Android 포팅이 완료된 상태가 아닙니다."
-                        else -> "AI 추론 없이 mpv의 GPU 스케일러를 사용합니다."
-                    },
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f)
-                )
-                if (settings.aiUpscalingBackend == "anime4k") {
-                    Spacer(Modifier.height(8.dp))
-                    Text("Anime4K 모드", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-                    val modes = listOf(
+            )
+            if (settings.aiUpscalingBackend == "anime4k") {
+                SettingsDivider()
+                SettingsChipRow(
+                    title = "Anime4K 모드",
+                    options = listOf(
                         "A" to "A · 1080p / 복원 강함",
                         "B" to "B · 720p / 균형",
                         "C" to "C · 깨끗한 원본",
                         "A+A" to "A+A · 고품질 복원",
                         "B+B" to "B+B · 고품질 균형",
                         "C+A" to "C+A · 노이즈 제거 + 복원"
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        modes.chunked(2).forEach { rowModes ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                rowModes.forEach { (mode, label) ->
-                                    FilterChip(
-                                        modifier = Modifier.weight(1f),
-                                        selected = settings.aiUpscalingMode == mode,
-                                        onClick = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingMode = mode)) },
-                                        label = { Text(label, maxLines = 2) }
-                                    )
-                                }
-                                if (rowModes.size == 1) Spacer(Modifier.weight(1f))
-                            }
-                        }
-                    }
-                    Text(
-                        when (settings.aiUpscalingMode) {
-                            "A" -> "대부분의 1080p 애니와 흐림·압축 흔적이 있는 영상에 적합합니다."
-                            "B" -> "대부분의 720p 애니와 다운스케일된 영상에 적합합니다."
-                            "C" -> "이미 선명한 영상이나 아트워크에 적합하지만, 복원 효과는 약할 수 있습니다."
-                            "A+A" -> "A 모드를 두 단계로 적용하는 고부하 모드입니다. 과도한 링잉이나 밴딩이 생길 수 있습니다."
-                            "B+B" -> "B 모드의 복원 효과를 높이는 고부하 모드입니다."
-                            else -> "노이즈 제거 후 복원하는 고부하 모드입니다."
-                        },
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            Text(
-                "기본 재생 배속 (${String.format(java.util.Locale.US, "%.2f", settings.playbackSpeed)}x)",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Slider(
-                value = listOf(0.1f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
-                    .indexOf(settings.playbackSpeed).coerceAtLeast(0).toFloat(),
-                onValueChange = { value ->
-                    val options = listOf(0.1f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
-                    vm.updatePlayerSettings(context, settings.copy(playbackSpeed = options[value.toInt().coerceIn(options.indices)]))
-                },
-                valueRange = 0f..8f,
-                steps = 7
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                listOf(0.1f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f).forEach { speed ->
-                    Text(
-                        "${speed}x",
-                        fontSize = 9.sp,
-                        color = if (speed == settings.playbackSpeed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
-                        fontWeight = if (speed == settings.playbackSpeed) FontWeight.Bold else FontWeight.Normal
-                    )
-                }
-            }
-
-            Text("기본 자막 크기 (${settings.subtitleSize.toInt()}%)", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-            Slider(
-                value = settings.subtitleSize,
-                onValueChange = { vm.updatePlayerSettings(context, settings.copy(subtitleSize = it)) },
-                valueRange = 50f..300f,
-                steps = 10
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("VTT 자막 굵게", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-                Switch(
-                    checked = settings.vttBold,
-                    onCheckedChange = { vm.updatePlayerSettings(context, settings.copy(vttBold = it)) }
-                )
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Text(
-                "VTT 자막 테두리 두께 (${String.format(java.util.Locale.US, "%.1f", settings.vttOutlineWidth)}dp)",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Slider(
-                value = settings.vttOutlineWidth,
-                onValueChange = { vm.updatePlayerSettings(context, settings.copy(vttOutlineWidth = it)) },
-                valueRange = 0.5f..6.0f,
-                steps = 10
-            )
-            Text(
-                "2dp는 Media3 기본 VTT 배치를 사용하고, 다른 값에서는 사용자 지정 테두리를 적용합니다.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            val subtitlePositionPercent = (settings.subtitleBottomPaddingFraction * 100f)
-                .roundToInt()
-                .coerceIn(3, 30)
-            Text(
-                "기본 VTT 자막 위치 (${subtitlePositionPercent}%)",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Slider(
-                value = subtitlePositionPercent.toFloat(),
-                onValueChange = { raw ->
-                    val percent = raw.roundToInt().coerceIn(3, 30)
-                    vm.updatePlayerSettings(
-                        context,
-                        settings.copy(subtitleBottomPaddingFraction = percent / 100f)
-                    )
-                },
-                valueRange = 3f..30f,
-                steps = 26
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            Text("자막 싱크 미세 조정 (${settings.syncOffsetMs} ms)", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(onClick = { 
-                    vm.updatePlayerSettings(context, settings.copy(syncOffsetMs = settings.syncOffsetMs - 250L)) 
-                }) {
-                    Text("-250ms")
-                }
-                OutlinedButton(onClick = { 
-                    vm.updatePlayerSettings(context, settings.copy(syncOffsetMs = 0L)) 
-                }) {
-                    Text("초기화")
-                }
-                OutlinedButton(onClick = { 
-                    vm.updatePlayerSettings(context, settings.copy(syncOffsetMs = settings.syncOffsetMs + 250L)) 
-                }) {
-                    Text("+250ms")
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            Text(
-                "더블탭 이동 시간 (${settings.doubleTapSeekSeconds}초)",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Text(
-                "재생 화면의 왼쪽/오른쪽을 두 번 탭했을 때 이동할 시간을 설정합니다.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
-            )
-            Spacer(Modifier.height(8.dp))
-            var doubleTapSecondsInput by remember(settings.doubleTapSeekSeconds) {
-                mutableStateOf(settings.doubleTapSeekSeconds.toString())
-            }
-            OutlinedTextField(
-                value = doubleTapSecondsInput,
-                onValueChange = { input ->
-                    if (input.all { it.isDigit() }) {
-                        doubleTapSecondsInput = input
-                        input.toLongOrNull()?.let { seconds ->
-                            vm.updatePlayerSettings(context, settings.copy(doubleTapSeekSeconds = seconds))
-                        }
-                    }
-                },
-                singleLine = true,
-                suffix = { Text("초") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.width(180.dp)
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            Text(
-                "뒤로/앞으로 버튼 이동 시간 (${settings.seekButtonSeekSeconds}초)",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Text(
-                "재생 화면 중앙의 뒤로/앞으로 버튼을 눌렀을 때 이동할 시간을 설정합니다. 더블탭 설정과 별도로 사용할 수 있습니다.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
-            )
-            Spacer(Modifier.height(8.dp))
-            var buttonSeekSecondsInput by remember(settings.seekButtonSeekSeconds) {
-                mutableStateOf(settings.seekButtonSeekSeconds.toString())
-            }
-            OutlinedTextField(
-                value = buttonSeekSecondsInput,
-                onValueChange = { input ->
-                    if (input.all { it.isDigit() }) {
-                        buttonSeekSecondsInput = input
-                        input.toLongOrNull()?.let { seconds ->
-                            vm.updatePlayerSettings(context, settings.copy(seekButtonSeekSeconds = seconds))
-                        }
-                    }
-                },
-                singleLine = true,
-                suffix = { Text("초") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.width(180.dp)
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            Text("기본 자막 폰트", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("기본체", "나눔고딕", "명조체").forEach { font ->
-                    FilterChip(
-                        selected = settings.subtitleFont == font,
-                        onClick = { vm.updatePlayerSettings(context, settings.copy(subtitleFont = font)) },
-                        label = { Text(font) }
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(20.dp))
-
-            Text("AI 번역", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-            Spacer(Modifier.height(8.dp))
-            Text("로컬 AI 모델, 번역 프롬프트, 성능과 고급 추론 설정은 별도의 AI 설정에서 관리합니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = .65f))
-            Spacer(Modifier.height(10.dp))
-            OutlinedButton(onClick = { onNavigate("settings/ai") }, modifier = Modifier.fillMaxWidth()) { Text("AI 설정 열기") }
-            Spacer(Modifier.height(24.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(20.dp))
-
-            Text(
-                "OP/ED 분석 데이터",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "다운로드된 회차의 OP/ED 분석 결과와 학습된 오디오 Fingerprint를 저장합니다. 저장된 데이터가 있으면 다음 재생부터 다시 분석하지 않습니다.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f)
-            )
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("오프라인 OP/ED 자동 분석", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-                    Text("다운로드 완료 회차에서만 자동 분석합니다.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
-                }
-                Switch(
-                    checked = settings.offlineOpEdAnalysisEnabled,
-                    onCheckedChange = { enabled ->
-                        vm.updatePlayerSettings(context, settings.copy(offlineOpEdAnalysisEnabled = enabled))
+                    ),
+                    selected = settings.aiUpscalingMode,
+                    onSelect = { vm.updatePlayerSettings(context, settings.copy(aiUpscalingMode = it)) },
+                    description = when (settings.aiUpscalingMode) {
+                        "A" -> "대부분의 1080p 애니와 흐림·압축 흔적이 있는 영상에 적합합니다."
+                        "B" -> "대부분의 720p 애니와 다운스케일된 영상에 적합합니다."
+                        "C" -> "이미 선명한 영상이나 아트워크에 적합하지만, 복원 효과는 약할 수 있습니다."
+                        "A+A" -> "A 모드를 두 단계로 적용하는 고부하 모드입니다. 과도한 링잉이나 밴딩이 생길 수 있습니다."
+                        "B+B" -> "B 모드의 복원 효과를 높이는 고부하 모드입니다."
+                        else -> "노이즈 제거 후 복원하는 고부하 모드입니다."
                     }
                 )
             }
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { deleteTarget = "analysis" },
-                    modifier = Modifier.weight(1f)
-                ) { Text("분석 결과 삭제") }
-                OutlinedButton(
-                    onClick = { deleteTarget = "fingerprint" },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Fingerprint 삭제") }
+        }
+    }
+}
+
+// ============================================================================
+// OP/ED 분석 데이터
+// ============================================================================
+
+@Composable
+private fun OpEdPage(vm: AnimeViewModel) {
+    val context = LocalContext.current
+    val settings = vm.playerSettings
+    var deleteTarget by remember { mutableStateOf<String?>(null) }
+
+    SettingsGroup(
+        title = "자동 분석",
+        description = "다운로드된 회차의 OP/ED 분석 결과와 학습된 오디오 Fingerprint를 저장합니다. 저장된 데이터가 있으면 다음 재생부터 다시 분석하지 않습니다."
+    ) {
+        SettingsSwitchRow(
+            title = "오프라인 OP/ED 자동 분석",
+            subtitle = "다운로드 완료 회차에서만 자동 분석합니다.",
+            checked = settings.offlineOpEdAnalysisEnabled,
+            onCheckedChange = { vm.updatePlayerSettings(context, settings.copy(offlineOpEdAnalysisEnabled = it)) }
+        )
+    }
+
+    SettingsGroup(title = "저장된 데이터 삭제") {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { deleteTarget = "analysis" }, modifier = Modifier.weight(1f)) {
+                    Text("분석 결과")
+                }
+                OutlinedButton(onClick = { deleteTarget = "fingerprint" }, modifier = Modifier.weight(1f)) {
+                    Text("Fingerprint")
+                }
             }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { deleteTarget = "all" },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("분석 결과 + Fingerprint 모두 삭제") }
-
-            Spacer(Modifier.height(24.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(20.dp))
-
-            Text("Lilac Anime", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-            val appVersion = context.packageManager
-                .getPackageInfo(context.packageName, 0)
-                .versionName
-                .orEmpty()
-                .ifBlank { "Unknown" }
-            Text("Version $appVersion", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
+            Button(onClick = { deleteTarget = "all" }, modifier = Modifier.fillMaxWidth()) {
+                Text("모두 삭제")
+            }
         }
     }
 

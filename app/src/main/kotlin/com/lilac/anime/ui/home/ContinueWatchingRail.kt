@@ -1,109 +1,89 @@
 package com.lilac.anime.ui.home
 
-import com.lilac.anime.*
-import com.lilac.anime.cast.*
-import com.lilac.anime.core.model.*
-import com.lilac.anime.core.update.*
-import com.lilac.anime.data.*
-import com.lilac.anime.data.matcher.*
-import com.lilac.anime.data.offline.*
-import com.lilac.anime.data.subtitle.*
-import com.lilac.anime.network.*
-import com.lilac.anime.player.*
-import com.lilac.anime.ui.*
-import com.lilac.anime.ui.detail.*
-import com.lilac.anime.ui.navigation.*
-import com.lilac.anime.ui.search.*
-import com.lilac.anime.ui.settings.*
-import com.lilac.anime.ui.theme.*
-import com.lilac.anime.viewmodel.*
-
-import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.lilac.anime.ui.AnimeImage
+import com.lilac.anime.Anime
+import com.lilac.anime.ui.components.BackdropCard
+import com.lilac.anime.ui.components.SelectionBar
+import com.lilac.anime.viewmodel.AnimeViewModel
+import androidx.compose.foundation.layout.Column
 
+/**
+ * 홈의 "이어보기" 레일. 길게 눌러 선택 모드로 들어가면 기록을 지울 수 있다.
+ * 작품 정보는 현재 목록이 아니라 저장된 스냅샷까지 찾아서 가져오므로, 목록에 없는 작품도 사라지지 않는다.
+ */
 @Composable
 fun ContinueWatchingRail(vm: AnimeViewModel, open: (Anime) -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val allAvailableAnime = (vm.homeAnime + vm.allAnime).distinctBy { it.id }
-    val watchingAnime = vm.watchHistory.map { it.animeId }.distinct().mapNotNull { id -> allAvailableAnime.firstOrNull { it.id == id } }
+    val context = LocalContext.current
+    val historyIds = vm.watchHistory.map { it.animeId }.distinct()
+
+    var resolved by remember { mutableStateOf<Map<String, Anime>>(emptyMap()) }
+    LaunchedEffect(historyIds, vm.homeAnime, vm.allAnime) {
+        resolved = vm.resolveAnimeMap(context, historyIds)
+    }
+
+    val items = historyIds.mapNotNull { id ->
+        val anime = resolved[id] ?: return@mapNotNull null
+        val progress = vm.getLatestProgress(id) ?: return@mapNotNull null
+        Triple(id, anime, progress)
+    }
+
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var selectionMode by remember { mutableStateOf(false) }
+    val selectionMode = selectedIds.isNotEmpty()
+
+    if (items.isEmpty()) return
 
     Column(Modifier.fillMaxWidth()) {
         if (selectionMode) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(
-                    onClick = { selectedIds = if (selectedIds.size == watchingAnime.size) emptySet() else watchingAnime.map { it.id }.toSet() },
-                    contentPadding = PaddingValues(horizontal = 4.dp)
-                ) {
-                    Icon(Icons.Default.SelectAll, null, Modifier.size(20.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (selectedIds.size == watchingAnime.size) "전체해제" else "전체선택")
-                }
-                Text("${selectedIds.size}개 선택", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                IconButton(enabled = selectedIds.isNotEmpty(), onClick = {
+            SelectionBar(
+                selectedCount = selectedIds.size,
+                totalCount = items.size,
+                onSelectAll = {
+                    selectedIds = if (selectedIds.size == items.size) emptySet()
+                    else items.map { it.first }.toSet()
+                },
+                onDelete = {
                     vm.deleteWatchHistory(context, selectedIds)
                     selectedIds = emptySet()
-                    selectionMode = false
-                }) { Icon(Icons.Default.Delete, "삭제", tint = if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = .35f)) }
-                IconButton(onClick = { selectedIds = emptySet(); selectionMode = false }) { Icon(Icons.Default.Close, "취소") }
-            }
+                },
+                onCancel = { selectedIds = emptySet() }
+            )
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            watchingAnime.forEach { anime ->
-                val progress = vm.getLatestProgress(anime.id) ?: return@forEach
-                val selected = anime.id in selectedIds
-                Box(
-                    Modifier.width(190.dp).clip(RoundedCornerShape(16.dp)).combinedClickable(
-                        onClick = { if (selectionMode) {
-                            selectedIds = if (selected) selectedIds - anime.id else selectedIds + anime.id
-                            if (selectedIds.isEmpty()) selectionMode = false
-                        } else open(anime) },
-                        onLongClick = { selectionMode = true; selectedIds = selectedIds + anime.id }
-                    )
-                ) {
-                    Column {
-                        Box(Modifier.fillMaxWidth().height(110.dp).clip(RoundedCornerShape(16.dp))) {
-                            AnimeImage(model = anime.backdrop.ifEmpty { anime.poster }, contentDescription = anime.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                            Box(Modifier.fillMaxSize().background(Lilac.copy(alpha = if (selected) .42f else 0f)))
-                            Icon(Icons.Default.PlayArrow, null, Modifier.align(Alignment.Center).size(42.dp), tint = Color.White)
-                            if (selected) {
-                                Surface(Modifier.align(Alignment.TopEnd).padding(8.dp).size(30.dp), shape = RoundedCornerShape(50), color = Lilac, shadowElevation = 2.dp) {
-                                    Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.padding(5.dp))
-                                }
-                            }
+            items(items, key = { it.first }) { (id, anime, progress) ->
+                val selected = id in selectedIds
+                BackdropCard(
+                    anime = anime,
+                    modifier = Modifier.width(200.dp),
+                    progress = progress.progress,
+                    selected = selected,
+                    caption = "EP.${progress.episodeKey}",
+                    onClick = {
+                        if (selectionMode) {
+                            selectedIds = if (selected) selectedIds - id else selectedIds + id
+                        } else {
+                            open(anime)
                         }
-                        Spacer(Modifier.height(7.dp))
-                        Text(anime.title, fontWeight = FontWeight.SemiBold, maxLines = 1, color = MaterialTheme.colorScheme.onBackground)
-                        Text("EP.${progress.episodeKey}", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-                        Spacer(Modifier.height(5.dp))
-                        LinearProgressIndicator(progress = { progress.progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(4.dp), color = Lilac)
-                    }
-                }
+                    },
+                    onLongClick = { selectedIds = selectedIds + id }
+                )
             }
         }
     }
