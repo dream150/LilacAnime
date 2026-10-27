@@ -39,6 +39,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+    android:name="com.lilac.anime.network.CloudflareChallengeActivity"
+    android:exported="false"
+    android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

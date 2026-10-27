@@ -46,11 +46,12 @@ object GoogleDriveDownloader {
         // Keep the original viewer URL in the flow as well. Some shared Csora ZIP
         // files require Drive's viewer page to establish cookies or expose a signed
         // download URL before the actual binary can be fetched.
+        // Direct download endpoints first; the HTML viewer page is only a last resort.
         val candidates = listOf(
-            normalized,
             "https://drive.usercontent.google.com/download?id=${encode(fileId)}&export=download&confirm=t$suffix",
             "https://drive.google.com/uc?export=download&id=${encode(fileId)}$suffix",
-            "https://drive.google.com/u/0/uc?export=download&id=${encode(fileId)}$suffix"
+            "https://drive.google.com/u/0/uc?export=download&id=${encode(fileId)}$suffix",
+            normalized
         ).distinct()
 
         val cookies = linkedMapOf<String, String>()
@@ -76,6 +77,7 @@ object GoogleDriveDownloader {
                 parseConfirmationUrl(html, first.finalUrl)?.let(followUps::add)
                 extractDownloadUrlFromHtml(html, first.finalUrl)?.let(followUps::add)
                 extractEmbeddedDownloadUrl(html, first.finalUrl)?.let(followUps::add)
+                followUps.retainAll { isDriveUrl(it) }
 
                 for (confirmUrl in followUps) {
                     target.delete()
@@ -207,15 +209,27 @@ object GoogleDriveDownloader {
     }
 
     private fun extractDownloadUrlFromHtml(html: String, baseUrl: String): String? {
+        // Undo JS/JSON escaping first; otherwise the patterns stop at the backslash of \u0026.
+        val text = unescapeJs(html)
         val patterns = listOf(
-            Regex("""https://drive\.usercontent\.google\.com/download[^\"'\\<> ]+""", RegexOption.IGNORE_CASE),
-            Regex("""https://drive\.googleusercontent\.com/download[^\"'\\<> ]+""", RegexOption.IGNORE_CASE),
-            Regex("""https://drive\.google\.com/uc\?[^\"'\\<> ]+""", RegexOption.IGNORE_CASE)
+            Regex("""https://drive\.usercontent\.google\.com/download[^"'\\<>\s]+""", RegexOption.IGNORE_CASE),
+            Regex("""https://drive\.googleusercontent\.com/download[^"'\\<>\s]+""", RegexOption.IGNORE_CASE),
+            Regex("""https://drive\.google\.com/uc\?[^"'\\<>\s]+""", RegexOption.IGNORE_CASE)
         )
         patterns.forEach { regex ->
-            regex.find(html)?.value?.let { return htmlDecode(it.replace("\\u003d", "=").replace("\\u0026", "&")) }
+            regex.find(text)?.value?.let { return htmlDecode(it) }
         }
         return null
+    }
+
+    private fun unescapeJs(html: String): String = html
+        .replace("\\u003d", "=").replace("\\u0026", "&")
+        .replace("\\u002F", "/").replace("\\/", "/").replace("&amp;", "&")
+
+    private fun isDriveUrl(url: String): Boolean {
+        val host = runCatching { URI(url).host.orEmpty().lowercase() }.getOrDefault("")
+        return host == "drive.google.com" || host == "drive.usercontent.google.com" ||
+            host == "drive.googleusercontent.com" || host.endsWith(".googleusercontent.com")
     }
 
     /**
@@ -232,7 +246,7 @@ object GoogleDriveDownloader {
 
         val patterns = listOf(
             Regex("""["'](https?://[^"'\s\\]+(?:export=download|confirm=)[^"'\s\\]*)["']""", RegexOption.IGNORE_CASE),
-            Regex("""["'](/[^"'\s\\]*(?:uc\?|download)[^"'\s\\]*)["']""", RegexOption.IGNORE_CASE)
+            Regex("""["'](/(?:u/\d+/)?uc\?[^"'\s\\]*)["']""", RegexOption.IGNORE_CASE)
         )
         patterns.forEach { regex ->
             regex.find(normalized)?.groupValues?.getOrNull(1)?.let { value ->
@@ -246,10 +260,17 @@ object GoogleDriveDownloader {
         if (!file.isFile || file.length() < 32) return false
         if (looksLikeHtml(file)) return false
 
-        val contentType = headers.entries.firstOrNull { it.key.equals("Content-Type", true) }
-            ?.value?.firstOrNull()?.lowercase().orEmpty()
-        if (contentType.contains("text/html")) return false
-        return true
+        fun header(name: String) = headers.entries
+            .firstOrNull { it.key.equals(name, true) }?.value?.firstOrNull().orEmpty().lowercase()
+        val contentType = header("Content-Type")
+        val disposition = header("Content-Disposition")
+
+        // A genuine Drive download arrives as an attachment; static JS/JSON/CSS never does.
+        if (disposition.contains("attachment") || disposition.contains("filename")) return true
+
+        val rejected = listOf("text/html", "javascript", "text/css", "application/json", "image/", "video/", "audio/")
+        if (rejected.any { contentType.contains(it) }) return false
+        return contentType.contains("zip") || contentType.contains("octet-stream") || contentType.startsWith("text/plain")
     }
 
     private fun looksLikeHtml(file: File): Boolean {

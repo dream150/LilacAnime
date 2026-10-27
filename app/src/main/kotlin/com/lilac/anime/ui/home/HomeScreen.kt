@@ -50,12 +50,18 @@ fun HomeScreen(
     var scheduleTab by remember { mutableIntStateOf(0) }
     val source = vm.playerSettings.videoSourcePreference
     val isLinkkf = source == "linkkf"
+    val isReAnime = source == "reanime"
+
+    // Re:ANIME은 홈 목록(vm.homeAnime) 대신 전용 목록(인기/방영 일정)을 쓴다.
+    val heroPool = if (isReAnime) vm.reAnimeTop.ifEmpty { vm.reAnimeSchedule } else vm.homeAnime
+    val homeLoading = if (isReAnime) vm.reAnimeHomeLoading else vm.loading
 
     LaunchedEffect(vm.sourceRevision, source) {
         if (isLinkkf) {
             vm.loadLinkkfHomeSchedule()
             vm.loadLinkkfHomeSections()
         }
+        if (isReAnime) vm.loadReAnimeHome()
     }
 
     LazyColumn(
@@ -107,11 +113,14 @@ fun HomeScreen(
 
         item {
             when {
-                vm.loading && vm.homeAnime.isEmpty() ->
+                homeLoading && heroPool.isEmpty() ->
                     LoadingState(Modifier.height(300.dp), message = "작품을 불러오는 중이에요")
-                vm.error != null && vm.homeAnime.isEmpty() ->
-                    ErrorState(vm.error ?: "오류가 발생했습니다.", onRetry = { vm.loadAnime(context) })
-                vm.homeAnime.isNotEmpty() -> HeroCard(anime = vm.homeAnime.first(), open = openDetail)
+                vm.error != null && heroPool.isEmpty() ->
+                    ErrorState(
+                        vm.error ?: "오류가 발생했습니다.",
+                        onRetry = { if (isReAnime) vm.loadReAnimeHome() else vm.loadAnime(context) }
+                    )
+                heroPool.isNotEmpty() -> HeroCard(anime = heroPool.first(), open = openDetail)
                 else -> Text(
                     "등록된 애니메이션이 없습니다.",
                     modifier = Modifier.padding(20.dp),
@@ -176,7 +185,19 @@ fun HomeScreen(
             }
         }
 
-        if (vm.homeAnime.isNotEmpty()) {
+        if (isReAnime) {
+            // Re:ANIME: 오늘의 인기 → 이번 주 방영 순서. 다른 소스와 같은 레일 컴포넌트를 쓴다.
+            if (vm.reAnimeTop.isNotEmpty()) {
+                item { RailTitle("오늘의 인기") }
+                item { AnimeRail(vm.reAnimeTop.take(10), openDetail) }
+            }
+            if (vm.reAnimeSchedule.isNotEmpty()) {
+                item { RailTitle("이번 주 방영") }
+                item { AnimeRail(vm.reAnimeSchedule.take(12), openDetail) }
+            }
+        }
+
+        if (!isReAnime && vm.homeAnime.isNotEmpty()) {
             item { RailTitle("최신 애니메이션") }
             item { AnimeRail(vm.homeAnime.take(10), openDetail) }
         }

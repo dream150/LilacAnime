@@ -3,6 +3,10 @@ package com.lilac.anime.data
 import android.util.Log
 import com.lilac.anime.Anime
 import com.lilac.anime.Episode
+import com.lilac.anime.network.CloudflareChallengeException
+import com.lilac.anime.network.CloudflareChallengeRequired
+import com.lilac.anime.network.CloudflareSession
+import com.lilac.anime.network.CloudflareWebFetcher
 import com.lilac.anime.network.LinkkfPlayerResolver
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -15,37 +19,72 @@ import java.util.zip.GZIPInputStream
 /** Android port of the desktop Miruro API/catalog/playback adapter. */
 class MiruroClient {
     private val http = OkHttpClient.Builder()
+        .cookieJar(CloudflareSession.cookieJar) // WebView 와 쿠키(cf_clearance) 공유
         .followRedirects(true).retryOnConnectionFailure(true)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
         .callTimeout(35, TimeUnit.SECONDS).build()
+
+    private class RawReply(val code: Int, val mitigated: String?, val server: String?, val bytes: ByteArray)
+
+    /** OkHttp 로 보내되, Cloudflare 때문에 OkHttp 가 통과하지 못한 뒤에는 WebView fetch 로 보낸다. */
+    private fun send(request: Request): RawReply {
+        if (CloudflareSession.useWebViewFetch) {
+            val r = CloudflareWebFetcher.fetch(request.url.toString())
+            return RawReply(r.status, r.mitigated, r.server, r.body)
+        }
+        return http.newCall(request).execute().use { r ->
+            RawReply(r.code, r.header("cf-mitigated"), r.header("Server"), r.body?.bytes() ?: byteArrayOf())
+        }
+    }
 
     private fun api(path: String, params: Map<String, String> = emptyMap()): JSONObject {
         val url = okhttp3.HttpUrl.Builder().scheme("https").host("www.miruro.to")
             .addPathSegments("api/v1/${path.trimStart('/')}").apply {
                 params.forEach { (key, value) -> if (value.isNotBlank()) addQueryParameter(key, value) }
             }.build()
-        val request = Request.Builder().url(url).header("User-Agent", UA)
+        val request = Request.Builder().url(url).header("User-Agent", CloudflareSession.userAgent)
             .header("Accept", "*/*").header("Referer", "$BASE/").build()
         var lastError: Throwable? = null
-        repeat(3) { attempt ->
+        var cfSolved = false
+        var attempt = 0
+        while (attempt < 3) {
+            attempt++
             try {
-                http.newCall(request).execute().use { response ->
-                    val bytes = response.body?.bytes() ?: byteArrayOf()
-                    if (!response.isSuccessful) {
-                        val detail = bytes.toString(Charsets.UTF_8).replace(Regex("[\r\n\t]+"), " ").take(240)
-                        Log.e("MiruroApi", "API_HTTP_ERROR path=$path status=${response.code} bytes=${bytes.size} body=$detail")
-                        throw java.io.IOException("Miruro HTTP ${response.code}${if (detail.isNotBlank()) ": $detail" else ""}")
-                    }
-                    val decoded = decodeApiBody(bytes)
-                    val json = JSONObject(decoded)
-                    Log.d("MiruroApi", "API_OK path=$path attempt=${attempt + 1} bytes=${bytes.size} keys=${json.keys().asSequence().take(12).joinToString(",")}")
-                    return json
+                val reply = send(request)
+                val bytes = reply.bytes
+                if (CloudflareSession.isChallenge(reply.code, reply.mitigated, reply.server, bytes)) {
+                    throw CloudflareChallengeRequired()
                 }
+                if (reply.code !in 200..299) {
+                    val detail = bytes.toString(Charsets.UTF_8).replace(Regex("[\\r\\n\\t]+"), " ").take(240)
+                    Log.e("MiruroApi", "API_HTTP_ERROR path=$path status=${reply.code} bytes=${bytes.size} body=$detail")
+                    throw java.io.IOException("Miruro HTTP ${reply.code}${if (detail.isNotBlank()) ": $detail" else ""}")
+                }
+                val json = JSONObject(decodeApiBody(bytes))
+                Log.d("MiruroApi", "API_OK path=$path attempt=$attempt via=${if (CloudflareSession.useWebViewFetch) "webview" else "okhttp"} bytes=${bytes.size} keys=${json.keys().asSequence().take(12).joinToString(",")}")
+                return json
             } catch (t: Throwable) {
                 if (t is kotlinx.coroutines.CancellationException) throw t
+                if (t is CloudflareChallengeRequired) {
+                    if (!cfSolved) {
+                        Log.w("MiruroApi", "CLOUDFLARE_CHALLENGE path=$path -> 인증창 표시")
+                        CloudflareSession.solve(url.toString()) // 실패 시 CloudflareChallengeException 전파
+                        cfSolved = true
+                        attempt-- // 인증은 재시도 횟수에서 제외
+                        continue
+                    }
+                    if (!CloudflareSession.useWebViewFetch) {
+                        // 인증은 됐지만 OkHttp(TLS 지문/헤더)는 계속 막힘 -> WebView 로 직접 요청
+                        Log.w("MiruroApi", "OKHTTP_STILL_BLOCKED path=$path -> WebView fetch 로 전환")
+                        CloudflareSession.useWebViewFetch = true
+                        attempt--
+                        continue
+                    }
+                    throw CloudflareChallengeException("Cloudflare 인증 후에도 요청이 차단되었습니다(WebView 요청 포함).")
+                }
                 lastError = t
-                Log.w("MiruroApi", "API_RETRY path=$path attempt=${attempt + 1}: ${t.message}")
-                if (attempt < 2) try { Thread.sleep(300L * (attempt + 1)) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+                Log.w("MiruroApi", "API_RETRY path=$path attempt=$attempt: ${t.message}")
+                if (attempt < 3) try { Thread.sleep(300L * attempt) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
             }
         }
         throw java.io.IOException("Miruro API 요청 실패: ${lastError?.message ?: "알 수 없는 오류"}", lastError)
@@ -226,7 +265,7 @@ class MiruroClient {
         for (candidate in candidates.sortedBy { it.rank }) {
             try {
                 val builder = Request.Builder().url(candidate.url).get()
-                    .header("User-Agent", UA).header("Accept", "*/*")
+                    .header("User-Agent", CloudflareSession.userAgent).header("Accept", "*/*")
                 val keys = candidate.headers.keys()
                 while (keys.hasNext()) {
                     val key = keys.next()
@@ -255,7 +294,10 @@ class MiruroClient {
         }
         val referer = best.headers.optString("Referer").ifBlank { best.headers.optString("referer") }.ifBlank { "$BASE/" }
         val headers = JSONObject(best.headers.toString()).apply {
-            if (!has("User-Agent") && !has("user-agent")) put("User-Agent", UA)
+            if (!has("User-Agent") && !has("user-agent")) put("User-Agent", CloudflareSession.userAgent)
+            // 영상 URL 이 miruro 도메인이면 Cloudflare 쿠키도 함께 전달
+            if (!has("Cookie") && !has("cookie") && android.net.Uri.parse(best.url).host?.endsWith("miruro.to") == true)
+                CloudflareSession.cookieHeader(best.url)?.let { put("Cookie", it) }
             if (!has("Referer") && !has("referer")) put("Referer", referer)
         }.toString()
         Log.i("MiruroPlayer", "RESOLVED episode=$number provider=${best.provider} kind=${best.kind} candidates=${candidates.size} failed=$failed subtitle=${best.subtitle != null} host=${android.net.Uri.parse(best.url).host}")
@@ -294,6 +336,5 @@ class MiruroClient {
 
     companion object {
         const val BASE = "https://www.miruro.to"
-        private const val UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
     }
 }

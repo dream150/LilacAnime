@@ -12,5 +12,6 @@ class LilacApplication : Application() {
         // WorkManager decides the exact execution time under Android's
         // background limits; the requested cadence is 6 hours.
         ReAnimeCatalogScheduler.ensureScheduled(this)
+        com.lilac.anime.network.CloudflareSession.init(this)
     }
 }

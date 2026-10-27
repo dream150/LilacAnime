@@ -785,11 +785,29 @@ fun PlayerScreen(
     val previousEpisode = orderedEpisodes.getOrNull(currentEpisodeIndex - 1)
     val nextEpisode = orderedEpisodes.getOrNull(currentEpisodeIndex + 1)
 
+    // Persists the current watch position. Used on leave, on episode switch and
+    // periodically so a crash/kill never loses more than a few seconds.
+    fun saveProgressNow() {
+        val total = engine.duration
+        if (total <= 0L || streamUrl == null) return
+        runCatching {
+            vm.updateProgress(
+                context,
+                anime.id,
+                currentEpisode.number,
+                (engine.currentPosition.toDouble() / total.toDouble()).toFloat().coerceIn(0f, 1f),
+                currentEpisode.id
+            )
+        }
+    }
+
     fun switchEpisode(target: Episode) {
         // Ignore duplicate/late remote clicks while a target is already loading.
         // The generation token prevents a slow resolver from the previous episode
         // from overwriting the newly selected episode's stream URL.
-        if (target.id == currentEpisode.id || loading && target.id == currentEpisode.id) return
+        if (target.id == currentEpisode.id) return
+        // The previous episode's progress used to be lost on every switch.
+        saveProgressNow()
         playbackGeneration += 1
         Log.i("MpvEpisode", "EPISODE_SWITCH_BEGIN from=${currentEpisode.displayNumber} to=${target.displayNumber} generation=$playbackGeneration")
         // Never reuse the previous foreground libmpv session for a new episode.
@@ -821,16 +839,7 @@ fun PlayerScreen(
     }
 
     fun leave() {
-        vm.updateProgress(
-            context,
-            anime.id,
-            currentEpisode.number,
-            if (engine.duration > 0) {
-                (engine.currentPosition.toDouble() / engine.duration.toDouble())
-                    .toFloat().coerceIn(0f, 1f)
-            } else 0f,
-            currentEpisode.id
-        )
+        saveProgressNow()
         if (!MainActivity.isInPictureInPicture) {
             runCatching { FlixCloudHlsProxy.clearSessions() }
             runCatching { engine.stop() }
@@ -1930,14 +1939,25 @@ fun PlayerScreen(
             }
         }
 
-        // Mobile controls auto-hide after exactly 2 seconds. Opening the settings
-        // menu keeps the controls alive until the menu is dismissed.
-        LaunchedEffect(isTv, controlsVisible, settingsOpen, locked) {
-            if (!isTv && controlsVisible && !settingsOpen && !locked) {
-                delay(2000)
-                if (isActive && !settingsOpen && !locked) {
+        // Mobile controls auto-hide after 4 seconds of inactivity (2s was too short
+        // to reach any button). The timer restarts on every seek-drag state change,
+        // never hides while the user is dragging the slider, and stays alive while
+        // the settings menu or a paused video is shown.
+        LaunchedEffect(isTv, controlsVisible, settingsOpen, locked, isSeeking, isPlaying) {
+            if (!isTv && controlsVisible && !settingsOpen && !locked && !isSeeking && isPlaying) {
+                delay(4000)
+                if (isActive && !settingsOpen && !locked && !isSeeking) {
                     controlsVisible = false
                 }
+            }
+        }
+
+        // Save the watch position every 15 seconds while playing.
+        LaunchedEffect(engine, currentEpisode.id, streamUrl) {
+            if (streamUrl == null) return@LaunchedEffect
+            while (isActive) {
+                delay(15_000L)
+                if (engine.isPlaying) saveProgressNow()
             }
         }
 
@@ -1968,6 +1988,29 @@ fun PlayerScreen(
             )
         }
 
+        // Large time bubble while dragging the seek bar, so the target position is
+        // readable above the thumb/finger.
+        if (isSeeking && duration > 0L && !locked) {
+            Surface(
+                modifier = Modifier.align(Alignment.Center),
+                shape = RoundedCornerShape(16.dp),
+                color = Color.Black.copy(alpha = .72f)
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 22.dp, vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(formatTime(seekPreview.toLong()), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    val delta = (seekPreview.toLong() - engine.currentPosition) / 1000L
+                    Text(
+                        (if (delta >= 0) "+" else "-") + formatTime(kotlin.math.abs(delta) * 1000L),
+                        color = Color.White.copy(.65f),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+
         if (loading) {
             Surface(
                 modifier = Modifier.align(Alignment.Center),
@@ -1979,9 +2022,15 @@ fun PlayerScreen(
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        strokeWidth = 3.dp,
+                        color = Color.White
+                    )
+                    Spacer(Modifier.height(12.dp))
                     Text("재생 준비 중", color = Color.White, fontSize = 15.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text("영상 스트림을 연결하고 있습니다…", color = Color.White.copy(.65f), fontSize = 12.sp)
+                    Text("${currentEpisode.displayNumber} · 영상 스트림을 연결하고 있습니다…", color = Color.White.copy(.65f), fontSize = 12.sp)
                 }
             }
         }
@@ -2123,11 +2172,22 @@ fun PlayerScreen(
                     Spacer(Modifier.height(14.dp))
                     Surface(
                         onClick = {
-                            loading = true
-                            error = null
+                            // Bumping the generation re-runs the resolver effect;
+                            // previously nothing observed this click, so "retry"
+                            // left the player stuck on the loading card.
+                            runCatching { FlixCloudHlsProxy.clearSessions() }
+                            playbackGeneration += 1
                             streamUrl = null
+                            streamHeaders = null
+                            streamReferer = null
+                            resolvedVideoPageUrl = null
+                            parsedStreamingQualities = emptyList()
+                            selectedStreamingQuality = null
+                            error = null
+                            loading = true
                             controlsVisible = false
                         },
+                        modifier = Modifier.tvFocusable(),
                         shape = RoundedCornerShape(14.dp),
                         color = Color.White.copy(alpha = .12f)
                     ) {
@@ -3333,6 +3393,67 @@ fun PlayerScreen(
                         )
                         Text(formatTime(duration), color = Color.White.copy(.58f), fontSize = 11.sp)
                     }
+                    // Quick actions: the most-used toggles no longer require opening
+                    // the long settings menu.
+                    val quickSpeeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
+                    val quickNextSpeed = quickSpeeds[
+                        (quickSpeeds.indexOfFirst { kotlin.math.abs(it - speed) < 0.01f }.coerceAtLeast(0) + 1) % quickSpeeds.size
+                    ]
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            onClick = {
+                                subtitleEnabled = !subtitleEnabled
+                                setSubtitleVisibleForMode(subtitleEnabled)
+                            },
+                            modifier = Modifier.tvFocusable(),
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (subtitleEnabled) Color.White.copy(.20f) else Color.White.copy(.08f)
+                        ) {
+                            Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Subtitles, "자막 켜기/끄기", tint = Color.White.copy(if (subtitleEnabled) 1f else .5f), modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(5.dp))
+                                Text(if (subtitleEnabled) "자막 켜짐" else "자막 꺼짐", color = Color.White, fontSize = 11.sp)
+                            }
+                        }
+                        Surface(
+                            onClick = {
+                                speed = quickNextSpeed
+                                engine.setSpeed(quickNextSpeed)
+                                vm.updatePlayerSettings(context, vm.playerSettings.copy(playbackSpeed = quickNextSpeed))
+                            },
+                            modifier = Modifier.tvFocusable(),
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (kotlin.math.abs(speed - 1f) > 0.01f) Color.White.copy(.20f) else Color.White.copy(.08f)
+                        ) {
+                            Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Speed, "재생 속도", tint = Color.White, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(5.dp))
+                                Text("${"%.2f".format(Locale.US, speed)}x", color = Color.White, fontSize = 11.sp)
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        if (duration > 0L) {
+                            Text("남은 시간 ${formatTime((duration - position).coerceAtLeast(0L))}", color = Color.White.copy(.55f), fontSize = 10.sp)
+                        }
+                        if (nextEpisode != null) {
+                            Surface(
+                                onClick = { switchEpisode(nextEpisode) },
+                                modifier = Modifier.tvFocusable(),
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.White.copy(.08f)
+                            ) {
+                                Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("다음 화", color = Color.White, fontSize = 11.sp)
+                                    Spacer(Modifier.width(4.dp))
+                                    Icon(Icons.Default.SkipNext, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -3373,7 +3494,7 @@ fun PlayerScreen(
                 },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 18.dp, bottom = if (controlsVisible && !locked) 138.dp else 28.dp)
+                    .padding(end = 18.dp, bottom = if (controlsVisible && !locked) 172.dp else 28.dp)
                     .tvFocusable(),
                 shape = RoundedCornerShape(15.dp),
                 color = Color.Black.copy(alpha = .78f),

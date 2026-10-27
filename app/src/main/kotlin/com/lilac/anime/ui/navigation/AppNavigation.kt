@@ -72,8 +72,6 @@ import com.lilac.anime.ui.detail.DetailScreen
 import com.lilac.anime.ui.home.AllAnimeScreen
 import com.lilac.anime.ui.home.HomeScreen
 import com.lilac.anime.ui.home.WatchHistoryScreen
-import com.lilac.anime.ui.reanime.ReAnimeDetailScreen
-import com.lilac.anime.ui.reanime.ReAnimeHomeScreen
 import com.lilac.anime.ui.reanime.ReAnimeSearchScreen
 import com.lilac.anime.ui.search.LibraryScreen
 import com.lilac.anime.ui.search.SearchScreen
@@ -250,7 +248,6 @@ private fun LilacNavHost(
             composable(Routes.HOME) {
                 when {
                     isTv -> TvHomeScreen(vm, openDetail, navigateTo)
-                    reanime -> ReAnimeHomeScreen(vm, openDetail, navigateTo)
                     else -> HomeScreen(vm, openDetail, navigateTo)
                 }
             }
@@ -308,13 +305,6 @@ private fun LilacNavHost(
                 when {
                     currentItem != null -> when {
                         isTv -> TvDetailScreen(
-                            vm = vm,
-                            anime = currentItem,
-                            back = { nav.popBackStack() },
-                            playEpisode = play,
-                            openRelated = openRelated
-                        )
-                        reanime -> ReAnimeDetailScreen(
                             vm = vm,
                             anime = currentItem,
                             back = { nav.popBackStack() },

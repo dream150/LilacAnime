@@ -269,7 +269,7 @@ fun DetailScreen(
     val isReAnime = vm.playerSettings.videoSourcePreference == "reanime"
     val viewStats = vm.linkkfViewStats
     val relatedSeries = vm.linkkfRelatedSeries
-    var detailTab by remember(currentAnime.id, isReAnime) { mutableIntStateOf(if (isReAnime) 3 else 0) }
+    var detailTab by remember(currentAnime.id, isReAnime) { mutableIntStateOf(0) }
     var episodeQuery by remember(currentAnime.id) { mutableStateOf("") }
     var showCover by remember(currentAnime.id) { mutableStateOf(false) }
     val episodes = vm.episodes(currentAnime)
@@ -1104,12 +1104,12 @@ fun DetailScreen(
                 }
             }
 
-            // ── 정보 / 스토리 / 관련 작품 / (Re:Anime) 회차 탭 ─────────
+            // ── 정보 / 스토리 / 관련 작품 탭 ─────────
             item {
                 Column(Modifier.padding(horizontal = 20.dp)) {
                     DetailTabs(
                         selected = detailTab,
-                        showEpisodeTab = isReAnime,
+                        showEpisodeTab = false,
                         onSelect = { detailTab = it }
                     )
                     Spacer(Modifier.height(16.dp))
@@ -1183,107 +1183,105 @@ fun DetailScreen(
             }
 
             // ── 에피소드 목록 ────────────────────────────────────────
-            if (!isReAnime || detailTab == 3) {
-                if (episodesLoading) {
-                    item {
-                        Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            if (episodesLoading) {
+                item {
+                    Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            } else if (episodes.isNotEmpty()) {
+                item {
+                    EpisodeListHeader(
+                        total = sortedEpisodes.size,
+                        newestFirst = newestFirst,
+                        onSortChange = { newest ->
+                            newestFirst = newest
+                            episodePage = 0
+                            scope.launch { OfflineStore.saveEpisodeSortOrder(context, currentAnime.id, newest) }
                         }
-                    }
-                } else if (episodes.isNotEmpty()) {
-                    item {
-                        EpisodeListHeader(
-                            total = sortedEpisodes.size,
-                            newestFirst = newestFirst,
-                            onSortChange = { newest ->
-                                newestFirst = newest
-                                episodePage = 0
-                                scope.launch { OfflineStore.saveEpisodeSortOrder(context, currentAnime.id, newest) }
-                            }
-                        )
-                    }
+                    )
+                }
 
-                    if (isLinkkf && vm.linkkfEpisodeServers.size > 1) {
-                        item {
-                            LazyRow(
-                                contentPadding = PaddingValues(horizontal = 20.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
-                            ) {
-                                items(vm.linkkfEpisodeServers) { server ->
-                                    FilterChip(
-                                        selected = vm.linkkfSelectedServerId == server.id,
-                                        onClick = {
-                                            episodePage = 0
-                                            episodeQuery = ""
-                                            vm.selectLinkkfEpisodeServer(currentAnime, server.id)
-                                        },
-                                        label = { Text(server.name) }
-                                    )
-                                }
+                if (isLinkkf && vm.linkkfEpisodeServers.size > 1) {
+                    item {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 20.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                        ) {
+                            items(vm.linkkfEpisodeServers) { server ->
+                                FilterChip(
+                                    selected = vm.linkkfSelectedServerId == server.id,
+                                    onClick = {
+                                        episodePage = 0
+                                        episodeQuery = ""
+                                        vm.selectLinkkfEpisodeServer(currentAnime, server.id)
+                                    },
+                                    label = { Text(server.name) }
+                                )
                             }
                         }
                     }
+                }
 
+                item {
+                    OutlinedTextField(
+                        value = episodeQuery,
+                        onValueChange = { episodeQuery = it },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+                        singleLine = true,
+                        placeholder = { Text("회차 검색") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        shape = RoundedCornerShape(28.dp)
+                    )
+                }
+
+                if (episodePageCount > 1) {
                     item {
-                        OutlinedTextField(
-                            value = episodeQuery,
-                            onValueChange = { episodeQuery = it },
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
-                            singleLine = true,
-                            placeholder = { Text("회차 검색") },
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                            shape = RoundedCornerShape(28.dp)
+                        EpisodePager(
+                            page = episodePage,
+                            pageCount = episodePageCount,
+                            onPrev = { episodePage-- },
+                            onNext = { episodePage++ }
                         )
                     }
+                }
 
-                    if (episodePageCount > 1) {
-                        item {
-                            EpisodePager(
-                                page = episodePage,
-                                pageCount = episodePageCount,
-                                onPrev = { episodePage-- },
-                                onNext = { episodePage++ }
-                            )
-                        }
-                    }
+                items(visibleEpisodes) { ep ->
+                    val downloadKey = offlineDownloadId(currentAnime.id, ep)
+                    val isDownloaded = vm.isEpisodeDownloaded(currentAnime.id, ep)
+                    val downloadingProgress = downloadProgressMap[downloadKey]
+                    val epProgress = vm.getProgress(currentAnime.id, ep.displayNumber, ep.number)
+                    val isLastPlayed = lastPlayedProgress != null && lastPlayedEpisode?.id == ep.id
 
-                    items(visibleEpisodes) { ep ->
-                        val downloadKey = offlineDownloadId(currentAnime.id, ep)
-                        val isDownloaded = vm.isEpisodeDownloaded(currentAnime.id, ep)
-                        val downloadingProgress = downloadProgressMap[downloadKey]
-                        val epProgress = vm.getProgress(currentAnime.id, ep.displayNumber, ep.number)
-                        val isLastPlayed = lastPlayedProgress != null && lastPlayedEpisode?.id == ep.id
-
-                        EpisodeRow(
-                            ep = ep,
-                            isReAnime = isReAnime,
-                            isDownloaded = isDownloaded,
-                            downloadingProgress = downloadingProgress,
-                            watchProgress = epProgress?.progress,
-                            isLastPlayed = isLastPlayed,
-                            isOffline = isOffline,
-                            canDownload = ep.playable && !isBatchDownloading && downloadingProgress == null,
-                            onPlay = {
-                                if (ep.playable && (isDownloaded || !isOffline)) playEpisode(ep)
-                            },
-                            onDelete = { vm.deleteDownload(context, anime, ep) },
-                            onCancelDownload = {
-                                vm.cancelDownload(context, currentAnime, ep)
-                                Toast.makeText(context, "${ep.number}화 다운로드가 취소되었습니다.", Toast.LENGTH_SHORT).show()
-                            },
-                            onDownload = { processSingleDownload(ep) }
-                        )
-                    }
-                } else {
-                    item {
-                        Text(
-                            "에피소드가 없습니다.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(20.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    EpisodeRow(
+                        ep = ep,
+                        isReAnime = isReAnime,
+                        isDownloaded = isDownloaded,
+                        downloadingProgress = downloadingProgress,
+                        watchProgress = epProgress?.progress,
+                        isLastPlayed = isLastPlayed,
+                        isOffline = isOffline,
+                        canDownload = ep.playable && !isBatchDownloading && downloadingProgress == null,
+                        onPlay = {
+                            if (ep.playable && (isDownloaded || !isOffline)) playEpisode(ep)
+                        },
+                        onDelete = { vm.deleteDownload(context, anime, ep) },
+                        onCancelDownload = {
+                            vm.cancelDownload(context, currentAnime, ep)
+                            Toast.makeText(context, "${ep.number}화 다운로드가 취소되었습니다.", Toast.LENGTH_SHORT).show()
+                        },
+                        onDownload = { processSingleDownload(ep) }
+                    )
+                }
+            } else {
+                item {
+                    Text(
+                        "에피소드가 없습니다.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(20.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
