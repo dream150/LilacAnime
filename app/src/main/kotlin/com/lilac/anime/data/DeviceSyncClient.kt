@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.lilac.anime.Anime
 import com.lilac.anime.WatchProgress
 import com.lilac.anime.data.offline.OfflineStore
 import org.json.JSONArray
@@ -25,6 +26,7 @@ object DeviceSyncClient {
     private const val KEY_TOKEN = "encrypted_token"
     private const val KEY_REV = "revision"
     private const val KEY_SNAPSHOT = "snapshot"
+    private const val KEY_REMOTE = "remote_ids"
     private const val MAX_BATCH = 500
 
     data class SyncResult(val library: Set<String>, val history: List<WatchProgress>, val sent: Int, val received: Int, val revision: Long)
@@ -33,7 +35,7 @@ object DeviceSyncClient {
     fun isConnected(context: Context): Boolean = decryptToken(context).isNotBlank()
 
     fun disconnect(context: Context) {
-        prefs(context).edit().remove(KEY_TOKEN).remove(KEY_REV).remove(KEY_SNAPSHOT).apply()
+        prefs(context).edit().remove(KEY_TOKEN).remove(KEY_REV).remove(KEY_SNAPSHOT).remove(KEY_REMOTE).apply()
     }
 
     fun connect(context: Context, rawUrl: String, password: String): String {
@@ -54,28 +56,17 @@ object DeviceSyncClient {
         require(base.isNotBlank() && token.isNotBlank()) { "먼저 동기화 서버에 연결하세요." }
         val p = prefs(context)
         val oldSnapshot = try { JSONObject(p.getString(KEY_SNAPSHOT, "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+        // The server's id (and, for history, its copy) of each item taken in from there, by this app's id (see DeviceSyncMapping).
+        val remote = try { JSONObject(p.getString(KEY_REMOTE, "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
         val now = System.currentTimeMillis()
         val local = localCollections(library, history, now)
-        val snapshotNow = hashes(local)
-        val outgoing = JSONArray()
-        for (collection in listOf("library", "history")) {
-            val before = oldSnapshot.optJSONObject(collection) ?: JSONObject()
-            val current = local.optJSONObject(collection) ?: JSONObject()
-            val keys = current.keys()
-            while (keys.hasNext()) {
-                val id = keys.next()
-                val data = current.optJSONObject(id) ?: continue
-                val hash = hashJson(data)
-                if (before.optString(id, "") == hash) continue
-                val updated = if (collection == "history") data.optLong("updated", now).coerceAtLeast(1L) else if (before.has(id)) now else data.optLong("savedAt", now).coerceAtLeast(1L)
-                outgoing.put(JSONObject().put("collection", collection).put("id", id).put("updated", updated).put("data", data))
-            }
-            val oldKeys = before.keys()
-            while (oldKeys.hasNext()) {
-                val id = oldKeys.next()
-                if (!current.has(id)) outgoing.put(JSONObject().put("collection", collection).put("id", id).put("updated", now).put("deleted", true))
-            }
+        // Titles and pictures of the works, from the phone's copy of them, for the desktop to show.
+        val works = HashMap<String, DeviceSyncMapping.Work>()
+        for (id in library + history.map { it.animeId }) {
+            if (id in works) continue
+            OfflineStore.getAnime(context, id)?.let { a -> works[id] = DeviceSyncMapping.Work(a.id, a.title, a.poster, a.anilistId, a.malId, a.description) }
         }
+        val outgoing = DeviceSyncMapping.outgoing(local, oldSnapshot, remote, works, now) { hashJson(it) }
         val incoming = mutableListOf<JSONObject>()
         var sent = 0
         var start = 0
@@ -101,22 +92,22 @@ object DeviceSyncClient {
             more = page.optBoolean("more", false)
             if (more && items.length() == 0) throw IllegalStateException("서버가 다음 페이지를 제공하지 않았습니다.")
         }
-        val merged = merge(local, incoming)
-        val newLibrary = merged.optJSONObject("library")?.let { obj -> buildSet { val it = obj.keys(); while (it.hasNext()) add(it.next()) } } ?: library
-        val newHistory = merged.optJSONObject("history")?.let { obj ->
-            val result = mutableListOf<WatchProgress>(); val it = obj.keys()
-            while (it.hasNext()) {
-                val id = it.next(); val d = obj.optJSONObject(id) ?: continue
-                val animeId = d.optString("androidAnimeId").ifBlank { d.optJSONObject("anime")?.optString("id").orEmpty().ifBlank { d.optJSONObject("anime")?.optString("mal_id").orEmpty() } }
-                val epKey = d.optString("androidEpisodeKey").ifBlank { d.optJSONObject("episode")?.optString("key").orEmpty().ifBlank { d.optJSONObject("episode")?.optString("number").orEmpty().ifBlank { id.substringAfterLast(':', "1") } } }
-                val epNumber = d.optInt("episodeNumber", d.optJSONObject("episode")?.optInt("number", epKey.takeWhile { it.isDigit() }.toIntOrNull() ?: 1) ?: 1)
-                if (animeId.isNotBlank()) result += WatchProgress(animeId, epNumber.coerceAtLeast(1), d.optDouble("progress", 0.0).toFloat().coerceIn(0f, 100f), epKey)
-            }
-            result.distinctBy { "${it.animeId}|${it.episodeKey}" }.sortedByDescending { merged.optJSONObject("history")?.optJSONObject(historyId(it))?.optLong("updated", 0L) ?: 0L }.take(300)
+        val merged = DeviceSyncMapping.merge(local, incoming, remote)
+        // A work the phone never opened is kept from what the other device sent, so 내 목록 and 이어보기 can show it.
+        for (work in merged.works) {
+            if (OfflineStore.getAnime(context, work.id) == null) OfflineStore.saveAnime(context, Anime(id = work.id, title = work.title, poster = work.poster, backdrop = work.poster, anilistId = work.anilistId, malId = work.malId, description = work.description))
+        }
+        val newLibrary = merged.values.optJSONObject("library")?.keys()?.asSequence()?.toSet() ?: library
+        val newHistory = merged.values.optJSONObject("history")?.let { obj ->
+            obj.keys().asSequence().mapNotNull { id ->
+                val d = obj.optJSONObject(id) ?: return@mapNotNull null
+                val identity = DeviceSyncMapping.historyIdentity(id, d) ?: return@mapNotNull null
+                WatchProgress(identity.animeId, identity.episodeNumber.coerceAtLeast(1), DeviceSyncMapping.progressFraction(d), identity.episodeKey, merged.updated[id] ?: 0L)
+            }.distinctBy { "${it.animeId}|${it.episodeKey}" }.sortedByDescending { merged.updated[historyId(it)] ?: 0L }.take(300).toList()
         } ?: history
         OfflineStore.saveLibrary(context, newLibrary)
         OfflineStore.saveWatchHistory(context, newHistory)
-        p.edit().putLong(KEY_REV, rev).putString(KEY_SNAPSHOT, hashes(localCollections(newLibrary, newHistory, now)).toString()).apply()
+        p.edit().putLong(KEY_REV, rev).putString(KEY_SNAPSHOT, hashes(localCollections(newLibrary, newHistory, now)).toString()).putString(KEY_REMOTE, remote.toString()).apply()
         SyncResult(newLibrary, newHistory, sent, received, rev)
     }
 
@@ -124,7 +115,7 @@ object DeviceSyncClient {
         val lib = JSONObject(); library.forEach { id -> lib.put(id, JSONObject().put("provider", "android").put("id", id).put("mal_id", id).put("title", id).put("savedAt", now)) }
         val hist = JSONObject(); history.forEach { w ->
             val key = historyId(w)
-            hist.put(key, JSONObject().put("key", key).put("androidAnimeId", w.animeId).put("androidEpisodeKey", w.episodeKey).put("name", "${w.animeId} · ${w.episodeKey}화").put("episodeNumber", w.episodeNumber).put("episode", JSONObject().put("number", w.episodeNumber).put("key", w.episodeKey)).put("anime", JSONObject().put("id", w.animeId).put("mal_id", w.animeId).put("title", w.animeId)).put("progress", w.progress.toDouble()).put("updated", now))
+            hist.put(key, JSONObject().put("key", key).put("androidAnimeId", w.animeId).put("androidEpisodeKey", w.episodeKey).put("name", "${w.animeId} · ${w.episodeKey}화").put("episodeNumber", w.episodeNumber).put("episode", JSONObject().put("number", w.episodeNumber).put("key", w.episodeKey)).put("anime", JSONObject().put("id", w.animeId).put("mal_id", w.animeId).put("title", w.animeId)).put("progress", w.progress.toDouble()).put("updated", w.updatedAt.takeIf { it > 0L } ?: now))
         }
         return JSONObject().put("library", lib).put("history", hist)
     }
@@ -132,23 +123,6 @@ object DeviceSyncClient {
     private fun hashes(local: JSONObject): JSONObject {
         val out = JSONObject()
         for (c in listOf("library", "history")) { val values = JSONObject(); val obj = local.optJSONObject(c) ?: JSONObject(); val keys = obj.keys(); while (keys.hasNext()) { val id = keys.next(); values.put(id, hashJson(obj.optJSONObject(id) ?: JSONObject()) ) }; out.put(c, values) }
-        return out
-    }
-
-    private fun merge(local: JSONObject, incoming: List<JSONObject>): JSONObject {
-        val out = JSONObject()
-        for (collection in listOf("library", "history")) {
-            val values = JSONObject(local.optJSONObject(collection)?.toString() ?: "{}")
-            incoming.filter { it.optString("collection") == collection }.sortedBy { it.optLong("updated", 0L) }.forEach { item ->
-                val id = item.optString("id"); if (id.isBlank()) return@forEach
-                if (item.optBoolean("deleted")) values.remove(id) else {
-                    val data = item.optJSONObject("data") ?: return@forEach
-                    if (collection == "library") { val mapped = data.optString("mal_id").ifBlank { data.optString("id") }; if (mapped.isNotBlank() && mapped != id) values.put(mapped, data) else values.put(id, data) }
-                    else values.put(id, data)
-                }
-            }
-            out.put(collection, values)
-        }
         return out
     }
 

@@ -97,6 +97,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -386,6 +388,19 @@ class MainActivity : FragmentActivity() {
                 if (release != null) {
                     pendingRelease = release
                 }
+            }
+
+            // 기기 동기화 when the app comes to the front, and every 5 minutes while it is there (see AnimeViewModel.syncSoon).
+            DisposableEffect(Unit) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_START -> viewModel.onAppForeground(context)
+                        Lifecycle.Event.ON_STOP -> viewModel.onAppBackground()
+                        else -> {}
+                    }
+                }
+                lifecycle.addObserver(observer)
+                onDispose { lifecycle.removeObserver(observer) }
             }
 
             LilacApp(vm = viewModel)

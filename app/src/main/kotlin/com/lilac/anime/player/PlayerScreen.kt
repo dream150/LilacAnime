@@ -207,6 +207,8 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    // 기기 동기화 first, for a position saved on another device (see AnimeViewModel.awaitSyncForPlayback).
+    LaunchedEffect(Unit) { vm.prepareSyncForPlayback(context) }
     // Foreground playback gets a fresh libmpv session on every PlayerScreen
     // entry.  The only time the process-wide instance is intentionally reused is
     // background-audio/PiP continuation.
@@ -840,6 +842,8 @@ fun PlayerScreen(
 
     fun leave() {
         saveProgressNow()
+        // The other devices get where it stopped soon after leaving (see AnimeViewModel.syncSoon).
+        vm.syncSoon(context, 2_000)
         if (!MainActivity.isInPictureInPicture) {
             runCatching { FlixCloudHlsProxy.clearSessions() }
             runCatching { engine.stop() }
@@ -1239,13 +1243,9 @@ fun PlayerScreen(
                 if (engine.duration > 0L) return@repeat
                 delay(100)
             }
+            vm.awaitSyncForPlayback()
             val saved = vm.getProgress(anime.id, currentEpisode.id, currentEpisode.number)
-            val resume = saved?.progress
-                ?.takeUnless { it >= 0.95f }
-                ?.let { (engine.duration * it).toLong() } ?: 0L
-            if (resume > 0L && engine.duration > 0L) {
-                engine.seekTo(resume.coerceAtMost(engine.duration - 250L))
-            }
+            launch { resumePlayback(engine, saved?.progress) { isActive } }
             if (!subtitleSelectionOpen) {
                 engine.play()
                 MainActivity.isVideoPlaying = true
@@ -1399,13 +1399,9 @@ fun PlayerScreen(
             if (engine.duration > 0L) return@repeat
             delay(100)
         }
+        vm.awaitSyncForPlayback()
         val saved = vm.getProgress(anime.id, currentEpisode.id, currentEpisode.number)
-        val resume = saved?.progress
-            ?.takeUnless { it >= 0.95f }
-            ?.let { (engine.duration * it).toLong() } ?: 0L
-        if (resume > 0L && engine.duration > 0L) {
-            engine.seekTo(resume.coerceAtMost((engine.duration - 250L).coerceAtLeast(0L)))
-        }
+        launch { resumePlayback(engine, saved?.progress) { isActive } }
         if (!subtitleSelectionOpen) {
             engine.play()
             MainActivity.isVideoPlaying = true
@@ -1601,6 +1597,7 @@ fun PlayerScreen(
             streamReferer
         )
 
+        vm.awaitSyncForPlayback()
         val saved = vm.getProgress(anime.id, currentEpisode.id, currentEpisode.number)
         val cachedSubtitleSource = if (activeSource == "reanime") {
             localSubtitle?.takeIf { File(it).isFile } ?: resolveCachedSubtitle(currentEpisode, "reanime")
@@ -1643,19 +1640,7 @@ fun PlayerScreen(
         if (!subtitleSelectionOpen) {
             MainActivity.isVideoPlaying = true
         }
-        repeat(80) {
-            if (!isActive || generation != playbackGeneration) return@LaunchedEffect
-            if (engine.duration > 0L) {
-                val resume = saved?.progress
-                    ?.takeUnless { it >= 0.95f }
-                    ?.let { (engine.duration * it).toLong() } ?: 0L
-                if (resume > 0L) {
-                    engine.seekTo(resume.coerceAtMost((engine.duration - 250L).coerceAtLeast(0L)))
-                }
-                return@repeat
-            }
-            delay(100)
-        }
+        resumePlayback(engine, saved?.progress) { isActive && generation == playbackGeneration }
     }
 
     // AniSkip timestamps are resolved the same way as the reference player:
@@ -3678,5 +3663,25 @@ private fun formatTime(ms: Long): String {
         String.format(Locale.US, "%d:%02d:%02d", h, m, s)
     } else {
         String.format(Locale.US, "%02d:%02d", m, s)
+    }
+}
+
+// Goes to where the episode was left (progress 0–1; from the end on, 95 %, it starts over): once the stream knows its
+// length (waited for up to 30 s), and again every second while mpv is not there yet — a seek sent while an HLS stream is
+// still opening is dropped, which left a resumed episode at the start. Gives up after 6 tries.
+private suspend fun resumePlayback(engine: MpvPlayerEngine, progress: Float?, current: () -> Boolean) {
+    val target = progress?.takeIf { it > 0f && it < 0.95f } ?: return
+    var tries = 0
+    repeat(300) {
+        if (!current()) return
+        val duration = engine.duration
+        if (duration > 0L) {
+            val position = (duration * target).toLong().coerceAtMost((duration - 250L).coerceAtLeast(0L))
+            if (engine.currentPosition >= position - 3_000L) return
+            if (tries >= 6) return
+            engine.seekTo(position)
+            tries++
+            kotlinx.coroutines.delay(1_000L)
+        } else kotlinx.coroutines.delay(100L)
     }
 }

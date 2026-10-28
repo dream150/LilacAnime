@@ -287,6 +287,7 @@ object OfflineStore {
                 put("episodeNumber", item.episodeNumber)
                 put("episodeKey", item.episodeKey)
                 put("progress", item.progress.toDouble())
+                if (item.updatedAt > 0L) put("updatedAt", item.updatedAt)
             }
             array.put(json)
         }
@@ -306,7 +307,8 @@ object OfflineStore {
                         animeId = json.getString("animeId"),
                         episodeNumber = json.getInt("episodeNumber"),
                         progress = json.getDouble("progress").toFloat(),
-                        episodeKey = json.optString("episodeKey", json.getInt("episodeNumber").toString())
+                        episodeKey = json.optString("episodeKey", json.getInt("episodeNumber").toString()),
+                        updatedAt = json.optLong("updatedAt", 0L)
                     )
                 )
             }
