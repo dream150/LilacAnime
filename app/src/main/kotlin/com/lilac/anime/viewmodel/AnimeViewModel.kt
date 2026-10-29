@@ -1091,6 +1091,93 @@ class AnimeViewModel : ViewModel() {
         }
     }
 
+    // 기기 동기화 by itself, as the desktop app does: when the app opens or comes back to the front (if the last sync was
+    // over a minute ago), every 5 minutes while it is in front, and a little after 내 목록 (3 s) or 시청 기록 (30 s, as
+    // progress is saved every few seconds while playing) changes here. Nothing happens without a connected server, nor
+    // before the lists are read from the phone (an empty list would go out as removals).
+    var syncStatus by mutableStateOf("")
+    private var syncTimer: Job? = null
+    private var syncDue = 0L
+    private var syncing = false
+    private var syncAgain = false
+    private var lastSync = 0L
+    private var periodicSync: Job? = null
+
+    fun syncSoon(context: Context, delayMs: Long) {
+        val app = context.applicationContext
+        if (!DeviceSyncClient.isConnected(app)) return
+        // A later request never pushes a sooner one back.
+        // One asked for while a sync runs follows it.
+        if (syncing) { syncAgain = true; return }
+        val at = System.currentTimeMillis() + delayMs
+        if (syncTimer?.isActive == true && syncDue <= at) return
+        syncTimer?.cancel()
+        syncDue = at
+        syncTimer = viewModelScope.launch {
+            delay(delayMs)
+            try { runDeviceSync(app) } catch (e: Exception) { syncStatus = e.message ?: "동기화에 실패했습니다." }
+        }
+    }
+
+    fun onAppForeground(context: Context) {
+        if (System.currentTimeMillis() - lastSync > 60_000) syncSoon(context, if (lastSync == 0L) 3_000 else 1_000)
+        periodicSync?.cancel()
+        val app = context.applicationContext
+        periodicSync = viewModelScope.launch { while (isActive) { delay(5 * 60_000L); syncSoon(app, 0) } }
+    }
+
+    fun onAppBackground() { periodicSync?.cancel(); periodicSync = null }
+
+    // The player syncs as it opens and waits for it (at most 4 s) before it reads where to resume, so a position
+    // saved on another device a moment ago is the one it starts from.
+    private var playbackSync: Job? = null
+    fun prepareSyncForPlayback(context: Context) {
+        val app = context.applicationContext
+        if (!DeviceSyncClient.isConnected(app) || syncing || System.currentTimeMillis() - lastSync < 20_000) return
+        playbackSync = viewModelScope.launch { try { runDeviceSync(app) } catch (e: Exception) { syncStatus = e.message ?: "동기화에 실패했습니다." } }
+    }
+    suspend fun awaitSyncForPlayback() {
+        kotlinx.coroutines.withTimeoutOrNull(4_000) {
+            playbackSync?.join()
+            while (syncing) delay(100)
+        }
+    }
+
+    /** One sync now (the settings' 지금 동기화 too); null when one is already running (another follows it). */
+    suspend fun runDeviceSync(context: Context): DeviceSyncClient.SyncResult? {
+        if (!watchHistoryLoaded) { syncSoon(context, 3_000); return null }
+        if (syncing) { syncAgain = true; return null }
+        syncing = true
+        syncStatus = "동기화 중…"
+        try {
+            val library0 = library
+            val history0 = watchHistory
+            val result = DeviceSyncClient.sync(context, library0, history0)
+            applySyncResult(context, library0, history0, result)
+            lastSync = System.currentTimeMillis()
+            syncStatus = "동기화 완료 · 보냄 ${result.sent}개 · 받음 ${result.received}개 · 리비전 ${result.revision}"
+            return result
+        } finally {
+            syncing = false
+            if (syncAgain) { syncAgain = false; syncSoon(context, 0) }
+        }
+    }
+
+    // What changed here while the sync ran (a history entry still playing, an anime added or removed) stays over what
+    // came back, and goes out with the next sync.
+    private fun applySyncResult(context: Context, library0: Set<String>, history0: List<WatchProgress>, result: DeviceSyncClient.SyncResult) {
+        val addedHere = library - library0
+        val removedHere = library0 - library
+        val key = { w: WatchProgress -> "${w.animeId}|${w.episodeKey}" }
+        val before = history0.associateBy(key)
+        val changedHere = watchHistory.filter { before[key(it)] != it }
+        val goneHere = history0.map(key).toSet() - watchHistory.map(key).toSet()
+        val changedKeys = changedHere.map(key).toSet()
+        val newHistory = (changedHere + result.history.filter { key(it) !in changedKeys && key(it) !in goneHere }).take(300)
+        applySyncedCollections(context, result.library + addedHere - removedHere, newHistory)
+        if (addedHere.isNotEmpty() || removedHere.isNotEmpty() || changedHere.isNotEmpty() || goneHere.isNotEmpty()) syncSoon(context, 15_000)
+    }
+
     /** Apply a completed device-sync merge and persist it through the normal offline store. */
     fun applySyncedCollections(context: Context, syncedLibrary: Set<String>, syncedHistory: List<WatchProgress>) {
         library = syncedLibrary
@@ -1110,6 +1197,7 @@ class AnimeViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             OfflineStore.saveLibrary(context, updated)
         }
+        syncSoon(context, 3_000)
     }
 
     fun isInLibrary(animeId: String): Boolean {
@@ -1118,11 +1206,13 @@ class AnimeViewModel : ViewModel() {
 
     fun updateProgress(context: Context, animeId: String, episodeNumber: Int, progress: Float, episodeKey: String = episodeNumber.toString()) {
         rememberAnimeSnapshot(context, animeId)
-        val filtered = watchHistory.filterNot { it.animeId == animeId && it.episodeKey.equals(episodeKey, ignoreCase = true) }
-        val updatedItem = WatchProgress(animeId = animeId, episodeNumber = episodeNumber, progress = progress, episodeKey = episodeKey)
+        // The episode's entry from another device under another key goes too: this one takes its place.
+        val filtered = watchHistory.filterNot { (it.animeId == animeId && it.episodeKey.equals(episodeKey, ignoreCase = true)) || sameNumberedEpisode(it, animeId, episodeKey, episodeNumber) }
+        val updatedItem = WatchProgress(animeId = animeId, episodeNumber = episodeNumber, progress = progress, episodeKey = episodeKey, updatedAt = System.currentTimeMillis())
         val newList = listOf(updatedItem) + filtered
         watchHistory = newList
         viewModelScope.launch(Dispatchers.IO) { OfflineStore.saveWatchHistory(context, newList) }
+        syncSoon(context, 30_000)
     }
 
     fun getLatestProgress(animeId: String): WatchProgress? = watchHistory.firstOrNull { it.animeId == animeId }
@@ -1133,7 +1223,15 @@ class AnimeViewModel : ViewModel() {
                 it.episodeNumber == episodeNumber &&
                 (it.episodeKey.equals(episodeKey, ignoreCase = true) ||
                     (it.episodeKey == it.episodeNumber.toString() && episodeKey == episodeNumber.toString()))
-        }
+        } ?: watchHistory.firstOrNull { sameNumberedEpisode(it, animeId, episodeKey, episodeNumber) }
+
+    // An entry from another device (기기 동기화) may know the episode by another key than this app's episode id: the same
+    // work and number, neither key naming a lettered episode (4a), is the same episode.
+    private fun sameNumberedEpisode(it: WatchProgress, animeId: String, episodeKey: String, episodeNumber: Int): Boolean {
+        if (it.animeId != animeId || it.episodeNumber != episodeNumber) return false
+        val plain = { key: String -> DeviceSyncMapping.displayOf(key).let { d -> d == null || d.all { c -> c.isDigit() } } }
+        return plain(it.episodeKey) && plain(episodeKey)
+    }
 
     fun getProgress(animeId: String, episodeNumber: Int): WatchProgress? =
         watchHistory.firstOrNull { it.animeId == animeId && it.episodeNumber == episodeNumber && it.episodeKey == episodeNumber.toString() }
@@ -1145,6 +1243,7 @@ class AnimeViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             OfflineStore.saveWatchHistory(context, newList)
         }
+        syncSoon(context, 3_000)
     }
 
     fun clearWatchHistory(context: Context) {
@@ -1152,6 +1251,7 @@ class AnimeViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             OfflineStore.saveWatchHistory(context, emptyList())
         }
+        syncSoon(context, 3_000)
     }
     // 다운로드 취소 및 상태/파일 정리
     fun cancelDownload(context: Context, animeId: String, episodeNumber: Int) {
