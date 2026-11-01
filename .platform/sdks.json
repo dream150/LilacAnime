@@ -12,6 +12,16 @@
       "kind": "ANDROID"
     },
     {
+      "name": "android-37",
+      "bootClasspath": [
+        "/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/.platform/android-sdk/platforms/android-37.2/android.jar",
+        "/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/core-lambda-stubs.jar",
+        "/data/user/0/com.tyron.code/cache/codeassist-swing-api/swing-api-stubs.jar"
+      ],
+      "buildTools": null,
+      "kind": "ANDROID"
+    },
+    {
       "name": "core-java",
       "bootClasspath": [
         "/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/.platform/caches/core-platform/core-java-10417160-v1.jar",

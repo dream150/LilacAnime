@@ -1,4 +1,4 @@
-v=4
+v=5
 g=2
 repos=https://repo1.maven.org/maven2,https://dl.google.com/android/maven2
 app|androidx.activity:activity-compose:1.13.0|
