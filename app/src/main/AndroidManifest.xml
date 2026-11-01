@@ -24,6 +24,8 @@
         <uses-native-library android:name="vendor.qti.hardware.dsp@1.0.so" android:required="false" />
         <uses-native-library android:name="vendor.qti.hardware.dsp-V1-ndk.so" android:required="false" />
         <uses-native-library android:name="libvmmem.so" android:required="false" />
+        <uses-native-library android:name="libvndksupport.so" android:required="false"/>
+        
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.lilac.anime.cast.CastOptionsProvider" />

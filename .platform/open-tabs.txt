@@ -1,7 +1,7 @@
 #v2
-13
+15
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/DiagnosticLogExporter.kt	0	0	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/SettingsScreen.kt	9075	190	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/SettingsScreen.kt	0	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/translation/providers/LocalTranslator.kt	4062	91	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/Ohli24Client.kt	17611	277	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/player/MpvPlayerEngine.kt	22251	465	text
@@ -10,7 +10,9 @@
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/data/subtitle/GoogleDriveDownloader.kt	0	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/reanime/ReAnimeUi.kt	0	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/navigation/AppNavigation.kt	12647	306	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/AndroidManifest.xml	2347	8	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/AndroidManifest.xml	1565	21	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/LilacApplication.kt	543	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/network/CloudflareSession.kt	0	0	text
 /storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/network/CloudflareWebFetcher.kt	0	0	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ai/AiHardware.kt	150	0	text
+/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/ui/settings/AiSettingsScreen.kt	16105	274	text

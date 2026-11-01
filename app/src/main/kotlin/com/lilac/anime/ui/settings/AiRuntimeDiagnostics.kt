@@ -74,6 +74,8 @@ object AiRuntimeDiagnostics {
                 "모델 파일이 완전히 다운로드되었는지, GGUF 형식과 모델 아키텍처가 Runtime에서 지원되는지 확인하세요. 저장 공간을 확인하고 호환 Runtime을 선택한 뒤 다시 실행하세요."
             listOf("out of memory", "oom", "bad_alloc", "메모리", "alloc failed", "mmap").any(s::contains) ->
                 "다른 앱을 종료하고 AI 설정에서 컨텍스트 크기와 최대 생성 토큰을 낮추세요. 더 작은 양자화 모델을 사용하거나 CPU/GPU/NPU Runtime을 바꿔 재시험하세요."
+            listOf("no usable dispatch", "dispatch", "litertlm", "litert", "compiledmodel", "compiled model", "npu 사용 불가", "npu 런타임").any(s::contains) ->
+                "NPU 초기화에 실패해 GPU/CPU로 자동 전환됩니다. AI 설정의 칩셋/NPU 상태를 확인하고, 이 칩셋용 .litertlm(SoC별 AOT 빌드)를 받았는지 확인하세요. 계속 실패하면 '가속기 상태 초기화' 후 다시 시험하고, 상세 정보와 전체 logcat을 함께 보내세요."
             listOf("hexagon", "htp", "qnn", "npu", "backend", "delegate", "opencl", "vulkan", "unsupported device").any(s::contains) ->
                 "선택된 GPU/NPU 백엔드가 기기와 Runtime 빌드에 맞는지 확인하세요. 우선 Runtime 자동 선택 또는 CPU 지원 Runtime으로 테스트하고, 같은 오류가 나면 전체 logcat을 함께 보내세요."
             listOf("http 401", "unauthorized", "invalid api key", "api key not valid").any(s::contains) ->
