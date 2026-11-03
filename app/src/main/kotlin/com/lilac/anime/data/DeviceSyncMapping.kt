@@ -50,7 +50,7 @@ object DeviceSyncMapping {
     private fun animePage(provider: String, id: String): String? = when (provider) {
         "reanime" -> "https://reanime.to/anime/$id"
         "animenosub" -> "https://animenosub.to/anime/$id/"
-        "miruro" -> "https://www.miruro.to/watch/$id"
+        "miruro" -> "https://www.miruro.cx/watch/$id"
         "ohli24" -> "https://ani.ohli24.com/c/${encodeComponent(id)}"
         "linkani" -> "https://linkani.tv/ani/$id/"
         else -> null
@@ -137,7 +137,7 @@ object DeviceSyncMapping {
         if (display.isEmpty() || !display.all { it.isDigit() }) return null
         return when (provider) {
             "reanime" -> "https://reanime.to/watch/${encodeComponent(id)}?ep=$display"
-            "miruro" -> "https://www.miruro.to/watch/$id?ep=$display"
+            "miruro" -> "https://www.miruro.cx/watch/$id?ep=$display"
             else -> null
         }
     }

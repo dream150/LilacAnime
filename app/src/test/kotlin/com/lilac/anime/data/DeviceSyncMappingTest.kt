@@ -62,7 +62,7 @@ class DeviceSyncMappingTest {
             data.getJSONObject("episode").put("dub", dub)
             return DeviceSyncMapping.historyIdentity("x", data)!!.episodeKey
         }
-        assertEquals("miruro:123:5", keyOf("miruro", "123", "https://www.miruro.to/watch/123?ep=5"))
+        assertEquals("miruro:123:5", keyOf("miruro", "123", "https://www.miruro.cx/watch/123?ep=5"))
         assertEquals("animenosub:bleach_ep_5", keyOf("animenosub", "bleach", "https://animenosub.to/bleach-episode-5/"))
         assertEquals("animenosub:bleach_dub_ep_5", keyOf("animenosub", "bleach", "https://animenosub.to/bleach-episode-5-dub/", dub = true))
         assertEquals("animenosub:bleach_ep_5b", keyOf("animenosub", "bleach", "https://animenosub.to/bleach-episode-5b/", name = "5b"))
