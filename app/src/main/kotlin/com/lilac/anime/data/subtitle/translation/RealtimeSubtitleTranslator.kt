@@ -32,6 +32,7 @@ class RealtimeSubtitleTranslator(private val context: Context) {
     private var generation = 0
     private var offlineParseWarningLogged = false
     private val emittedTranslationKeys = mutableSetOf<String>()
+    private var passthroughEmitted = false
 
     data class ReadyEvent(
         val key: String,
@@ -65,6 +66,7 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             cache.clear()
             sourceContent = content
             emittedTranslationKeys.clear()
+            passthroughEmitted = false
             cues = parsed
         }
         if (sessionStarted) {
@@ -105,6 +107,7 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             cues = emptyList()
             sourceContent = null
             emittedTranslationKeys.clear()
+            passthroughEmitted = false
             if (sessionStarted) {
                 sessionProvider?.endSession()
                 sessionStarted = false
@@ -354,6 +357,33 @@ class RealtimeSubtitleTranslator(private val context: Context) {
         result
     }
 
+    /**
+     * 번역 대상이 아닌 원본 ASS 줄(일본어가 없는 간판/타이포 번역, 그림(\\p) 효과, 이미 한국어·영어인 줄 등)을
+     * 원본 그대로 돌려준다. 번역 모드에서는 mpv 의 원본 자막 트랙을 숨기므로, 이 줄들을 따로
+     * 그려주지 않으면 원본 자막의 연출이 통째로 사라진다. 한 번만 반환한다.
+     */
+    suspend fun consumeOriginalPassthroughEvents(): List<ReadyEvent> = lock.withLock {
+        if (passthroughEmitted) return@withLock emptyList()
+        val content = sourceContent ?: return@withLock emptyList()
+        passthroughEmitted = true
+        if (!Regex("(?im)^\\s*Dialogue:").containsMatchIn(content)) return@withLock emptyList()
+        val translatedIndexes = cues.asSequence().filter { it.kind == "ass" }.map { it.index }.toHashSet()
+        val result = ArrayList<ReadyEvent>()
+        content.replace("\r\n", "\n").replace('\r', '\n')
+            .lineSequence().filter { it.trimStart().startsWith("Dialogue:", true) }
+            .forEachIndexed { ordinal, line ->
+                if (ordinal in translatedIndexes) return@forEachIndexed
+                val body = line.substringAfter(':', "").trimStart().split(',', limit = 10)
+                if (body.size < 10) return@forEachIndexed
+                val start = parseAssTime(body[1])
+                val end = parseAssTime(body[2])
+                if (start < 0 || end <= start) return@forEachIndexed
+                result += ReadyEvent("passthrough:$ordinal", start, end, body.joinToString(","))
+            }
+        Log.i("RealtimeSubtitleTranslator", "PASSTHROUGH_EVENTS count=${result.size} translated=${translatedIndexes.size}")
+        result
+    }
+
     private fun buildAssEventData(content: String, cue: Cue, translated: String): String {
         if (cue.kind != "ass" && cue.kind != "ssa") {
             return listOf(
@@ -363,7 +393,7 @@ class RealtimeSubtitleTranslator(private val context: Context) {
                 "Default",
                 "",
                 "0", "0", "0", "",
-                translated.replace("\n", "\\N")
+                htmlTagsToAss(translated).replace("\n", "\\N")
             ).joinToString(",")
         }
         val dialogueLines = content.replace("\r\n", "\n").replace('\r', '\n')
@@ -387,6 +417,30 @@ class RealtimeSubtitleTranslator(private val context: Context) {
             body[5], body[6], body[7], body[8],
             translated.replace("\n", "\\N")
         ).joinToString(",")
+    }
+
+    /**
+     * SRT/VTT 의 <i>, <b>, <u>, <s>, <font color> 같은 태그는 libass 가 해석하지 못하고 글자 그대로
+     * 보여주므로 같은 의미의 ASS 오버라이드 태그로 바꾼다. 그 외 태그는 제거한다.
+     * (이미 들어 있는 ASS 태그 {\\an8} 등은 그대로 둔다.)
+     */
+    private fun htmlTagsToAss(text: String): String {
+        var out = text
+        out = Regex("(?i)<\\s*i\\s*>").replace(out, "{\\\\i1}")
+        out = Regex("(?i)<\\s*/\\s*i\\s*>").replace(out, "{\\\\i0}")
+        out = Regex("(?i)<\\s*b\\s*>").replace(out, "{\\\\b1}")
+        out = Regex("(?i)<\\s*/\\s*b\\s*>").replace(out, "{\\\\b0}")
+        out = Regex("(?i)<\\s*u\\s*>").replace(out, "{\\\\u1}")
+        out = Regex("(?i)<\\s*/\\s*u\\s*>").replace(out, "{\\\\u0}")
+        out = Regex("(?i)<\\s*s\\s*>").replace(out, "{\\\\s1}")
+        out = Regex("(?i)<\\s*/\\s*s\\s*>").replace(out, "{\\\\s0}")
+        out = Regex("(?i)<\\s*font\\b[^>]*?color\\s*=\\s*[\"']?#?([0-9a-f]{6})[\"']?[^>]*>").replace(out) { m ->
+            val rgb = m.groupValues[1]
+            // HTML #RRGGBB -> ASS &HBBGGRR&
+            "{\\c&H${rgb.substring(4, 6)}${rgb.substring(2, 4)}${rgb.substring(0, 2)}&}"
+        }
+        out = Regex("(?i)<\\s*/\\s*font\\s*>").replace(out, "{\\\\r}")
+        return out.replace(Regex("(?is)<[^>]+>"), "")
     }
 
     private fun normalize(text: String): String = text

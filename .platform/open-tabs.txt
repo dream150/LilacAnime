@@ -1,5 +1,2 @@
 #v2
 0
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/AppContextHolder.kt	0	0	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/kotlin/com/lilac/anime/LilacApplication.kt	0	0	text
-/storage/emulated/0/Android/data/com.tyron.code/files/codeassist/projects/LilacAnime/app/src/main/res/values/strings.xml	112	0	text

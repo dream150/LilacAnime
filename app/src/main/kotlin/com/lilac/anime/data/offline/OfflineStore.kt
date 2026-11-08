@@ -74,6 +74,9 @@ object OfflineStore {
             putString("pref_watermark_regions", settings.watermarkRegions)
             putBoolean("pref_subtitle_erase_enabled", settings.subtitleEraseEnabled)
             putString("pref_subtitle_erase_regions", settings.subtitleEraseRegions)
+            putBoolean("pref_ambient_mode_enabled", settings.ambientModeEnabled)
+            putBoolean("pref_ambient_crop_black_bars", settings.ambientCropBlackBars)
+            putBoolean("pref_subtitle_override_enabled", settings.subtitleOverrideEnabled)
             apply()
         }
     }
@@ -184,7 +187,10 @@ object OfflineStore {
             watermarkRemovalEnabled = prefs.getBoolean("pref_watermark_removal_enabled", false),
             watermarkRegions = prefs.getString("pref_watermark_regions", "").orEmpty(),
             subtitleEraseEnabled = prefs.getBoolean("pref_subtitle_erase_enabled", false),
-            subtitleEraseRegions = prefs.getString("pref_subtitle_erase_regions", "").orEmpty()
+            subtitleEraseRegions = prefs.getString("pref_subtitle_erase_regions", "").orEmpty(),
+            ambientModeEnabled = prefs.getBoolean("pref_ambient_mode_enabled", false),
+            ambientCropBlackBars = prefs.getBoolean("pref_ambient_crop_black_bars", true),
+            subtitleOverrideEnabled = prefs.getBoolean("pref_subtitle_override_enabled", false)
         )
     }
 

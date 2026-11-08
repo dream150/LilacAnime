@@ -242,17 +242,29 @@ internal object SubtitleFormatTranslator {
 
     private fun restoreTags(original: String, translated: String, kind: String): String {
         val normalized = translated.replace("\r\n", "\n").replace('\r', '\n')
-        return when (kind) {
-            "ass" -> {
-                val tags = Regex("\\{[^}]*\\}").findAll(original).map { it.value }.toList()
-                val text = normalized.replace("\n", "\\N")
-                if (tags.isEmpty()) text else tags.joinToString("") + text
-            }
-            else -> {
-                val tags = Regex("(?is)<[^>]+>").findAll(original).map { it.value }.toList()
-                if (tags.isEmpty()) normalized else tags.joinToString("") + normalized
-            }
+        val isAss = kind == "ass"
+        val tagRegex = if (isAss) Regex("\\{[^}]*\\}") else Regex("(?is)<[^>]+>")
+        val text = if (isAss) normalized.replace("\n", "\\N") else normalized
+        val matches = tagRegex.findAll(original).toList()
+        if (matches.isEmpty()) return text
+        // 태그를 전부 맨 앞에 몰아넣으면 {\\i1}글{\\i0} 같은 부분 서식이 줄 전체로 번진다.
+        // 원문에서 태그가 있던 글자 위치 비율을 번역문에 그대로 옮겨 같은 지점에 다시 넣는다.
+        val visibleLength = original.replace(tagRegex, "").length.coerceAtLeast(1)
+        val insertions = matches.map { match ->
+            val before = original.substring(0, match.range.first).replace(tagRegex, "")
+            val ratio = before.length.toDouble() / visibleLength.toDouble()
+            (text.length * ratio).toInt().coerceIn(0, text.length) to match.value
+        }.sortedBy { it.first }
+        val out = StringBuilder()
+        var cursor = 0
+        insertions.groupBy { it.first }.toSortedMap().forEach { (position, tags) ->
+            val p = position.coerceIn(cursor, text.length)
+            if (p > cursor) out.append(text, cursor, p)
+            tags.forEach { out.append(it.second) }
+            cursor = p
         }
+        if (cursor < text.length) out.append(text, cursor, text.length)
+        return out.toString()
     }
 
     private fun parseAss(c: String): List<Cue> {

@@ -308,6 +308,8 @@ fun PlayerScreen(
     val realtimeTranslator = remember { RealtimeSubtitleTranslator(context.applicationContext) }
     var realtimeSubtitleText by remember { mutableStateOf("") }
     var libassTranslationOverlay by remember { mutableStateOf<LibassTranslationOverlay?>(null) }
+    // 앰비언트 모드가 프레임을 샘플링할 mpv 영상 뷰.
+    var videoSurfaceView by remember { mutableStateOf<MpvPlayerSurfaceView?>(null) }
 
     fun subtitlePreferencePrefs() = context.getSharedPreferences("lilac_subtitle_preferences", Context.MODE_PRIVATE)
     fun subtitleTrackKey(track: SubtitleTrack): String = "${track.language.trim().lowercase(Locale.ROOT)}|${track.label.trim().lowercase(Locale.ROOT)}"
@@ -541,20 +543,27 @@ fun PlayerScreen(
         while (isActive) {
             val source = engine.currentSubtitleFilePath ?: localSubtitle
             libassTranslationOverlay?.setSource(source)
-            realtimeTranslator.consumeReadyTranslatedEvents().forEach { event ->
-                libassTranslationOverlay?.addTranslatedEvent(
-                    event.assEventData,
-                    event.startMs,
-                    event.endMs,
-                )
-            }
             val overlay = libassTranslationOverlay
-            val videoAspect = engine.videoDisplayAspect.takeIf { it > 0.01 }
-                ?: if (engine.videoDisplayWidth > 0 && engine.videoDisplayHeight > 0) {
-                    engine.videoDisplayWidth.toDouble() / engine.videoDisplayHeight.toDouble()
-                } else if (engine.videoWidth > 0 && engine.videoHeight > 0) {
-                    engine.videoWidth.toDouble() / engine.videoHeight.toDouble()
-                } else null
+            // SRT/VTT 처럼 자체 스타일이 없는 자막은 mpv 일반 자막과 같은 사용자 설정(색·크기·굵기·테두리·위치)으로 그린다.
+            overlay?.setPlainStyle(
+                vm.playerSettings.textColor,
+                vm.playerSettings.strokeColor,
+                subtitleSize,
+                vttBold,
+                vm.playerSettings.vttOutlineWidth,
+                subtitlePosition / 100f,
+                vm.playerSettings.subtitleOverrideEnabled,
+            )
+            if (overlay?.isReady() == true) {
+                // 번역 대상이 아닌 원본 ASS 줄(간판·타이포·그림 효과 등)은 원본 그대로 같이 그려 연출을 유지한다.
+                realtimeTranslator.consumeOriginalPassthroughEvents().forEach { event ->
+                    overlay.addTranslatedEvent(event.assEventData, event.startMs, event.endMs)
+                }
+                realtimeTranslator.consumeReadyTranslatedEvents().forEach { event ->
+                    overlay.addTranslatedEvent(event.assEventData, event.startMs, event.endMs)
+                }
+            }
+            val videoAspect = engine.effectiveAspect.takeIf { it > 0.01 }
             if (videoAspect != null) overlay?.setVideoAspectRatio(videoAspect)
             overlay?.sync(engine.currentPosition, engine.isPlaying)
             // Korean translation mode is strictly libass-only. The source
@@ -1227,7 +1236,7 @@ fun PlayerScreen(
                     ?: vm.playerSettings.customFontPath,
                 autoPlay = !subtitleSelectionOpen
             )
-            engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled)
+            engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled, vm.playerSettings.subtitleOverrideEnabled)
             engine.setSpeed(speed)
             engine.setSubtitleDelay(vm.playerSettings.syncOffsetMs)
             engine.applySubtitleStyle(
@@ -1383,7 +1392,7 @@ fun PlayerScreen(
                 ?: vm.playerSettings.customFontPath,
             autoPlay = !subtitleSelectionOpen
         )
-        engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled)
+        engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled, vm.playerSettings.subtitleOverrideEnabled)
         engine.setSpeed(speed)
         engine.setSubtitleDelay(vm.playerSettings.syncOffsetMs)
         engine.applySubtitleStyle(
@@ -1617,7 +1626,7 @@ fun PlayerScreen(
                 ?: vm.playerSettings.customFontPath,
             autoPlay = !subtitleSelectionOpen
         )
-        engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled)
+        engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled, vm.playerSettings.subtitleOverrideEnabled)
         engine.setSpeed(speed)
         engine.setSubtitleDelay(vm.playerSettings.syncOffsetMs)
         engine.applySubtitleStyle(
@@ -1842,6 +1851,7 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 MpvPlayerSurfaceView(ctx, engine).apply {
+                    videoSurfaceView = this
                     // On TV the video surface must not keep D-pad focus.
                     // Focus belongs to the Compose player controls instead.
                     seekSeconds = vm.playerSettings.doubleTapSeekSeconds.coerceAtLeast(0L)
@@ -1871,6 +1881,35 @@ fun PlayerScreen(
         )
         }
 
+        // 앰비언트 모드: 영상 바깥 여백(레터박스/필러박스)에만 영상 색상이 은은하게 번진다.
+        // 영상·자막·터치에는 영향을 주지 않으며, 여백이 없으면 샘플링도 하지 않는다.
+        // 영상 파일에 구워진 검은 띠는 검출해서 잘라 내고(mpv video-crop), 그 자리도 앰비언트로 채운다.
+        val ambientCropOn = vm.playerSettings.ambientModeEnabled && vm.playerSettings.ambientCropBlackBars
+        LaunchedEffect(engine, ambientCropOn) {
+            if (!ambientCropOn) engine.resetLetterboxCrop()
+        }
+        key(engine) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    AmbientGlowView(ctx).also { view ->
+                        view.onLetterboxDetected = { bars -> engine.applyLetterboxCrop(bars) }
+                    }
+                },
+                update = { view ->
+                    val aspect = engine.effectiveAspect.takeIf { it > 0.01 }
+                    view.setVideoSource(videoSurfaceView)
+                    if (aspect != null) view.setVideoAspectRatio(aspect)
+                    view.setPlaying(isPlaying)
+                    view.setAmbientEnabled(vm.playerSettings.ambientModeEnabled)
+                    view.setCropDetection(
+                        enabled = ambientCropOn && engine.videoWidth > 0 && engine.videoHeight > 0,
+                        sessionKey = Triple(engine.loadedLoadGeneration, engine.videoWidth, engine.videoHeight)
+                    )
+                }
+            )
+        }
+
         // Translated ASS events are rendered directly by libass in memory.
         // This view never becomes an mpv subtitle track and never causes
         // sub-add/sub-remove/sub-reload during translation.
@@ -1881,24 +1920,14 @@ fun PlayerScreen(
                 LibassTranslationOverlay(ctx).also { view ->
                     libassTranslationOverlay = view
                     view.setSource(engine.currentSubtitleFilePath ?: localSubtitle)
-                    val aspect = engine.videoDisplayAspect.takeIf { it > 0.01 }
-                        ?: if (engine.videoDisplayWidth > 0 && engine.videoDisplayHeight > 0) {
-                            engine.videoDisplayWidth.toDouble() / engine.videoDisplayHeight.toDouble()
-                        } else if (engine.videoWidth > 0 && engine.videoHeight > 0) {
-                            engine.videoWidth.toDouble() / engine.videoHeight.toDouble()
-                        } else null
+                    val aspect = engine.effectiveAspect.takeIf { it > 0.01 }
                     if (aspect != null) view.setVideoAspectRatio(aspect)
                     view.sync(engine.currentPosition, engine.isPlaying)
                 }
             },
             update = { view ->
                 libassTranslationOverlay = view
-                val aspect = engine.videoDisplayAspect.takeIf { it > 0.01 }
-                    ?: if (engine.videoDisplayWidth > 0 && engine.videoDisplayHeight > 0) {
-                        engine.videoDisplayWidth.toDouble() / engine.videoDisplayHeight.toDouble()
-                    } else if (engine.videoWidth > 0 && engine.videoHeight > 0) {
-                        engine.videoWidth.toDouble() / engine.videoHeight.toDouble()
-                    } else null
+                val aspect = engine.effectiveAspect.takeIf { it > 0.01 }
                 if (aspect != null) view.setVideoAspectRatio(aspect)
                 view.sync(engine.currentPosition, engine.isPlaying)
             }
@@ -2102,6 +2131,7 @@ fun PlayerScreen(
                                     Spacer(Modifier.height(18.dp))
                                     TvPlayerSettingSwitch("자막 표시", "자막 트랙 표시 또는 숨기기", subtitleEnabled, { subtitleEnabled = it; setSubtitleVisibleForMode(it) })
                                     TvPlayerSettingSwitch("ASS 효과 유지", "위치·색상·테두리 효과를 유지합니다. 끄면 성능이 나아질 수 있습니다.", vm.playerSettings.assEffectsEnabled, { vm.updatePlayerSettings(context, vm.playerSettings.copy(assEffectsEnabled = it)); engine.setAssEffectsEnabled(it) })
+                                    TvPlayerSettingSwitch("내 스타일로 덮어쓰기", "ASS 자막도 설정한 자막 크기·색·테두리·위치로 표시합니다.", vm.playerSettings.subtitleOverrideEnabled, { on -> vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleOverrideEnabled = on)); engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled, on); engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, vm.playerSettings.vttOutlineWidth, vm.playerSettings.subtitleBottomPaddingFraction, false) })
                                     Spacer(Modifier.height(18.dp))
                                     Text("자막 소스", color = Color.White.copy(.7f), fontSize = 14.sp)
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
@@ -2123,6 +2153,8 @@ fun PlayerScreen(
                                     Text("방향키 좌우로 탐색하고 확인 버튼으로 선택합니다. 뒤로 버튼은 설정을 닫습니다.", color = Color.White.copy(.72f), fontSize = 16.sp)
                                     Spacer(Modifier.height(18.dp))
                                     TvPlayerSettingSwitch("화면 잠금", "리모컨 오입력을 방지하려면 재생 화면에서 잠금을 사용하세요.", locked, { locked = it; if (it) controlsVisible = false })
+                                    TvPlayerSettingSwitch("앰비언트 모드", "영상 주변 여백에 영상 색상이 은은하게 번집니다.", vm.playerSettings.ambientModeEnabled, { vm.updatePlayerSettings(context, vm.playerSettings.copy(ambientModeEnabled = it)) })
+                                    TvPlayerSettingSwitch("검은 띠 자동 크롭", "영상 파일에 박힌 검은 띠를 잘라 내고 그 자리도 앰비언트로 채웁니다. (앰비언트 모드가 켜져 있어야 해요)", vm.playerSettings.ambientCropBlackBars, { vm.updatePlayerSettings(context, vm.playerSettings.copy(ambientCropBlackBars = it)) })
                                 }
                                 else -> {
                                     Text("현재 재생", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -2568,6 +2600,47 @@ fun PlayerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                                Text("앰비언트 모드", color = Color.White, fontSize = 13.sp)
+                                Text(
+                                    "영상 주변 여백에 영상 색상이 은은하게 번집니다 (여백이 있는 화면 비율에서 보여요)",
+                                    color = Color.White.copy(.55f),
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Switch(
+                                checked = vm.playerSettings.ambientModeEnabled,
+                                onCheckedChange = { on ->
+                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(ambientModeEnabled = on))
+                                }
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                                Text("검은 띠 자동 크롭", color = Color.White.copy(if (vm.playerSettings.ambientModeEnabled) 1f else .5f), fontSize = 13.sp)
+                                Text(
+                                    "영상 파일에 박힌 검은 띠를 잘라 내고 그 자리도 앰비언트로 채웁니다 (앰비언트 모드와 함께 사용)",
+                                    color = Color.White.copy(.55f),
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Switch(
+                                checked = vm.playerSettings.ambientCropBlackBars,
+                                enabled = vm.playerSettings.ambientModeEnabled,
+                                onCheckedChange = { on ->
+                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(ambientCropBlackBars = on))
+                                }
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
                                 Text("영상에 박힌 자막 지우기", color = Color.White, fontSize = 13.sp)
                                 Text(
                                     if (vm.playerSettings.subtitleEraseRegions.isBlank()) "켜면 박힌 자막이 나오는 영역을 먼저 지정합니다"
@@ -2653,6 +2726,29 @@ fun PlayerScreen(
                                     onCheckedChange = { enabled ->
                                         vm.updatePlayerSettings(context, vm.playerSettings.copy(assEffectsEnabled = enabled))
                                         engine.setAssEffectsEnabled(enabled)
+                                    }
+                                )
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("내 스타일로 덮어쓰기", color = Color.White, fontSize = 11.sp)
+                                    Text(
+                                        if (vm.playerSettings.subtitleOverrideEnabled) "ASS·SRT 모두 아래 설정(크기·색·테두리·위치)으로 표시합니다"
+                                        else "ASS는 원본 스타일, SRT/VTT만 아래 설정을 따릅니다",
+                                        color = Color.White.copy(.50f), fontSize = 9.sp
+                                    )
+                                }
+                                Switch(
+                                    checked = vm.playerSettings.subtitleOverrideEnabled,
+                                    onCheckedChange = { on ->
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleOverrideEnabled = on))
+                                        engine.setAssEffectsEnabled(vm.playerSettings.assEffectsEnabled, on)
+                                        engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, vttOutlineWidth, subtitlePosition / 100f, false)
                                     }
                                 )
                             }
@@ -2859,6 +2955,26 @@ fun PlayerScreen(
                                     engine.applySubtitleStyle(vm.playerSettings.textColor, vm.playerSettings.strokeColor, subtitleSize, vttBold, it, subtitlePosition / 100f, false)
                                 },
                                 valueRange = 0f..6f, steps = 11
+                            )
+
+                            Spacer(Modifier.height(6.dp))
+                            SubtitleColorChips(
+                                title = "자막 글자 색",
+                                colors = SUBTITLE_TEXT_COLORS,
+                                selected = vm.playerSettings.textColor,
+                                onSelect = { c ->
+                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(textColor = c))
+                                    engine.applySubtitleStyle(c, vm.playerSettings.strokeColor, subtitleSize, vttBold, vttOutlineWidth, subtitlePosition / 100f, false)
+                                }
+                            )
+                            SubtitleColorChips(
+                                title = "자막 테두리 색",
+                                colors = SUBTITLE_OUTLINE_COLORS,
+                                selected = vm.playerSettings.strokeColor,
+                                onSelect = { c ->
+                                    vm.updatePlayerSettings(context, vm.playerSettings.copy(strokeColor = c))
+                                    engine.applySubtitleStyle(vm.playerSettings.textColor, c, subtitleSize, vttBold, vttOutlineWidth, subtitlePosition / 100f, false)
+                                }
                             )
 
 
@@ -3683,5 +3799,52 @@ private suspend fun resumePlayback(engine: MpvPlayerEngine, progress: Float?, cu
             tries++
             kotlinx.coroutines.delay(1_000L)
         } else kotlinx.coroutines.delay(100L)
+    }
+}
+
+
+// 자막 스타일 덮어쓰기에서 고를 수 있는 글자/테두리 색 프리셋.
+private val SUBTITLE_TEXT_COLORS = listOf(
+    android.graphics.Color.WHITE,
+    android.graphics.Color.rgb(255, 235, 59),
+    android.graphics.Color.rgb(128, 222, 234),
+    android.graphics.Color.rgb(165, 214, 167),
+    android.graphics.Color.rgb(244, 143, 177),
+    android.graphics.Color.rgb(255, 183, 77),
+)
+
+private val SUBTITLE_OUTLINE_COLORS = listOf(
+    android.graphics.Color.BLACK,
+    android.graphics.Color.rgb(33, 33, 33),
+    android.graphics.Color.rgb(13, 27, 62),
+    android.graphics.Color.rgb(62, 13, 13),
+    android.graphics.Color.rgb(13, 52, 33),
+)
+
+@Composable
+private fun SubtitleColorChips(
+    title: String,
+    colors: List<Int>,
+    selected: Int,
+    onSelect: (Int) -> Unit
+) {
+    Text(title, color = Color.White.copy(.72f), fontSize = 11.sp)
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        colors.forEach { argb ->
+            val isSelected = argb == selected
+            Surface(
+                onClick = { onSelect(argb) },
+                modifier = Modifier.size(26.dp),
+                shape = CircleShape,
+                color = Color(argb),
+                border = BorderStroke(
+                    if (isSelected) 2.dp else 1.dp,
+                    if (isSelected) Color.White else Color.White.copy(.35f)
+                )
+            ) {}
+        }
     }
 }

@@ -14,6 +14,7 @@ import io.github.peerless2012.ass.AssTexType
 import io.github.peerless2012.ass.AssTrack
 import java.io.File
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * In-memory libass overlay backed directly by peerless2012's ass-kt wrapper.
@@ -42,7 +43,10 @@ class LibassTranslationOverlay @JvmOverloads constructor(
     private var playing = false
     private var positionMs = 0L
     private var syncWallClockMs = 0L
-    private var events = emptyList<EventRange>()
+    private val events = ArrayList<EventRange>()
+    // 스타일(SRT/VTT 기본 스타일)이 바뀌어 트랙을 다시 만들 때 이벤트를 그대로 복원하기 위한 기록.
+    private val storedEvents = ArrayList<StoredEvent>()
+    private var plainStyle = PlainStyle()
     private var renderPosted = false
     private var hasRenderedFrame = false
     private var nextReadOrder = 0
@@ -58,6 +62,23 @@ class LibassTranslationOverlay @JvmOverloads constructor(
     }
 
     private data class EventRange(val startMs: Long, val endMs: Long)
+    private data class StoredEvent(val data: String, val startMs: Long, val endMs: Long)
+
+    /**
+     * ASS 가 아닌 자막(SRT/VTT 등)은 자체 스타일이 없으므로, mpv 일반 자막이 쓰는 사용자 설정
+     * (색상·크기·굵기·테두리·위치)과 같은 값으로 'Default' 스타일을 만든다. 값의 단위는 mpv 와 같이
+     * 높이 720 기준 픽셀이다.
+     */
+    private data class PlainStyle(
+        val textColor: Int = Color.WHITE,
+        val borderColor: Int = Color.BLACK,
+        val fontSize: Int = 36,
+        val bold: Boolean = true,
+        val outline: Float = 2f,
+        val marginV: Int = 86,
+        // 자막 스타일 덮어쓰기: ASS 원본의 대사 스타일도 위 값으로 바꾼다.
+        val overrideAss: Boolean = false,
+    )
 
     init {
         setBackgroundColor(Color.TRANSPARENT)
@@ -72,24 +93,74 @@ class LibassTranslationOverlay @JvmOverloads constructor(
 
         releaseLibass()
         sourcePath = normalized
-        events = emptyList()
+        events.clear()
+        storedEvents.clear()
         hasRenderedFrame = false
         nextReadOrder = 0
         setImageDrawable(null)
 
         if (normalized == null) return
+        if (!createLibass(File(normalized))) sourcePath = null
+    }
 
-        val file = File(normalized)
-        val content = runCatching { file.readText(Charsets.UTF_8) }.getOrElse {
-            Log.e(TAG, "READ_SOURCE_FAILED", it)
+    /**
+     * mpv 의 자막 설정(SRT/VTT 용)과 같은 값으로 번역 자막 스타일을 맞춘다.
+     * ASS/SSA 원본은 스크립트 자체 스타일을 그대로 쓰므로 영향이 없다.
+     */
+    fun setPlainStyle(
+        textColor: Int,
+        borderColor: Int,
+        sizePercent: Float,
+        bold: Boolean,
+        outlineWidth: Float,
+        bottomPaddingFraction: Float,
+        overrideAss: Boolean = false,
+    ) {
+        val next = PlainStyle(
+            textColor = textColor,
+            borderColor = borderColor,
+            fontSize = (36f * (sizePercent / 100f)).coerceIn(10f, 72f).roundToInt(),
+            bold = bold,
+            outline = outlineWidth.coerceIn(0f, 8f),
+            marginV = (bottomPaddingFraction.coerceIn(0.03f, 0.45f) * 720f).roundToInt(),
+            overrideAss = overrideAss,
+        )
+        if (next == plainStyle) return
+        val prev = plainStyle
+        plainStyle = next
+
+        val path = sourcePath ?: return
+        val file = File(path)
+        // ASS 원본은 덮어쓰기가 켜져 있거나 방금 꺼진 경우에만 스타일을 다시 만든다.
+        if (isAssFile(file) && !next.overrideAss && !prev.overrideAss) return
+
+        // 트랙을 새 스타일로 다시 만들고 지금까지의 번역 이벤트를 그대로 복원한다.
+        val replay = ArrayList(storedEvents)
+        releaseLibass()
+        events.clear()
+        storedEvents.clear()
+        nextReadOrder = 0
+        hasRenderedFrame = false
+        setImageDrawable(null)
+        if (!createLibass(file)) {
             sourcePath = null
             return
+        }
+        replay.forEach { addTranslatedEvent(it.data, it.startMs, it.endMs) }
+    }
+
+    private fun isAssFile(file: File): Boolean = file.extension.lowercase().let { it == "ass" || it == "ssa" }
+
+    private fun createLibass(file: File): Boolean {
+        val content = runCatching { file.readText(Charsets.UTF_8) }.getOrElse {
+            Log.e(TAG, "READ_SOURCE_FAILED", it)
+            return false
         }
 
         val header = buildCodecPrivate(content, file.extension.lowercase())
         ensureBitmap()
 
-        runCatching {
+        return runCatching {
             val a = Ass()
             val t = a.createTrack()
             val r = a.createRender()
@@ -107,10 +178,11 @@ class LibassTranslationOverlay @JvmOverloads constructor(
             ass = a
             track = t
             renderer = r
-        }.onFailure {
+            true
+        }.getOrElse {
             Log.e(TAG, "LIBASS_CREATE_FAILED", it)
             releaseLibass()
-            sourcePath = null
+            false
         }
     }
 
@@ -122,9 +194,10 @@ class LibassTranslationOverlay @JvmOverloads constructor(
         runCatching {
             val payload = toMatroskaEventPacket(eventData, nextReadOrder++)
             val bytes = payload.toByteArray(Charsets.UTF_8)
-            Log.i(TAG, "LIBASS_ADD_EVENT ro=${nextReadOrder - 1} start=$startMs end=$endMs payload=${payload.take(160)}")
+            Log.d(TAG, "LIBASS_ADD_EVENT ro=${nextReadOrder - 1} start=$startMs end=$endMs payload=${payload.take(160)}")
             t.readChunk(startMs.coerceAtLeast(0L), endMs - startMs, bytes)
-            events = events + EventRange(startMs, endMs)
+            events.add(EventRange(startMs, endMs))
+            storedEvents.add(StoredEvent(eventData, startMs, endMs))
             scheduleRender()
         }.onFailure {
             Log.e(TAG, "LIBASS_ADD_EVENT_FAILED start=$startMs end=$endMs", it)
@@ -164,7 +237,8 @@ class LibassTranslationOverlay @JvmOverloads constructor(
     fun clear() {
         releaseLibass()
         sourcePath = null
-        events = emptyList()
+        events.clear()
+        storedEvents.clear()
         hasRenderedFrame = false
         setImageDrawable(null)
     }
@@ -334,14 +408,16 @@ class LibassTranslationOverlay @JvmOverloads constructor(
 
     private fun buildCodecPrivate(content: String, ext: String): String {
         if (ext != "ass" && ext != "ssa") {
+            val st = plainStyle
             return """[Script Info]
 ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: 1280
+PlayResY: 720
+ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Roboto,48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,60,60,60,1
+Style: Default,Roboto,${st.fontSize},${assColor(st.textColor)},${assColor(st.textColor)},${assColor(st.borderColor)},&H80000000,${if (st.bold) -1 else 0},0,0,0,100,100,0,0,1,${"%.1f".format(java.util.Locale.US, st.outline)},0,2,25,25,${st.marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -361,8 +437,60 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if (!Regex("(?im)^\\s*Format:\\s*Layer,\\s*Start").containsMatchIn(out)) {
             out.append("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
         }
+        return if (plainStyle.overrideAss) overrideDialogueStyles(out.toString(), plainStyle) else out.toString()
+    }
+
+    /**
+     * 자막 스타일 덮어쓰기용. 하단 정렬(Alignment 1~3)인 대사 스타일의 크기·색·굵기·테두리·세로 여백만
+     * 내 설정으로 바꾼다. 위/가운데 정렬 간판·타이포 스타일은 원본 연출을 그대로 둔다.
+     * [V4+ Styles] 만 다룬다(SSA v4 는 색 표기가 달라 건드리지 않는다).
+     */
+    private fun overrideDialogueStyles(header: String, st: PlainStyle): String {
+        val lines = header.lines()
+        val playResY = lines.firstNotNullOfOrNull { line ->
+            Regex("(?i)^\\s*PlayResY:\\s*(\\d+)").find(line)?.groupValues?.get(1)?.toIntOrNull()
+        }?.takeIf { it > 0 } ?: 288
+        val scale = playResY / 720.0
+
+        var inStyles = false
+        var format: List<String> = emptyList()
+        val out = StringBuilder()
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.startsWith("[")) {
+                inStyles = trimmed.startsWith("[V4+", ignoreCase = true)
+            }
+            if (inStyles && trimmed.startsWith("Format:", ignoreCase = true)) {
+                format = trimmed.substringAfter(':').split(',').map { it.trim().lowercase() }
+            } else if (inStyles && format.isNotEmpty() && trimmed.startsWith("Style:", ignoreCase = true)) {
+                val fields = trimmed.substringAfter(':').trimStart().split(',', limit = format.size).toMutableList()
+                val alignIdx = format.indexOf("alignment")
+                val align = if (alignIdx in fields.indices) fields[alignIdx].trim().toIntOrNull() else null
+                if (fields.size == format.size && align != null && align in 1..3) {
+                    setStyleField(fields, format, "fontsize", (st.fontSize * scale).roundToInt().coerceAtLeast(1).toString())
+                    setStyleField(fields, format, "primarycolour", assColor(st.textColor))
+                    setStyleField(fields, format, "secondarycolour", assColor(st.textColor))
+                    setStyleField(fields, format, "outlinecolour", assColor(st.borderColor))
+                    setStyleField(fields, format, "bold", if (st.bold) "-1" else "0")
+                    setStyleField(fields, format, "outline", "%.1f".format(java.util.Locale.US, st.outline * scale))
+                    setStyleField(fields, format, "marginv", (st.marginV * scale).roundToInt().toString())
+                }
+                out.append("Style: ").append(fields.joinToString(",")).append('\n')
+                continue
+            }
+            out.append(line).append('\n')
+        }
         return out.toString()
     }
+
+    private fun setStyleField(fields: MutableList<String>, format: List<String>, name: String, value: String) {
+        val i = format.indexOf(name)
+        if (i in fields.indices) fields[i] = value
+    }
+
+    /** Android ARGB Int -> ASS "&HAABBGGRR" (알파는 항상 불투명). */
+    private fun assColor(color: Int): String =
+        "&H00%02X%02X%02X".format(Color.blue(color), Color.green(color), Color.red(color))
 
     private fun toMatroskaEventPacket(eventData: String, readOrder: Int): String {
         val raw = eventData.trim()

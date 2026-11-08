@@ -87,7 +87,13 @@ data class PlayerSettings(
     val watermarkRegions: String = "",
     // Hard-coded (burned-in) subtitle erasing. Regions use the same normalized format.
     val subtitleEraseEnabled: Boolean = false,
-    val subtitleEraseRegions: String = ""
+    val subtitleEraseRegions: String = "",
+    // 앰비언트 모드: 영상 여백(레터박스/필러박스)에 영상 색상이 번지는 은은한 조명 효과.
+    val ambientModeEnabled: Boolean = false,
+    // 앰비언트 모드가 켜져 있을 때, 영상 파일에 구워진 검은 띠를 검출해 잘라 내고 그 자리도 앰비언트로 채운다.
+    val ambientCropBlackBars: Boolean = true,
+    // 자막 스타일 덮어쓰기: 켜면 ASS/SSA 도 SRT/VTT 와 같은 내 스타일(폰트·크기·색·테두리·굵기·위치)로 그린다.
+    val subtitleOverrideEnabled: Boolean = false
 )
 
 data class ExoVideoQualityOption(

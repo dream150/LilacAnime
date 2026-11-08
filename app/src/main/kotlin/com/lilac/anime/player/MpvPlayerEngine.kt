@@ -5,6 +5,9 @@ import com.lilac.anime.data.subtitle.*
 import android.content.Context
 import android.graphics.SurfaceTexture
 import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import android.view.GestureDetector
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -66,6 +69,58 @@ class MpvPlayerEngine(private val context: Context) {
         private set
     @Volatile var videoDisplayAspect: Double = 0.0
         private set
+
+    /**
+     * 영상 파일에 구워진 검은 띠를 잘라 낸 뒤의 화면 비율. 0 이면 크롭 없음.
+     * Compose 가 변화를 감지해 앰비언트/자막 오버레이가 즉시 새 비율로 갱신되도록 상태로 둔다.
+     */
+    var activeCropAspect: Double by mutableStateOf(0.0)
+        private set
+
+    /** 크롭까지 반영한 실제 화면 비율. 알 수 없으면 0. 앰비언트·자막 오버레이는 이 값을 써야 한다. */
+    val effectiveAspect: Double
+        get() = when {
+            activeCropAspect > 0.01 -> activeCropAspect
+            videoDisplayAspect > 0.01 -> videoDisplayAspect
+            videoDisplayWidth > 0 && videoDisplayHeight > 0 -> videoDisplayWidth.toDouble() / videoDisplayHeight
+            videoWidth > 0 && videoHeight > 0 -> videoWidth.toDouble() / videoHeight
+            else -> 0.0
+        }
+
+    /**
+     * [LetterboxDetector] 가 찾은 검은 띠를 mpv `video-crop` 으로 잘라 낸다.
+     * 크롭 후의 영상은 일반 영상처럼 취급되므로, 띠였던 자리도 AmbientGlowView 가 채운다.
+     * 반드시 크롭이 없는 상태에서 검출한 결과를 넘겨야 한다.
+     */
+    fun applyLetterboxCrop(bars: LetterboxDetector.Bars?) {
+        val w = videoWidth
+        val h = videoHeight
+        if (bars == null || bars.isEmpty || w <= 0 || h <= 0) return
+        val x = (bars.left * w).roundToInt().coerceAtLeast(0)
+        val y = (bars.top * h).roundToInt().coerceAtLeast(0)
+        val cw = w - x - (bars.right * w).roundToInt().coerceAtLeast(0)
+        val ch = h - y - (bars.bottom * h).roundToInt().coerceAtLeast(0)
+        // 너무 많이 잘리면 오검출로 보고 무시한다.
+        if (cw < w / 3 || ch < h / 3 || cw <= 0 || ch <= 0) {
+            Log.w(TAG, "LETTERBOX_CROP_REJECTED src=${w}x$h crop=${cw}x$ch+$x+$y")
+            return
+        }
+        val dar = videoDisplayAspect.takeIf { it > 0.01 } ?: (w.toDouble() / h)
+        val pixelAspect = dar / (w.toDouble() / h)
+        val result = runCatching { mpv.setPropertyString("video-crop", "${cw}x${ch}+${x}+${y}") }
+        if (result.isSuccess) {
+            activeCropAspect = cw.toDouble() / ch * pixelAspect
+            Log.i(TAG, "LETTERBOX_CROP applied src=${w}x$h crop=${cw}x$ch+$x+$y aspect=$activeCropAspect")
+        } else {
+            Log.w(TAG, "LETTERBOX_CROP_FAILED (video-crop unsupported by this libmpv?)", result.exceptionOrNull())
+        }
+    }
+
+    fun resetLetterboxCrop() {
+        if (activeCropAspect == 0.0) return
+        runCatching { mpv.setPropertyString("video-crop", "") }
+        activeCropAspect = 0.0
+    }
     @Volatile private var aiUpscalingRequested: Boolean = false
     @Volatile private var aiUpscalingBackendPreference: String = "gpu"
     @Volatile private var aiUpscalingAnime4KMode: String = "A"
@@ -129,10 +184,15 @@ class MpvPlayerEngine(private val context: Context) {
         videoDisplayWidth = 0
         videoDisplayHeight = 0
         videoDisplayAspect = 0.0
+        resetLetterboxCrop()
     }
 
     @Volatile var loadedLoadGeneration: Long = 0L
         private set
+
+    // 자막 스타일 덮어쓰기(내 스타일을 ASS 에도 강제)와 ASS 효과 유지 설정. sub-ass-override 값을 정한다.
+    @Volatile private var subtitleOverrideEnabled: Boolean = false
+    @Volatile private var assEffectsOn: Boolean = true
 
     private var pendingSubtitlePath: String? = null
     private var currentSubtitlePath: String? = null
@@ -1143,6 +1203,7 @@ vec4 hook() {
                 val vh = full.height
                 if (vw <= 0 || vh <= 0) throw IllegalStateException("영상 프레임이 비어 있습니다.")
                 val aspect = when {
+                    activeCropAspect > 0.01 -> activeCropAspect
                     videoDisplayAspect > 0.01 -> videoDisplayAspect
                     videoWidth > 0 && videoHeight > 0 -> videoWidth.toDouble() / videoHeight
                     else -> vw.toDouble() / vh
@@ -1421,6 +1482,7 @@ vec4 hook() {
         videoDisplayWidth = 0
         videoDisplayHeight = 0
         videoDisplayAspect = 0.0
+        resetLetterboxCrop()
         subtitleText = ""
     }
 
@@ -1492,11 +1554,24 @@ vec4 hook() {
      * lower-powered TV hardware. "strip" keeps subtitle text but removes
      * ASS override tags/effects; "no" preserves the original ASS effects.
      */
-    fun setAssEffectsEnabled(enabled: Boolean) {
-        mpv.setOptionString("sub-ass-override", if (enabled) "no" else "strip")
+    fun setAssEffectsEnabled(enabled: Boolean, userStyleOverride: Boolean = subtitleOverrideEnabled) {
+        assEffectsOn = enabled
+        subtitleOverrideEnabled = userStyleOverride
+        mpv.setOptionString("sub-ass-override", assOverrideMode())
         if (currentSubtitleIsAss && currentSubtitlePath != null) {
             runCatching { mpv.command(arrayOf("sub-reload")) }
         }
+    }
+
+    /**
+     * 자막 스타일 덮어쓰기가 켜져 있으면 "force" 로 ASS 스크립트의 스타일 대신 sub-* 설정(폰트·크기·색·
+     * 테두리·굵기)을 강제한다. 위치/타이포 연출은 유지된다. 덮어쓰기가 꺼져 있으면 기존처럼 원본 그대로("no")
+     * 또는 효과 제거("strip").
+     */
+    private fun assOverrideMode(): String = when {
+        subtitleOverrideEnabled -> "force"
+        !assEffectsOn -> "strip"
+        else -> "no"
     }
 
     fun applySubtitleStyle(
@@ -1513,7 +1588,8 @@ vec4 hook() {
         // SRT has no ASS-style font/size/color metadata, so mpv/libass uses the
         // generic subtitle settings below for SRT. This is intentional: it makes
         // SRT follow the player's font, size, color, bold and outline controls.
-        if (ass) return
+        // 단, 자막 스타일 덮어쓰기가 켜져 있으면 ASS 도 같은 설정을 쓴다(sub-ass-override=force).
+        if (ass && !subtitleOverrideEnabled) return
 
         setMpvColor("sub-color", textColor)
         setMpvColor("sub-border-color", borderColor)
@@ -1577,6 +1653,8 @@ vec4 hook() {
         videoWidth = 0
         videoHeight = 0
         subtitleText = ""
+        // 이전 영상에서 잘라 낸 검은 띠 크롭이 새 영상에 남지 않게 한다.
+        resetLetterboxCrop()
 
         // ASS/SSA의 경우 caller가 customFontPath를 null로 전달한다.
         // 먼저 전역 sub-font를 초기화해 이전 VTT 설정이 ASS에 남지 않도록 한다.
@@ -1599,7 +1677,7 @@ vec4 hook() {
         // Do not set sub-font-size here: that generic mpv setting is what can make
         // an ASS subtitle change size when a different font is selected.
         if (currentSubtitleIsAss) {
-            mpv.setOptionString("sub-ass-override", "no")
+            mpv.setOptionString("sub-ass-override", if (subtitleOverrideEnabled) "force" else "no")
         } else {
             mpv.setOptionString("sub-ass-override", "yes")
         }

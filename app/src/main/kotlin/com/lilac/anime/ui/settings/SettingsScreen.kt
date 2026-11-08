@@ -421,6 +421,13 @@ private fun SubtitlePage(vm: AnimeViewModel) {
             steps = 10
         )
         SettingsDivider()
+        SettingsSwitchRow(
+            title = "ASS·SRT 자막에 내 스타일 덮어쓰기",
+            subtitle = "켜면 ASS 자막도 아래 크기·굵기·테두리와 플레이어에서 고른 색·위치로 표시합니다. 끄면 ASS는 원본 스타일을 씁니다.",
+            checked = settings.subtitleOverrideEnabled,
+            onCheckedChange = { vm.updatePlayerSettings(context, settings.copy(subtitleOverrideEnabled = it)) }
+        )
+        SettingsDivider()
         SettingsChipRow(
             title = "기본 자막 폰트",
             options = listOf("기본체" to "기본체", "나눔고딕" to "나눔고딕", "명조체" to "명조체"),
