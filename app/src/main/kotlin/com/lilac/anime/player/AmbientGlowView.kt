@@ -43,14 +43,25 @@ class AmbientGlowView @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "AmbientGlowView"
-        // 재생 중 프레임 샘플링 주기. 작을수록 장면 전환에 빨리 반응하지만 TextureView 읽기 비용이 는다.
-        private const val SAMPLE_INTERVAL_MS = 100L
+        // 재생 중 프레임 샘플링 기본 주기. 작을수록 장면 전환에 빨리 반응하지만 TextureView 읽기 비용이 는다.
+        // 실제 주기는 읽기에 걸린 시간에 맞춰 자동으로 늘어난다(adaptiveInterval).
+        private const val SAMPLE_INTERVAL_MS = 80L
+        private const val MAX_SAMPLE_INTERVAL_MS = 400L
+        // 앰비언트가 쓰는 시간이 전체의 이 비율을 넘지 않도록 주기를 늘린다(읽기 1회 비용 / 주기).
+        private const val READ_COST_BUDGET = 0.12f
+        // AI 업스케일링처럼 GPU 를 많이 쓰는 중에는 이보다 자주 읽지 않는다.
+        private const val HEAVY_LOAD_MIN_INTERVAL_MS = 200L
         // 일시정지 중에는 화면이 바뀌지 않으므로 느리게 확인한다(시크 직후 갱신용).
         private const val PAUSED_SAMPLE_INTERVAL_MS = 300L
         private const val SAMPLE_LONG_EDGE = 96
         private const val GLOW_LONG_EDGE = 48
         // 표시 색이 목표 색을 따라가는 속도(시정수, ms). 작을수록 빨리 바뀐다.
-        private const val COLOR_TAU_MS = 110f
+        private const val COLOR_TAU_MS = 80f
+        // 장면이 크게 바뀐 경우의 시정수. 컷 전환에서 조명이 늦게 따라오는 느낌을 줄인다.
+        private const val FAST_TAU_MS = 28f
+        // 새 목표 색과 현재 색의 평균 차이(0..255). 이 이상이면 빠르게, SNAP 이상이면 즉시 맞춘다.
+        private const val FAST_DIFF = 22f
+        private const val SNAP_DIFF = 70f
         // 여백에 깔리는 조명의 밝기(0..255). 너무 밝으면 영상보다 눈에 띈다.
         private const val GLOW_ALPHA = 215
         // 영상 영역 반올림 오차로 생기는 1px 틈이 검은 줄로 보이지 않게, 조명을 영상 쪽으로 이만큼 겹친다.
@@ -79,6 +90,11 @@ class AmbientGlowView @JvmOverloads constructor(
     private var animating = false
     private var snapToTarget = true
     private var lastFrameAt = 0L
+    private var currentTauMs = COLOR_TAU_MS
+
+    // getBitmap 한 번에 걸리는 시간의 이동 평균(ms). GPU 가 바쁠수록 커진다.
+    private var readCostEmaMs = 0f
+    private var heavyLoad = false
 
     private val videoRect = Rect()
     private val srcRect = Rect()
@@ -171,6 +187,11 @@ class AmbientGlowView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** AI 업스케일링/셰이더처럼 GPU 부하가 큰 설정이 켜져 있으면 true. 샘플링과 다시 그리기 빈도를 낮춘다. */
+    fun setHeavyLoad(heavy: Boolean) {
+        heavyLoad = heavy
+    }
+
     fun setPlaying(isPlaying: Boolean) {
         if (playing == isPlaying) return
         playing = isPlaying
@@ -253,7 +274,14 @@ class AmbientGlowView @JvmOverloads constructor(
     private fun scheduleSample() {
         if (scheduled || !shouldRun()) return
         scheduled = true
-        postDelayed(sampleRunnable, if (playing) SAMPLE_INTERVAL_MS else PAUSED_SAMPLE_INTERVAL_MS)
+        postDelayed(sampleRunnable, if (playing) adaptiveInterval() else PAUSED_SAMPLE_INTERVAL_MS)
+    }
+
+    /** 읽기 비용이 클수록(=GPU 가 바쁠수록) 샘플링 주기를 늘려 영상 재생에 영향을 주지 않게 한다. */
+    private fun adaptiveInterval(): Long {
+        var interval = max(SAMPLE_INTERVAL_MS.toFloat(), readCostEmaMs / READ_COST_BUDGET)
+        if (heavyLoad) interval = max(interval, HEAVY_LOAD_MIN_INTERVAL_MS.toFloat())
+        return interval.toLong().coerceAtMost(MAX_SAMPLE_INTERVAL_MS)
     }
 
     private fun sampleFrame() {
@@ -278,7 +306,10 @@ class AmbientGlowView @JvmOverloads constructor(
             sampleBitmap = sample
         }
 
+        val readStart = SystemClock.elapsedRealtimeNanos()
         val captured = runCatching { tv.getBitmap(sample) }.getOrNull()
+        val readMs = (SystemClock.elapsedRealtimeNanos() - readStart) / 1_000_000f
+        readCostEmaMs = if (readCostEmaMs == 0f) readMs else readCostEmaMs * 0.8f + readMs * 0.2f
         if (captured == null) {
             if (++sampleFailures == 3) Log.w(TAG, "SAMPLE_FAILED repeatedly")
             return
@@ -354,14 +385,22 @@ class AmbientGlowView @JvmOverloads constructor(
             snapToTarget = true
         }
         var o = 0
+        var diffSum = 0f
         for (i in 0 until n) {
             val c = pixelBuffer[i]
-            targetRgb[o++] = ((c shr 16) and 0xFF).toFloat()
-            targetRgb[o++] = ((c shr 8) and 0xFF).toFloat()
-            targetRgb[o++] = (c and 0xFF).toFloat()
+            val r = ((c shr 16) and 0xFF).toFloat()
+            val g = ((c shr 8) and 0xFF).toFloat()
+            val b = (c and 0xFF).toFloat()
+            diffSum += abs(r - currentRgb[o]) + abs(g - currentRgb[o + 1]) + abs(b - currentRgb[o + 2])
+            targetRgb[o++] = r
+            targetRgb[o++] = g
+            targetRgb[o++] = b
         }
+        // 현재 색에서 새 목표까지 얼마나 멀리 가야 하는지(0..255 평균). 컷 전환처럼 크게 바뀌면 빠르게 따라간다.
+        val meanDiff = diffSum / (n * 3)
+        currentTauMs = if (meanDiff >= FAST_DIFF) FAST_TAU_MS else COLOR_TAU_MS
 
-        if (first || snapToTarget) {
+        if (first || snapToTarget || meanDiff >= SNAP_DIFF) {
             // 첫 프레임이나 크기가 바뀐 직후에는 보간 없이 바로 맞춘다.
             System.arraycopy(targetRgb, 0, currentRgb, 0, n * 3)
             snapToTarget = false
@@ -385,7 +424,7 @@ class AmbientGlowView @JvmOverloads constructor(
         val now = SystemClock.uptimeMillis()
         val dt = (now - lastFrameAt).coerceIn(1L, 64L)
         lastFrameAt = now
-        val k = 1f - exp(-dt.toFloat() / COLOR_TAU_MS)
+        val k = 1f - exp(-dt.toFloat() / currentTauMs)
 
         var maxDiff = 0f
         for (i in 0 until n3) {
@@ -442,7 +481,10 @@ class AmbientGlowView @JvmOverloads constructor(
 
         if (animating) {
             animating = stepAnimation()
-            if (animating) postInvalidateOnAnimation()
+            // GPU 부하가 큰 동안에는 전체 화면 오버레이를 60Hz 로 다시 그리지 않고 약 30Hz 로 낮춘다.
+            if (animating) {
+                if (heavyLoad) postInvalidateDelayed(33L) else postInvalidateOnAnimation()
+            }
         }
 
         val viewW = width
@@ -563,6 +605,7 @@ class AmbientGlowView @JvmOverloads constructor(
         detecting = false
         detectKey = null
         letterboxDetector.release()
+        readCostEmaMs = 0f
         sampleBitmap?.recycle()
         sampleBitmap = null
         glowBitmap?.recycle()

@@ -1902,6 +1902,11 @@ fun PlayerScreen(
                     if (aspect != null) view.setVideoAspectRatio(aspect)
                     view.setPlaying(isPlaying)
                     view.setAmbientEnabled(vm.playerSettings.ambientModeEnabled)
+                    view.setHeavyLoad(
+                        vm.playerSettings.aiUpscalingEnabled ||
+                            vm.playerSettings.watermarkRemovalEnabled ||
+                            vm.playerSettings.subtitleEraseEnabled
+                    )
                     view.setCropDetection(
                         enabled = ambientCropOn && engine.videoWidth > 0 && engine.videoHeight > 0,
                         sessionKey = Triple(engine.loadedLoadGeneration, engine.videoWidth, engine.videoHeight)
