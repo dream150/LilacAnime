@@ -15,6 +15,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import com.lilac.anime.ui.components.SortScope
+import com.lilac.anime.ui.components.chooseSort
+import com.lilac.anime.ui.components.sortAnime
+import com.lilac.anime.ui.components.sortFor
+import com.lilac.anime.ui.components.watchRanks
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -349,17 +355,25 @@ fun TvHomeScreen(vm: AnimeViewModel, openDetail: (Anime) -> Unit, onNavigate: (S
 fun TvAllAnimeScreen(vm: AnimeViewModel, openDetail: (Anime) -> Unit, onNavigate: (String) -> Unit) {
     val isReAnime = vm.playerSettings.videoSourcePreference == "reanime"
     LaunchedEffect(Unit) { vm.loadAllAnime() }
+    val sort = vm.sortFor(SortScope.EXPLORE)
+    val loaded = vm.allAnime
+    val sortedItems = remember(loaded, sort) { sortAnime(loaded.distinctBy { it.id }, sort) }
+    val gridState = rememberLazyGridState()
+    // 정렬 기준을 바꾸면 맨 위부터 보여준다.
+    LaunchedEffect(sort) { gridState.scrollToItem(0) }
     TvShell("all", onNavigate, onRefresh = { vm.refreshAnime() }) {
         Column(Modifier.fillMaxSize().padding(horizontal = 54.dp)) {
-            Text("전체", color = TvText, fontSize = 34.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 18.dp, bottom = 20.dp))
+            Text("전체", color = TvText, fontSize = 34.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 18.dp, bottom = 12.dp))
+            TvSortChips(SortScope.EXPLORE, vm)
             LazyVerticalGrid(
+                state = gridState,
                 columns = GridCells.Adaptive(if (isReAnime) 180.dp else 270.dp),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 50.dp),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                gridItems(vm.allAnime, key = { it.id }) { anime ->
+                gridItems(sortedItems, key = { it.id }) { anime ->
                     if (isReAnime) {
                         TvVerticalPosterCard(anime, onClick = { openDetail(anime) })
                     } else {
@@ -742,10 +756,41 @@ fun TvHistoryScreen(vm: AnimeViewModel, open: (Anime) -> Unit, onNavigate: (Stri
 @Composable
 fun TvLibraryScreen(vm: AnimeViewModel, open: (Anime) -> Unit, onNavigate: (String) -> Unit) {
     val context = LocalContext.current
-    val items = vm.library.mapNotNull { vm.getAnime(context, it) }
-    TvShell("library", onNavigate, onRefresh = { vm.refreshAnime() }) { Column(Modifier.fillMaxSize().padding(horizontal = 54.dp)) { Text("내 목록", color = TvText, fontSize = 34.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(vertical = 20.dp)); LazyVerticalGrid(columns = GridCells.Fixed(6), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) { gridItems(items) { TvLandscapeCard(it, { open(it) }, 270) } } } }
+    val sort = vm.sortFor(SortScope.LIBRARY)
+    val items = sortAnime(vm.library.mapNotNull { vm.getAnime(context, it) }, sort, vm.watchRanks())
+    val gridState = rememberLazyGridState()
+    // 정렬 기준을 바꾸면 맨 위부터 보여준다.
+    LaunchedEffect(sort) { gridState.scrollToItem(0) }
+    TvShell("library", onNavigate, onRefresh = { vm.refreshAnime() }) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 54.dp)) {
+            Text("내 목록", color = TvText, fontSize = 34.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 20.dp, bottom = 12.dp))
+            TvSortChips(SortScope.LIBRARY, vm)
+            LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Fixed(6),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                gridItems(items) { TvLandscapeCard(it, { open(it) }, 270) }
+            }
+        }
+    }
 }
 
+/** TV 용 정렬 선택. 방향키로 칩을 고르고 확인 버튼으로 바꾼다. */
+@Composable
+private fun TvSortChips(scope: SortScope, vm: AnimeViewModel) {
+    val context = LocalContext.current
+    val selected = vm.sortFor(scope)
+    Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("정렬", color = TvMuted, fontSize = 14.sp, modifier = Modifier.padding(end = 12.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(scope.options) { option ->
+                TvFilterChip(option.shortLabel, option == selected) { vm.chooseSort(context, scope, option) }
+            }
+        }
+    }
+}
 
 @Composable
 fun TvAiSettingsScreen(vm: AnimeViewModel, onNavigate: (String) -> Unit) {

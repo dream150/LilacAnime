@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
@@ -30,6 +31,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.lilac.anime.Anime
 import com.lilac.anime.ui.components.EmptyState
+import com.lilac.anime.ui.components.SortMenuButton
+import com.lilac.anime.ui.components.SortScope
+import com.lilac.anime.ui.components.chooseSort
+import com.lilac.anime.ui.components.sortAnime
+import com.lilac.anime.ui.components.sortFor
+import com.lilac.anime.ui.components.watchRanks
 import com.lilac.anime.ui.components.PosterRow
 import com.lilac.anime.ui.components.ScreenHeader
 import com.lilac.anime.ui.home.WatchHistoryContent
@@ -72,8 +79,32 @@ fun LibraryScreen(
         mutableIntStateOf(if (initialTab != TAB_SAVED) initialTab else if (isOffline) TAB_DOWNLOADS else TAB_SAVED)
     }
 
+    // 내 목록 / 다운로드 탭은 각각 따로 정렬 기준을 기억한다. 시청 기록은 항상 최근 시청순이다.
+    val savedSort = vm.sortFor(SortScope.LIBRARY)
+    val downloadSort = vm.sortFor(SortScope.DOWNLOADS)
+    val watchRanks = vm.watchRanks()
+    val sortedSaved = remember(saved, savedSort, watchRanks) { sortAnime(saved.distinctBy { it.id }, savedSort, watchRanks) }
+    val sortedDownloaded = remember(downloaded, downloadSort, watchRanks) { sortAnime(downloaded.distinctBy { it.id }, downloadSort, watchRanks) }
+
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader(title = "보관함")
+        ScreenHeader(
+            title = "보관함",
+            actions = {
+                when (selectedTab) {
+                    TAB_HISTORY -> Unit
+                    TAB_DOWNLOADS -> SortMenuButton(
+                        selected = downloadSort,
+                        options = SortScope.DOWNLOADS.options,
+                        onSelect = { vm.chooseSort(context, SortScope.DOWNLOADS, it) }
+                    )
+                    else -> SortMenuButton(
+                        selected = savedSort,
+                        options = SortScope.LIBRARY.options,
+                        onSelect = { vm.chooseSort(context, SortScope.LIBRARY, it) }
+                    )
+                }
+            }
+        )
 
         TabRow(
             selectedTabIndex = selectedTab,
@@ -100,14 +131,16 @@ fun LibraryScreen(
         when (selectedTab) {
             TAB_HISTORY -> WatchHistoryContent(vm = vm, open = open)
             TAB_DOWNLOADS -> AnimeList(
-                list = downloaded,
+                list = sortedDownloaded,
+                sortKey = downloadSort.key,
                 open = open,
                 emptyIcon = { Icons.Filled.DownloadDone },
                 emptyTitle = "다운로드한 작품이 없어요",
                 emptyMessage = "작품 상세에서 회차를 내려받으면 오프라인에서도 볼 수 있어요."
             )
             else -> AnimeList(
-                list = saved,
+                list = sortedSaved,
+                sortKey = savedSort.key,
                 open = open,
                 emptyIcon = { Icons.Filled.FavoriteBorder },
                 emptyTitle = "내 목록이 비어 있어요",
@@ -129,6 +162,7 @@ fun LibraryScreen(
 @Composable
 private fun AnimeList(
     list: List<Anime>,
+    sortKey: String,
     open: (Anime) -> Unit,
     emptyIcon: () -> androidx.compose.ui.graphics.vector.ImageVector,
     emptyTitle: String,
@@ -139,12 +173,16 @@ private fun AnimeList(
         EmptyState(icon = emptyIcon(), title = emptyTitle, message = emptyMessage)
         return
     }
+    val listState = rememberLazyListState()
+    // 정렬 기준을 바꾸면 맨 위부터 보여준다.
+    LaunchedEffect(sortKey) { listState.scrollToItem(0) }
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        items(list.distinctBy { it.id }, key = { it.id }) { anime ->
+        items(list, key = { it.id }) { anime ->
             PosterRow(
                 anime = anime,
                 onClick = { open(anime) },

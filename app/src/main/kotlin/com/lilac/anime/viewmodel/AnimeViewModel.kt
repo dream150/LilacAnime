@@ -266,6 +266,15 @@ class AnimeViewModel : ViewModel() {
     var watchHistory by mutableStateOf<List<WatchProgress>>(emptyList())
         private set
 
+    /** 화면(SortScope.key)별로 선택한 목록 정렬 기준(AnimeSort.key). 앱을 다시 열어도 유지된다. */
+    var sortSelections by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+
+    fun setSortSelection(context: Context, scope: String, sortKey: String) {
+        sortSelections = sortSelections + (scope to sortKey)
+        viewModelScope.launch(Dispatchers.IO) { OfflineStore.saveSortSelection(context, scope, sortKey) }
+    }
+
     // PlayerScreen must wait until persisted watch history has been loaded.
     // Otherwise the resume effect can run once with an empty history and never
     // seek to the saved position when the history arrives afterward.
@@ -436,6 +445,7 @@ class AnimeViewModel : ViewModel() {
             val lib = OfflineStore.getLibrary(context)
             val history = OfflineStore.getWatchHistory(context)
             val settings = OfflineStore.getPlayerSettings(context)
+            val sortPrefs = OfflineStore.getSortSelections(context)
             val source = settings.videoSourcePreference
             // Home is intentionally NEVER served from the catalog cache.
             // Every home entry/re-entry asks the source for a fresh preview.
@@ -444,6 +454,7 @@ class AnimeViewModel : ViewModel() {
                 watchHistory = history
                 watchHistoryLoaded = true
                 playerSettings = settings
+                sortSelections = sortPrefs
                 homeAnime = emptyList()
                 loading = true
                 error = null

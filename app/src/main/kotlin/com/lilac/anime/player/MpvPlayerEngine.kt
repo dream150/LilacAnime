@@ -100,6 +100,8 @@ class MpvPlayerEngine(private val context: Context) {
         val y = (bars.top * h).roundToInt().coerceAtLeast(0)
         val cw = w - x - (bars.right * w).roundToInt().coerceAtLeast(0)
         val ch = h - y - (bars.bottom * h).roundToInt().coerceAtLeast(0)
+        // 시공간 인페인팅이 켜져 있으면 mpv 는 "키 큰 프레임" 기준으로 크롭을 계산하므로 세로 값을 같은 비율로 늘려 준다.
+        val packY = if (temporalReady()) temporalPlan?.sarScale ?: 1.0 else 1.0
         // 너무 많이 잘리면 오검출로 보고 무시한다.
         if (cw < w / 3 || ch < h / 3 || cw <= 0 || ch <= 0) {
             Log.w(TAG, "LETTERBOX_CROP_REJECTED src=${w}x$h crop=${cw}x$ch+$x+$y")
@@ -107,7 +109,7 @@ class MpvPlayerEngine(private val context: Context) {
         }
         val dar = videoDisplayAspect.takeIf { it > 0.01 } ?: (w.toDouble() / h)
         val pixelAspect = dar / (w.toDouble() / h)
-        val result = runCatching { mpv.setPropertyString("video-crop", "${cw}x${ch}+${x}+${y}") }
+        val result = runCatching { mpv.setPropertyString("video-crop", "${cw}x${(ch * packY).roundToInt()}+${x}+${(y * packY).roundToInt()}") }
         if (result.isSuccess) {
             activeCropAspect = cw.toDouble() / ch * pixelAspect
             Log.i(TAG, "LETTERBOX_CROP applied src=${w}x$h crop=${cw}x$ch+$x+$y aspect=$activeCropAspect")
@@ -212,6 +214,7 @@ class MpvPlayerEngine(private val context: Context) {
             if (property == "video-params/w" || property == "video-params/h") {
                 applyUpscalingProfile()
                 applyWatermarkFilter()
+                if (subtitleEraseRequested && subtitleEraseTemporal) rebuildSubtitleErase()
             }
             updateProperty(property)
         }
@@ -229,6 +232,7 @@ class MpvPlayerEngine(private val context: Context) {
             }
             if (property == "video-params/w" || property == "video-params/h") {
                 applyWatermarkFilter()
+                if (subtitleEraseRequested && subtitleEraseTemporal) rebuildSubtitleErase()
             }
             updateProperty(property)
         }
@@ -555,21 +559,116 @@ class MpvPlayerEngine(private val context: Context) {
     fun setSubtitleErasePaused(paused: Boolean) {
         subtitleErasePaused = paused
         applyHwdecPolicy()
+        applyTemporalVf()
         applyShaderList()
+    }
+
+    // ---- 시공간 인페인팅 (앞뒤 프레임 참조) ----
+    @Volatile private var subtitleEraseTemporal = true
+    @Volatile private var subtitleEraseTemporalPreset = SubtitleTemporalInpaint.Preset.BALANCED
+    private var temporalPlan: SubtitleTemporalInpaint.Plan? = null
+    private var temporalVfKey = ""
+    private val temporalFilterLabel = "lilacsubt"
+    private val subTSlot = LoadedShader()
+    private val subtitleTemporalFile: File
+        get() = File(File(context.filesDir, "watermark").apply { mkdirs() }, "sub_erase_t.glsl")
+
+    /** 켜면 자막이 없는 프레임/가려지지 않은 부분을 앞뒤 프레임에서 찾아 채운다. 조건이 안 맞으면 자동으로 공간 방식. */
+    fun setSubtitleEraseTemporal(on: Boolean, preset: SubtitleTemporalInpaint.Preset = subtitleEraseTemporalPreset) {
+        if (on == subtitleEraseTemporal && preset == subtitleEraseTemporalPreset) return
+        subtitleEraseTemporal = on
+        subtitleEraseTemporalPreset = preset
+        rebuildSubtitleErase()
+    }
+
+    /** 설치된 vf 와 계획이 일치할 때만 키 큰 프레임용 셰이더를 쓴다 (어긋나면 화면이 깨지므로). */
+    private fun temporalReady(): Boolean {
+        val plan = temporalPlan ?: return false
+        return subtitleEraseMode() && subtitleEraseTemporal && temporalVfKey == plan.key && subtitleTemporalFile.isFile
+    }
+
+    private fun currentFps(): Double {
+        fun d(name: String) = runCatching { mpv.getPropertyDouble(name) }.getOrNull()?.takeIf { it.isFinite() && it > 1.0 }
+        return d("container-fps") ?: d("estimated-vf-fps") ?: 24.0
+    }
+
+    private fun computeTemporalPlan(): SubtitleTemporalInpaint.Plan? {
+        if (!subtitleEraseTemporal || videoWidth <= 0 || videoHeight <= 0) return null
+        return SubtitleTemporalInpaint.plan(videoWidth, videoHeight, currentFps(), subtitleEraseRegions, subtitleEraseTemporalPreset)
+    }
+
+    /** 검증에서 실패한 계획 키. 같은 계획으로 다시 시도하지 않고 공간 방식으로 둔다. */
+    private var temporalDisabledKey = ""
+
+    private fun applyTemporalVf() {
+        val plan = if (subtitleEraseMode() && subtitleEraseTemporal && temporalPlan?.key != temporalDisabledKey) temporalPlan else null
+        val want = plan?.key ?: ""
+        if (want == temporalVfKey) return
+        if (temporalVfKey.isNotEmpty()) {
+            runCatching { mpv.command(arrayOf("vf", "remove", "@$temporalFilterLabel")) }
+            runCatching { mpv.setPropertyString("video-aspect-override", "-1") }
+            temporalVfKey = ""
+        }
+        if (plan == null) return
+        val graph = SubtitleTemporalInpaint.buildVf(plan)
+        // 중간 텍스처에 음수/큰 값(이동량, 점수)을 넣으므로 반드시 부동소수 FBO 여야 한다.
+        runCatching { mpv.setPropertyString("fbo-format", "rgba16f") }
+        val result = runCatching { mpv.command(arrayOf("vf", "add", "@$temporalFilterLabel:lavfi=[$graph]")) }
+        if (result.isSuccess) {
+            temporalVfKey = want
+            // 화면 비율은 원본 기준으로 고정 (키 큰 프레임의 비율로 계산되어 찌그러지는 것 방지).
+            val dar = videoDisplayAspect.takeIf { it > 0.01 } ?: (plan.w.toDouble() / plan.h)
+            runCatching { mpv.setPropertyString("video-aspect-override", String.format(Locale.US, "%.6f", dar)) }
+            Log.i(TAG, "SUBTITLE_TEMPORAL vf added ${plan.w}x${plan.h} band=y${plan.y0}+${plan.hb} offsets=${plan.offsets.joinToString(",")} tall=${plan.tallH} dar=$dar")
+            verifyTemporalVf(plan)
+        } else {
+            Log.e(TAG, "SUBTITLE_TEMPORAL vf failed; falling back to spatial erase", result.exceptionOrNull())
+        }
+    }
+
+    /** vf 가 정말 키 큰 프레임을 내보내는지 mpv 에서 읽어 확인한다. 아니면 끄고 공간 방식으로 되돌린다. */
+    private fun verifyTemporalVf(plan: SubtitleTemporalInpaint.Plan) {
+        upscalingScope.launch {
+            kotlinx.coroutines.delay(900L)
+            fun prop(name: String) = runCatching { mpv.getPropertyString(name) }.getOrNull() ?: "<unreadable>"
+            val ow = prop("video-out-params/w")
+            val oh = prop("video-out-params/h")
+            Log.i(TAG, "SUBTITLE_TEMPORAL_VERIFY out=${ow}x$oh expected=${plan.w}x${plan.tallH} vf=${prop("vf")} " +
+                "fbo-format=${prop("fbo-format")} hwdec-current=${prop("hwdec-current")} aspect-override=${prop("video-aspect-override")}")
+            if (temporalVfKey == plan.key && (oh.toIntOrNull() != plan.tallH || ow.toIntOrNull() != plan.w)) {
+                Log.e(TAG, "SUBTITLE_TEMPORAL_VERIFY mismatch: vf did not produce the stacked frame; disabling temporal mode")
+                temporalDisabledKey = plan.key
+                applyTemporalVf()
+                applyShaderList()
+            }
+        }
     }
 
     fun configureSubtitleErase(enabled: Boolean, regions: String) {
         subtitleEraseRequested = enabled
         subtitleEraseRegions = WatermarkRegions.parse(regions)
         ensureSubtitleStyleLoaded()
-        val key = "$enabled:${WatermarkRegions.serialize(subtitleEraseRegions)}:${subtitleEraseStyle?.serialize()}:$subtitleErasePreview"
+        val plan = if (enabled && !learningWatermark) computeTemporalPlan() else null
+        temporalPlan = plan
+        val key = "$enabled:${WatermarkRegions.serialize(subtitleEraseRegions)}:${subtitleEraseStyle?.serialize()}:$subtitleErasePreview:" +
+            "$subtitleEraseTemporal:${plan?.key}"
         if (key == subtitleEraseKey) return
         subtitleEraseKey = key
         if (subtitleEraseRegions.isNotEmpty()) {
+            // 공간 방식 셰이더는 항상 만들어 둔다 (시공간 방식을 못 쓸 때의 대체).
             runCatching { subtitleEraseFile.writeText(SubtitleEraseShaderHq.build(subtitleEraseRegions, style = subtitleEraseStyle, debug = subtitleErasePreview), Charsets.US_ASCII) }
                 .onFailure { Log.e(TAG, "SUBTITLE_ERASE write failed", it) }
+            if (plan != null) {
+                runCatching {
+                    subtitleTemporalFile.writeText(
+                        SubtitleTemporalInpaint.buildShader(plan, style = subtitleEraseStyle, debug = subtitleErasePreview),
+                        Charsets.US_ASCII
+                    )
+                }.onFailure { Log.e(TAG, "SUBTITLE_TEMPORAL write failed", it) }
+            }
         }
         applyHwdecPolicy()
+        applyTemporalVf()
         applyShaderList()
     }
 
@@ -682,13 +781,16 @@ vec4 hook() {
     /** glsl-shaders 목록의 단일 진입점. 워터마크 셰이더를 항상 맨 앞에 두고 Anime4K 를 뒤에 붙입니다. */
     private fun applyShaderList() {
         val list = buildList {
+            // 키 큰 프레임을 받는 시공간 셰이더는 반드시 맨 앞 (다음 셰이더들은 원래 크기의 프레임을 본다).
+            val temporal = temporalReady()
+            if (temporal) add(loadablePath(subtitleTemporalFile, subTSlot, textured = false))
             if (watermarkTest && watermarkRequested && !learningWatermark) {
                 add(loadablePath(File(watermarkShaderFile.parentFile, "wm_test.glsl")))
             } else if (watermarkShaderMode()) {
                 val preview = File(watermarkShaderFile.parentFile, "wm_preview.glsl")
                 add(loadablePath(if (watermarkPreview && preview.isFile) preview else watermarkShaderFile))
             }
-            if (subtitleEraseMode() && subtitleEraseFile.isFile) {
+            if (!temporal && subtitleEraseMode() && subtitleEraseFile.isFile) {
                 add(loadablePath(subtitleEraseFile, subSlot, textured = false))
             }
             // 학습 중에는 워터마크가 그대로 찍힌 프레임이 필요하므로 모든 셰이더를 끈다.

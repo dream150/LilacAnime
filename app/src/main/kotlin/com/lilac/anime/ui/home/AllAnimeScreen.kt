@@ -16,6 +16,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,11 @@ import androidx.compose.material.icons.filled.Explore
 import com.lilac.anime.Anime
 import com.lilac.anime.ui.components.BackdropCard
 import com.lilac.anime.ui.components.EmptyState
+import com.lilac.anime.ui.components.SortMenuButton
+import com.lilac.anime.ui.components.SortScope
+import com.lilac.anime.ui.components.chooseSort
+import com.lilac.anime.ui.components.sortAnime
+import com.lilac.anime.ui.components.sortFor
 import com.lilac.anime.ui.components.ScreenHeader
 import com.lilac.anime.viewmodel.AnimeViewModel
 
@@ -41,14 +48,25 @@ fun AllAnimeScreen(
     // 목적지 쪽(AppNavigation)에서도 loadAllAnime 을 부르던 중복 호출을 여기 한 곳으로 합쳤다.
     LaunchedEffect(Unit) { vm.loadAllAnime() }
 
+    val context = LocalContext.current
     val gridState = rememberLazyGridState()
-    val items = vm.allAnime.distinctBy { it.id }
+    val sort = vm.sortFor(SortScope.EXPLORE)
+    val loaded = vm.allAnime
+    val items = remember(loaded, sort) { sortAnime(loaded.distinctBy { it.id }, sort) }
+
+    // 정렬 기준을 바꾸면 맨 위부터 보여준다.
+    LaunchedEffect(sort) { gridState.scrollToItem(0) }
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(
             title = "탐색",
             subtitle = if (items.isEmpty()) null else "${items.size}개 작품",
             actions = {
+                SortMenuButton(
+                    selected = sort,
+                    options = SortScope.EXPLORE.options,
+                    onSelect = { vm.chooseSort(context, SortScope.EXPLORE, it) }
+                )
                 if (vm.isAllAnimeLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(22.dp),

@@ -74,6 +74,8 @@ object OfflineStore {
             putString("pref_watermark_regions", settings.watermarkRegions)
             putBoolean("pref_subtitle_erase_enabled", settings.subtitleEraseEnabled)
             putString("pref_subtitle_erase_regions", settings.subtitleEraseRegions)
+            putBoolean("pref_subtitle_erase_temporal", settings.subtitleEraseTemporal)
+            putString("pref_subtitle_erase_temporal_preset", settings.subtitleEraseTemporalPreset)
             putBoolean("pref_ambient_mode_enabled", settings.ambientModeEnabled)
             putBoolean("pref_ambient_crop_black_bars", settings.ambientCropBlackBars)
             putBoolean("pref_subtitle_override_enabled", settings.subtitleOverrideEnabled)
@@ -188,6 +190,8 @@ object OfflineStore {
             watermarkRegions = prefs.getString("pref_watermark_regions", "").orEmpty(),
             subtitleEraseEnabled = prefs.getBoolean("pref_subtitle_erase_enabled", false),
             subtitleEraseRegions = prefs.getString("pref_subtitle_erase_regions", "").orEmpty(),
+            subtitleEraseTemporal = prefs.getBoolean("pref_subtitle_erase_temporal", true),
+            subtitleEraseTemporalPreset = prefs.getString("pref_subtitle_erase_temporal_preset", "balanced") ?: "balanced",
             ambientModeEnabled = prefs.getBoolean("pref_ambient_mode_enabled", false),
             ambientCropBlackBars = prefs.getBoolean("pref_ambient_crop_black_bars", true),
             subtitleOverrideEnabled = prefs.getBoolean("pref_subtitle_override_enabled", false)
@@ -271,6 +275,20 @@ object OfflineStore {
         File(MpvOfflineStore.episodeDir(context, animeId, episodeId), "aniskip.json.part").delete()
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .edit().remove("chapter_skip_${animeId}_${episodeId}").apply()
+    }
+
+    /** 화면(scope)별로 마지막에 고른 목록 정렬 기준. 값은 AnimeSort.key. */
+    suspend fun saveSortSelection(context: Context, scope: String, sortKey: String) = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString("anime_sort_$scope", sortKey).apply()
+    }
+
+    suspend fun getSortSelections(context: Context): Map<String, String> = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        prefs.all
+            .filterKeys { it.startsWith("anime_sort_") }
+            .mapNotNull { (k, v) -> (v as? String)?.let { k.removePrefix("anime_sort_") to it } }
+            .toMap()
     }
 
     suspend fun saveEpisodeSortOrder(context: Context, animeId: String, newestFirst: Boolean) = withContext(Dispatchers.IO) {

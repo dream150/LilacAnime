@@ -459,6 +459,17 @@ fun PlayerScreen(
         )
     }
 
+    LaunchedEffect(engine, vm.playerSettings.subtitleEraseTemporal, vm.playerSettings.subtitleEraseTemporalPreset) {
+        engine.setSubtitleEraseTemporal(
+            vm.playerSettings.subtitleEraseTemporal,
+            when (vm.playerSettings.subtitleEraseTemporalPreset) {
+                "light" -> SubtitleTemporalInpaint.Preset.LIGHT
+                "quality" -> SubtitleTemporalInpaint.Preset.QUALITY
+                else -> SubtitleTemporalInpaint.Preset.BALANCED
+            }
+        )
+    }
+
     LaunchedEffect(engine, vm.playerSettings.subtitleEraseEnabled, vm.playerSettings.subtitleEraseRegions) {
         engine.configureSubtitleErase(
             enabled = vm.playerSettings.subtitleEraseEnabled,
@@ -2671,6 +2682,38 @@ fun PlayerScreen(
                             }
                         }
                         if (vm.playerSettings.subtitleEraseRegions.isNotBlank()) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("앞뒤 프레임 참조 (시공간)", fontSize = 13.sp)
+                                    Text(
+                                        "자막이 없는 프레임과 가려지지 않은 부분을 앞뒤 장면에서 찾아 채웁니다. 켜면 메모리·GPU를 더 씁니다.",
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                Switch(
+                                    checked = vm.playerSettings.subtitleEraseTemporal,
+                                    onCheckedChange = { on ->
+                                        vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleEraseTemporal = on))
+                                    }
+                                )
+                            }
+                            if (vm.playerSettings.subtitleEraseTemporal) {
+                                Row(Modifier.padding(horizontal = 14.dp)) {
+                                    listOf("light" to "가볍게", "balanced" to "균형", "quality" to "고화질").forEach { (id, label) ->
+                                        TextButton(onClick = {
+                                            vm.updatePlayerSettings(context, vm.playerSettings.copy(subtitleEraseTemporalPreset = id))
+                                        }) {
+                                            Text(
+                                                if (vm.playerSettings.subtitleEraseTemporalPreset == id) "● $label" else label,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                             Row(Modifier.padding(horizontal = 14.dp)) {
                                 TextButton(onClick = { startSubtitleStyleLearning() }) {
                                     Text(if (subtitleStylePresent) "자막 스타일 다시 학습" else "자막 스타일 자동 학습", fontSize = 12.sp)

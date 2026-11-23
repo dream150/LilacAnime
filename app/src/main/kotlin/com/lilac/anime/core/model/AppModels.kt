@@ -88,6 +88,10 @@ data class PlayerSettings(
     // Hard-coded (burned-in) subtitle erasing. Regions use the same normalized format.
     val subtitleEraseEnabled: Boolean = false,
     val subtitleEraseRegions: String = "",
+    // 자막 지우기를 앞뒤 프레임을 참조하는 시공간 방식으로 (신경망 없음). 꺼지면 한 프레임 안에서만 메우는 공간 방식.
+    val subtitleEraseTemporal: Boolean = true,
+    // "light" | "balanced" | "quality" : 참조 프레임 수/범위 (미래 프레임 버퍼 메모리 차이)
+    val subtitleEraseTemporalPreset: String = "balanced",
     // 앰비언트 모드: 영상 여백(레터박스/필러박스)에 영상 색상이 번지는 은은한 조명 효과.
     val ambientModeEnabled: Boolean = false,
     // 앰비언트 모드가 켜져 있을 때, 영상 파일에 구워진 검은 띠를 검출해 잘라 내고 그 자리도 앰비언트로 채운다.
