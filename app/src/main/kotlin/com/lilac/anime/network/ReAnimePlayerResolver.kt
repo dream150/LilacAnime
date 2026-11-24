@@ -29,7 +29,7 @@ object ReAnimePlayerResolver {
         val flixCloudPk: String? = null
     )
 
-    private const val REANIME = "https://reanime.to"
+    private const val REANIME = "https://reanime.cz" // 2026-11: reanime.to -> reanime.cz 이전
     private const val UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
     suspend fun resolve(context: Context, episode: Episode, anilistId: Int? = null): Result {

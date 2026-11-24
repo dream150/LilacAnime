@@ -1283,7 +1283,7 @@ fun PlayerScreen(
             val slug = anime.detailUrl.substringAfter("/anime/").substringBefore("/")
                 .ifBlank { anime.id.removePrefix("reanime:").substringBefore("/") }
             val watchUrl = currentEpisode.videoUrl?.takeIf { it.contains("/watch/") }
-                ?: "https://reanime.to/watch/$slug?ep=${currentEpisode.number}"
+                ?: "https://reanime.cz/watch/$slug?ep=${currentEpisode.number}"
 
             // Reset every Re:ANIME stream state before mounting the hidden HAR
             // extractor. This is the same lifecycle used by the known-working

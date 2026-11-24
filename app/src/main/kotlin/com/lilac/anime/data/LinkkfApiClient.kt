@@ -226,7 +226,9 @@ class LinkkfApiClient {
     private fun detectTotalPages(url: String): Int {
         val document = runCatching { client.getDocument(url) }.getOrNull() ?: return 1
         val pages = document.select("a[href]").mapNotNull { a ->
-            Regex("""/page/(\\d+)/?$""").find(a.attr("href"))?.groupValues?.getOrNull(1)?.toIntOrNull()
+            // Raw string 안에서는 \\d 가 '리터럴 백슬래시 + d' 로 해석되어 아무 페이지도
+            // 매치하지 못했다(항상 1 반환). \d 로 수정해야 페이지네이션이 동작한다.
+            Regex("""/page/(\d+)/?$""").find(a.attr("href"))?.groupValues?.getOrNull(1)?.toIntOrNull()
         }
         return pages.maxOrNull() ?: 1
     }

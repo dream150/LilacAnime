@@ -24,7 +24,10 @@ import java.util.Base64
  */
 object ReAnimeFlixCloud {
     private const val TAG = "ReAnimeFlixCloud"
-    private const val REANIME = "https://reanime.to"
+
+    /** 2026-11: reanime.to -> reanime.cz 이전. /api/flix 는 두 도메인 모두 응답한다. */
+    private const val REANIME = "https://reanime.cz"
+    private const val REANIME_FALLBACK = "https://reanime.to"
 
     data class Result(
         val m3u8Url: String,
@@ -47,15 +50,15 @@ object ReAnimeFlixCloud {
         b.build().toString()
     }.getOrDefault(raw)
 
-    /** Resolve the Re:ANIME API server exactly as the HAR does. */
-    fun resolveFlixUrl(anilistId: Int, episode: Int, userAgent: String): String? {
-        val url = "$REANIME/api/flix/$anilistId/$episode"
+    /** /api/flix/{anilistId}/{episode} 에서 flixcloud.cc 링크를 꺼낸다. */
+    private fun extractFlixDataLink(baseUrl: String, anilistId: Int, episode: Int, userAgent: String): String? {
+        val url = "$baseUrl/api/flix/$anilistId/$episode"
         return runCatching {
             val req = okhttp3.Request.Builder()
                 .url(url)
                 .header("User-Agent", userAgent)
                 .header("Accept", "*/*")
-                .header("Referer", "$REANIME/")
+                .header("Referer", "$baseUrl/")
                 .build()
             okhttp3.OkHttpClient().newCall(req).execute().use { response ->
                 val root = JSONObject(response.body?.string().orEmpty())
@@ -74,8 +77,13 @@ object ReAnimeFlixCloud {
                     ?: candidates.firstOrNull { it.first.equals("HD-1", true) }?.second
                     ?: candidates.firstOrNull()?.second
             }
-        }.onFailure { Log.e(TAG, "API_FAILED $url", it) }.getOrNull()
+        }.onFailure { Log.w(TAG, "API_FAILED $url err=${it.message}") }.getOrNull()
     }
+
+    /** Resolve the Re:ANIME API server exactly as the HAR does. 2026-11 도메인 이전로 .cz 우선, .to 폴백. */
+    fun resolveFlixUrl(anilistId: Int, episode: Int, userAgent: String): String? =
+        extractFlixDataLink(REANIME, anilistId, episode, userAgent)
+            ?: extractFlixDataLink(REANIME_FALLBACK, anilistId, episode, userAgent)
 
     /** Inject the HAR bootstrap into an already configured WebView. */
     fun injectBootstrap(view: WebView, flixUrl: String, onResult: (Result?, String?) -> Unit) {

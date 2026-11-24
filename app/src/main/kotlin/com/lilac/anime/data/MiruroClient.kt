@@ -769,10 +769,12 @@ class MiruroClient {
         Log.w("MiruroApi", "REST_MARKED_DEAD ${REST_COOLDOWN_MS / 1000}초간 pipe 모드 사용: ${t.message}")
     }
 
-    /** 현재 도메인(miruro.cx)과 예전 버전이 저장했던 구 도메인(miruro.to)을 모두 인정한다. */
+    /** 현재 도메인(miruro.cx)과 예전 버전이 저장했던 구 도메인들(miruro.to/.tv)과 2026-11 신규 공식 미러(.bz)를 모두 인정한다. */
     private fun isMiruroHost(host: String?): Boolean {
         val h = host?.lowercase(Locale.ROOT)?.removeSuffix(".") ?: return false
-        return h == "miruro.cx" || h.endsWith(".miruro.cx") || h == "miruro.to" || h.endsWith(".miruro.to")
+        return listOf("miruro.cx", "miruro.to", "miruro.tv", "miruro.bz").any {
+            h == it || h.endsWith(".$it")
+        }
     }
 
     private fun htmlText(value: String) = value.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
@@ -787,7 +789,8 @@ class MiruroClient {
         const val BASE = "https://www.miruro.cx"
 
         // 로테이션 순서: 공식 도메인(.cx) 우선, 이후 공식 파트너/구 미러. (실측: 전부 Cloudflare 방어 중)
-        private val HOSTS = listOf("www.miruro.cx", "miruro.cx", "www.miruro.tv", "www.miruro.to")
+        // 2026-11: status.miruro.com 공식 상태 페이지에 miruro.bz 미러가 추가되었다.
+        private val HOSTS = listOf("www.miruro.cx", "miruro.cx", "www.miruro.tv", "www.miruro.to", "www.miruro.bz", "miruro.bz")
 
         /**
          * pipe 응답 XOR obfuscation 키(x-obfuscated: 2 헤더일 때).

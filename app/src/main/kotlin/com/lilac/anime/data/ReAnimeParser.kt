@@ -16,7 +16,8 @@ object ReAnimeParser {
         val total: Int,
         val totalPages: Int
     )
-    private const val BASE_URL = "https://reanime.to"
+    // 2026-11: reanime.to -> reanime.cz 도메인 이전(.to 는 리다이렉트 유지 중)
+    private const val BASE_URL = "https://reanime.cz"
     private const val ID_PREFIX = "reanime:"
 
     /** Parse the JSON returned by Re:ANIME's current API. */

@@ -46,10 +46,14 @@ class AnimenosubClient {
         val slug = slugify(title)
         val epSlug = slugify(displayNumber)
         if (slug.isNotBlank() && epSlug.isNotBlank()) {
+            // 2026-11 실측: 성인작은 시리즈 슬러그 자체가 -uncensored 로 끝나고
+            // 에피소드 URL 도 {base}-episode-N-uncensored/ 형태다. 두 형태를 모두 시도한다.
             candidates += "https://animenosub.to/${slug}-episode-${epSlug}/"
+            candidates += "https://animenosub.to/${slug}-episode-${epSlug}-uncensored/"
         }
         if (slug.isNotBlank() && displayNumber.toIntOrNull() != null) {
             candidates += "https://animenosub.to/${slug}-episode-${displayNumber.toInt()}/"
+            candidates += "https://animenosub.to/${slug}-episode-${displayNumber.toInt()}-uncensored/"
         }
 
         for (url in candidates) {

@@ -46,7 +46,8 @@ class ReAnimeClient {
      * Current Re:ANIME API.
      *
      * Search and catalog requests use:
-     * https://reanime.to/api/v1/search
+     * https://reanime.cz/api/v1/search
+     * (2026-11: reanime.to -> reanime.cz 도메인 이전, .to 는 리다이렉트 유지 중)
      *
      * limit and offset are passed through unchanged.
      */
@@ -57,7 +58,7 @@ class ReAnimeClient {
     ): String {
         val builder = HttpUrl.Builder()
             .scheme("https")
-            .host("reanime.to")
+            .host("reanime.cz")
             .addPathSegment("api")
             .addPathSegment("v1")
             .addPathSegment("search")
@@ -144,7 +145,7 @@ class ReAnimeClient {
     }
 
     companion object {
-        const val BASE_URL = "https://reanime.to"
+        const val BASE_URL = "https://reanime.cz"
 
         private const val TAG = "ReAnime"
 

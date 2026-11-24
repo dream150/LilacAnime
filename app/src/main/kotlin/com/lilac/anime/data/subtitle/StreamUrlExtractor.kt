@@ -137,6 +137,13 @@ fun StreamUrlExtractor(
                 val capturedWebViewUserAgent = settings.userAgentString.orEmpty()
 
                 val targetHost = runCatching { android.net.Uri.parse(targetUrl).host?.lowercase() }.getOrNull()
+
+                // 2026-11: reanime.to -> reanime.cz 도메인 이전. 구 도메인으로 저장된 watch URL도
+                // 여전히 301 리다이렉트로 로드되므로 두 도메인 모두 Re:ANIME 대상으로 인정한다.
+                fun isReAnimeHost(host: String?): Boolean =
+                    host == "reanime.cz" || host == "www.reanime.cz" ||
+                        host == "reanime.to" || host == "www.reanime.to"
+
                 val inferredHosts = when {
                     targetHost == "animenosub.to" || targetHost == "www.animenosub.to" ->
                         setOf("animenosub.to", "www.animenosub.to")
@@ -149,8 +156,8 @@ fun StreamUrlExtractor(
                             "kf.carsstore365.com",
                             "linkkf.tckopke.com", "tckopke.com", "www.tckopke.com"
                         )
-                    targetHost == "reanime.to" || targetHost == "www.reanime.to" ->
-                        setOf("reanime.to", "www.reanime.to", "flixcloud.cc", "www.flixcloud.cc")
+                    isReAnimeHost(targetHost) ->
+                        setOf("reanime.cz", "www.reanime.cz", "reanime.to", "www.reanime.to", "flixcloud.cc", "www.flixcloud.cc")
                     else -> emptySet()
                 }
                 val safeHosts = (allowedHosts + inferredHosts + listOfNotNull(targetHost) +
@@ -212,12 +219,12 @@ fun StreamUrlExtractor(
                             android.net.Uri.parse(it).host?.lowercase()?.contains("flixcloud.cc") == true
                         }.getOrDefault(false)
                     }
-                    val isReAnimeTarget = targetHost == "reanime.to" || targetHost == "www.reanime.to"
+                    val isReAnimeTarget = isReAnimeHost(targetHost)
                     if (isReAnimeTarget && hasFlixCloud && flixCloudPk.isNullOrBlank()) return
 
                     val urls = detectedUrls.toList()
                     mainHandler.post {
-                        if ((targetHost == "reanime.to" || targetHost == "www.reanime.to") &&
+                        if (isReAnimeHost(targetHost) &&
                             urls.isNotEmpty() && !flixCloudPk.isNullOrBlank()
                         ) {
                             reanimeStreamReady = true
@@ -291,7 +298,7 @@ fun StreamUrlExtractor(
                     val isMp4 = path.endsWith(".mp4")
                     if (!isHls && !isMp4) return
 
-                    val isReAnime = targetHost == "reanime.to" || targetHost == "www.reanime.to"
+                    val isReAnime = isReAnimeHost(targetHost)
 
                     // FlixCloud returns encrypted M3U8 text to Chromium and decrypts it
                     // inside its JavaScript player. The WebView request interceptor sees
@@ -331,7 +338,7 @@ fun StreamUrlExtractor(
                 }
 
                 fun pollReAnimeDecryptedM3u8(view: WebView) {
-                    if (targetHost != "reanime.to" && targetHost != "www.reanime.to") return
+                    if (!isReAnimeHost(targetHost)) return
 
                     var attempts = 0
                     val pollHandler = Handler(Looper.getMainLooper())
@@ -545,7 +552,7 @@ fun StreamUrlExtractor(
                             // Re:ANIME exposes a complete subtitle array in the FlixCloud HTML.
                             // Wait for that manifest so an arbitrary first network request (often
                             // English) cannot silently become the selected track.
-                            val isReAnimePlayer = targetHost == "reanime.to" || targetHost == "www.reanime.to" ||
+                            val isReAnimePlayer = isReAnimeHost(targetHost) ||
                                 url.contains("flixcloud.cc", ignoreCase = true)
                             if (!isReAnimePlayer) {
                                 isSubtitleFound = true
@@ -691,7 +698,7 @@ fun StreamUrlExtractor(
                             }
                         )
 
-                        if ((targetHost == "reanime.to" || targetHost == "www.reanime.to") &&
+                        if (isReAnimeHost(targetHost) &&
                             !url.orEmpty().contains("flixcloud.cc", ignoreCase = true)) {
                             view?.let { pollReAnimeDecryptedM3u8(it) }
                             // Re:ANIME can fire onPageFinished several times. Select a server only once
@@ -733,7 +740,7 @@ fun StreamUrlExtractor(
                 // Re:ANIME: resolve the FlixCloud player for THIS anime/episode first.
                 // Follow the desktop port's lifecycle: get every server candidate, try HD-2 first,
                 // then HD-1/remaining candidates in fresh page sessions, and fail over quickly.
-                val isReAnime = targetHost == "reanime.to" || targetHost == "www.reanime.to"
+                val isReAnime = isReAnimeHost(targetHost)
                 if (isReAnime && reAnimeAnilistId != null && reAnimeEpisodeNumber != null) {
                     val webView = this
                     val resolverClient = OkHttpClient.Builder()
@@ -772,7 +779,7 @@ fun StreamUrlExtractor(
                         runCatching { webView.loadUrl("about:blank") }
                         mainHandler.postDelayed({
                             if (extractorActive.get() && reAnimeActiveCandidate == candidate) {
-                                webView.loadUrl(candidate, mapOf("Referer" to "https://reanime.to/"))
+                                webView.loadUrl(candidate, mapOf("Referer" to "https://reanime.cz/"))
                             }
                         }, 80L)
                         val timeout = Runnable {
@@ -801,47 +808,59 @@ fun StreamUrlExtractor(
                     val resolverThread = thread(name = "ReAnimeFlixResolve", isDaemon = true) {
                         try {
                             if (!extractorActive.get()) return@thread
-                            val apiUrl = "https://reanime.to/api/flix/$reAnimeAnilistId/$reAnimeEpisodeNumber"
-                            val request = Request.Builder()
-                                .url(apiUrl)
-                                .header("User-Agent", capturedWebViewUserAgent)
-                                .header("Accept", "application/json")
-                                .header("Referer", "https://reanime.to/")
-                                .build()
-                            resolverClient.newCall(request).execute().use { response ->
-                                val body = response.body?.string().orEmpty()
-                                if (!response.isSuccessful) throw IllegalStateException("HTTP ${'$'}{response.code}")
-                                val root = JSONObject(body)
-                                val servers = root.optJSONArray("servers") ?: throw IllegalStateException("servers missing")
-                                val candidates = buildList {
-                                    for (i in 0 until servers.length()) {
-                                        val item = servers.optJSONObject(i) ?: continue
-                                        val link = item.optString("dataLink").trim()
-                                        if (!link.startsWith("https://flixcloud.cc/e/", true)) continue
-                                        add(item.optString("serverName").trim() to link)
+                            // 2026-11: reanime.to -> reanime.cz 이전. .to 는 리다이렉트 유지 중이라 폴백으로 사용.
+                            val apiUrls = listOf(
+                                "https://reanime.cz/api/flix/$reAnimeAnilistId/$reAnimeEpisodeNumber",
+                                "https://reanime.to/api/flix/$reAnimeAnilistId/$reAnimeEpisodeNumber"
+                            )
+                            var body: String? = null
+                            for (apiUrl in apiUrls) {
+                                val request = Request.Builder()
+                                    .url(apiUrl)
+                                    .header("User-Agent", capturedWebViewUserAgent)
+                                    .header("Accept", "application/json")
+                                    .header("Referer", "https://reanime.cz/")
+                                    .build()
+                                val ok = runCatching {
+                                    resolverClient.newCall(request).execute().use { response ->
+                                        val text = response.body?.string().orEmpty()
+                                        if (!response.isSuccessful) throw IllegalStateException("HTTP ${'$'}{response.code}")
+                                        text
                                     }
+                                }.getOrNull()
+                                if (!ok.isNullOrBlank()) { body = ok; break }
+                            }
+                            if (body.isNullOrBlank()) throw IllegalStateException("flix API unreachable")
+                            val root = JSONObject(body)
+                            val servers = root.optJSONArray("servers") ?: throw IllegalStateException("servers missing")
+                            val candidates = buildList {
+                                for (i in 0 until servers.length()) {
+                                    val item = servers.optJSONObject(i) ?: continue
+                                    val link = item.optString("dataLink").trim()
+                                    if (!link.startsWith("https://flixcloud.cc/e/", true)) continue
+                                    add(item.optString("serverName").trim() to link)
                                 }
-                                val ordered = candidates
-                                    .sortedWith(compareBy<Pair<String, String>> {
-                                        when {
-                                            it.first.equals("HD-2", true) -> 0
-                                            it.first.contains("HD-2", true) -> 1
-                                            it.first.equals("HD-1", true) -> 2
-                                            it.first.contains("HD-1", true) -> 3
-                                            else -> 4
-                                        }
-                                    })
-                                    .map { it.second }
-                                    .distinct()
-                                if (ordered.isEmpty()) throw IllegalStateException("No FlixCloud dataLink")
-                                if (!extractorActive.get()) return@thread
-                                mainHandler.post {
-                                    if (!extractorActive.get()) return@post
-                                    reanimeCandidates = ordered
-                                    reAnimeCandidateIndex = 0
-                                    Log.d("ReAnimeStream", "FLIX_CANDIDATES count=${'$'}{ordered.size} order=${'$'}{ordered.joinToString()}")
-                                    loadReAnimeCandidate("api")
-                                }
+                            }
+                            val ordered = candidates
+                                .sortedWith(compareBy<Pair<String, String>> {
+                                    when {
+                                        it.first.equals("HD-2", true) -> 0
+                                        it.first.contains("HD-2", true) -> 1
+                                        it.first.equals("HD-1", true) -> 2
+                                        it.first.contains("HD-1", true) -> 3
+                                        else -> 4
+                                    }
+                                })
+                                .map { it.second }
+                                .distinct()
+                            if (ordered.isEmpty()) throw IllegalStateException("No FlixCloud dataLink")
+                            if (!extractorActive.get()) return@thread
+                            mainHandler.post {
+                                if (!extractorActive.get()) return@post
+                                reanimeCandidates = ordered
+                                reAnimeCandidateIndex = 0
+                                Log.d("ReAnimeStream", "FLIX_CANDIDATES count=${'$'}{ordered.size} order=${'$'}{ordered.joinToString()}")
+                                loadReAnimeCandidate("api")
                             }
                         } catch (t: Throwable) {
                             Log.e("ReAnimeStream", "FLIX_RESOLVE_FAILED episode=$reAnimeEpisodeNumber", t)
@@ -849,7 +868,7 @@ fun StreamUrlExtractor(
                             mainHandler.post {
                                 if (!extractorActive.get()) return@post
                                 // Only use the watch page as a last-resort DOM fallback.
-                                webView.loadUrl(targetUrl, mapOf("Referer" to "https://reanime.to/"))
+                                webView.loadUrl(targetUrl, mapOf("Referer" to "https://reanime.cz/"))
                                 mainHandler.postDelayed({
                                     if (!extractorActive.get() || reanimeStreamReady) return@postDelayed
                                     webView.evaluateJavascript(

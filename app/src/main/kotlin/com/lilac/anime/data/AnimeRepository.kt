@@ -27,7 +27,7 @@ class AnimeRepository {
         private const val LINKKF_BASE_URL = LinkkfApiClient.WEB_BASE
         private const val LINKKF_LIST_URL = "$LINKKF_BASE_URL/"
         private const val ANIMENOSUB_BASE_URL = "https://animenosub.to"
-        private const val REANIME_BASE_URL = "https://reanime.to"
+        private const val REANIME_BASE_URL = "https://reanime.cz" // 2026-11: reanime.to -> reanime.cz 이전
         private const val BATCH_SIZE = 5
     }
 

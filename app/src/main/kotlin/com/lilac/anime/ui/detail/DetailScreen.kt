@@ -875,7 +875,7 @@ fun DetailScreen(
                                     append(name).append(": ").append(value.trim())
                                 }
                             }
-                            addHeader("Referer", resolved.referer ?: "https://reanime.to/")
+                            addHeader("Referer", resolved.referer ?: "https://reanime.cz/")
                             addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
                             addHeader("Origin", "https://flixcloud.cc")
                         }.takeIf { it.isNotBlank() }
@@ -894,7 +894,7 @@ fun DetailScreen(
                             animeTitle = currentAnime.title,
                             episode = ep.copy(videoUrl = streamUrl, vttUrl = resolved.subtitleUrl.orEmpty()),
                             streamUrl = streamUrl,
-                            referer = resolved.referer ?: "https://reanime.to/",
+                            referer = resolved.referer ?: "https://reanime.cz/",
                             subtitleUrl = resolved.subtitleUrl,
                             subtitleReferer = resolved.subtitleReferer ?: resolved.referer,
                             flixCloudPk = pk,
@@ -1131,7 +1131,7 @@ fun DetailScreen(
                                             backdrop = related.poster,
                                             format = related.format,
                                             year = related.seasonYear?.toString().orEmpty(),
-                                            detailUrl = "https://reanime.to/anime/$slug"
+                                            detailUrl = "https://reanime.cz/anime/$slug"
                                         )
                                         RelatedEntryRow(
                                             title = related.title,
@@ -1334,7 +1334,7 @@ fun DetailScreen(
                         },
                         allowedHosts = when (vm.playerSettings.videoSourcePreference) {
                             "animenosub" -> setOf("animenosub.to", "www.animenosub.to")
-                            "reanime" -> setOf("reanime.to", "www.reanime.to", "flixcloud.cc", "www.flixcloud.cc")
+                            "reanime" -> setOf("reanime.cz", "www.reanime.cz", "reanime.to", "www.reanime.to", "flixcloud.cc", "www.flixcloud.cc")
                             else -> emptySet()
                         }
                     )

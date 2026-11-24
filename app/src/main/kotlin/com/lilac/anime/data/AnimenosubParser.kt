@@ -228,15 +228,28 @@ object AnimenosubParser {
 
     private fun isEpisodeUrl(url: String): Boolean {
         if (!isAnimenosubUrl(url) || isSeriesUrl(url)) return false
-        return Regex("-episode-\\d+[a-z]?(?:-dub)?/?$", RegexOption.IGNORE_CASE)
+        // 2026-11 실측: 에피소드 URL 은 회차 번호 뒤에 임의 접미사가 붙을 수 있다
+        //   {slug}-episode-8/            (일반)
+        //   {slug}-episode-8-uncensored/ (성인작: 시리즈 슬러그도 -uncensored 로 끝남)
+        //   {slug}-episode-5-dub/        (더빙)
+        // 접미사가 없거나(- dub/-dubbed 제외) 무엇이든 붙어도 에피소드로 인정한다.
+        return Regex("-episode-\\d+[a-z]?(?:-[a-z0-9]+)*\\??/?$", RegexOption.IGNORE_CASE)
             .containsMatchIn(url.trimEnd('/'))
     }
 
     private fun episodeToAnimeUrl(url: String): String {
         val slug = extractSlug(url)
-            .replace(Regex("-episode-\\d+[a-z]?(?:-dub)?$", RegexOption.IGNORE_CASE), "")
-            .trim('-')
-        return if (slug.isNotBlank()) "$BASE_URL/anime/$slug/" else url
+        // -episode-N 뒤의 꼬리 접미사 처리:
+        //   dub/dubbed  -> 시리즈 슬러그에서 제외 (일반 시리즈 소속)
+        //   uncensored  -> 유지 (시리즈 슬러그의 일부: {base}-uncensored)
+        //   기타 접미사 -> 유지 (시리즈 슬러그의 일부로 추정)
+        val match = Regex("^(.+)-episode-\\d+[a-z]?(?:-(.+))?$", RegexOption.IGNORE_CASE).find(slug) ?: return url
+        val base = match.groupValues[1].trim('-')
+        val tail = match.groupValues.getOrNull(2).orEmpty()
+            .split('-').filter { it.isNotBlank() && !it.equals("dub", true) && !it.equals("dubbed", true) }
+            .joinToString("-")
+        val seriesSlug = if (tail.isBlank()) base else "$base-$tail"
+        return if (seriesSlug.isNotBlank()) "$BASE_URL/anime/$seriesSlug/" else url
     }
 
     /** Convert an Animenosub URL slug into a readable fallback title. */

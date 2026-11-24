@@ -111,10 +111,26 @@ class ReAnimeHarClient {
     private fun getJson(path: String): String = request(path) {}
 
     private fun request(path: String, configure: (HttpUrl.Builder) -> Unit): String {
+        val segments = path.trim('/').split('/').filter { it.isNotBlank() }
+        var lastError: IOException? = null
+        // 2026-11: reanime.to 가 reanime.cz 로 301 리다이렉트 된다. .cz 를 우선 사용하고
+        // 연결 수준 오류(DNS/타임아웃) 시에만 구 도메인을 재시도한다. HTTP 오류는 재시도하지 않는다.
+        for (host in HOSTS) {
+            try {
+                return requestOnHost(host, segments, path, configure)
+            } catch (t: IOException) {
+                lastError = t
+                android.util.Log.w(TAG, "HOST_FAILED host=$host path=$path err=${t.message}")
+            }
+        }
+        throw lastError ?: IOException("Re:Anime HAR API request failed: $path")
+    }
+
+    private fun requestOnHost(host: String, segments: List<String>, path: String, configure: (HttpUrl.Builder) -> Unit): String {
         val builder = HttpUrl.Builder()
             .scheme("https")
-            .host("reanime.to")
-        path.trim('/').split('/').filter { it.isNotBlank() }.forEach(builder::addPathSegment)
+            .host(host)
+        segments.forEach(builder::addPathSegment)
         configure(builder)
         val url = builder.build().toString()
         val request = Request.Builder()
@@ -122,7 +138,7 @@ class ReAnimeHarClient {
             .header("User-Agent", USER_AGENT)
             .header("Accept", "application/json")
             .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Referer", if (path.contains("api/v1/search")) "https://reanime.to/search" else "https://reanime.to/")
+            .header("Referer", if (path.contains("api/v1/search")) "$BASE_URL/search" else "$BASE_URL/")
             .build()
 
         android.util.Log.d(TAG, "HAR_REQUEST $url")
@@ -139,7 +155,13 @@ class ReAnimeHarClient {
 
     companion object {
         private const val TAG = "ReAnimeHAR"
-        const val BASE_URL = "https://reanime.to"
+
+        /** 2026-11 부터 실제 서비스 도메인. reanime.to 는 여기로 301 리다이렉트된다. */
+        const val BASE_URL = "https://reanime.cz"
+
+        /** 구 도메인(리다이렉트 유지 중) — 연결 실패 시 폴백으로만 사용한다. */
+        private val HOSTS = listOf("reanime.cz", "reanime.to")
+
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
